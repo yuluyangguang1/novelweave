@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>NovelWeave · 织文</title>
+  <link rel="stylesheet" href="src/styles/app.css?v=1">
+  <!-- PWA -->
+  <meta name="theme-color" content="#0d0d1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="织文">
+  <meta name="mobile-web-app-capable" content="yes">
+</head>
+<body>
+<div id="app">
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- 01 首页（小说列表）                         -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="page-home" class="page active">
+  <div class="header">
+    <div class="header-title">织文</div>
+    <button class="header-btn" onclick="router.go('settings')">⚙️</button>
+  </div>
+  <div class="home-body">
+    <div class="home-empty" id="home-empty">
+      <div class="empty-icon">✍️</div>
+      <div class="empty-text">还没有作品</div>
+      <button class="btn btn-primary" onclick="showCreateNovel()">创建第一篇小说</button>
+    </div>
+    <div id="novel-list" class="novel-list"></div>
+    <button class="btn btn-float" onclick="showCreateNovel()" title="新建小说">＋</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- 02 工作区（写作 + 角色 + 设定）              -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="page-workspace" class="page">
+  <div class="workspace-layout">
+    <!-- 左侧栏：侧边导航 -->
+    <aside class="workspace-sidebar" id="workspace-sidebar">
+      <div class="sidebar-header">
+        <button class="sidebar-back" onclick="router.go('home')">← 返回</button>
+      </div>
+      <div class="sidebar-nav" id="sidebar-nav"></div>
+      <!-- 子页面区域 -->
+      <div id="sidebar-content"></div>
+    </aside>
+    <!-- 右侧主区域 -->
+    <main class="workspace-main" id="workspace-main">
+      <!-- 章节写作 -->
+      <div class="ws-section active" id="ws-editor">
+        <div class="editor-header" id="editor-header"></div>
+        <div class="editor-area" id="editor-area"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- 03 AI 工具箱侧面板                          -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="ai-panel-overlay hidden" id="ai-panel-overlay" onclick="closeAIPanel()"></div>
+<div class="ai-panel hidden" id="ai-panel">
+  <div class="ai-panel-header">
+    <div class="ai-panel-title">AI 工具箱</div>
+    <button class="ai-panel-close" onclick="closeAIPanel()">✕</button>
+  </div>
+  <div class="ai-panel-tools">
+    <button class="ai-tool-btn" onclick="aiContinue()">✍️ 续写</button>
+    <button class="ai-tool-btn" onclick="aiCheckConsistency()">🔍 角色一致性检查</button>
+    <button class="ai-tool-btn" onclick="aiSummarize()">📋 总结当前章节</button>
+    <button class="ai-tool-btn" onclick="aiGenerateOutline()">📖 生成大纲</button>
+  </div>
+  <div class="ai-output" id="ai-output"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- 04 设置页                                   -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="page-settings" class="page">
+  <div class="header">
+    <button class="header-back" onclick="router.go('home')">←</button>
+    <div class="header-title">设置</div>
+    <div style="width:40px"></div>
+  </div>
+  <div class="settings-body" id="settings-body"></div>
+</div>
+
+</div><!-- /#app -->
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- Script 加载顺序                               -->
+<!-- ═══════════════════════════════════════════ -->
+<script src="src/core/db.js"></script>
+<script src="src/core/llm.js"></script>
+<script src="src/app.js"></script>
+<script src="src/router.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>
