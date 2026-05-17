@@ -32,6 +32,11 @@ function showToast(msg, dur = 2000) {
 // ═══════════════════ 初始化 ═══════════════════
 async function initApp() {
   router.onPage = onPageEntered;
+  // 首次使用：先配置 API Key
+  if (!NovelLLM.hasConfig()) {
+    router.go('settings');
+    return;
+  }
   renderHomePage();
 }
 
