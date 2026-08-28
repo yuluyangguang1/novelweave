@@ -1,0 +1,27 @@
+---
+id: ch-0NN
+number: NN
+slug: <kebab-case>
+title: <章名>
+status: draft
+pov: <char-id 或留空>
+time_anchor: null
+locations: []
+characters: []
+mentions: []
+flags: []
+summary: <≤80 字，供后续召回>
+---
+正文……
+
+<!--
+  要点：
+  · characters = 本章实际出场并有行动的角色；mentions = 仅被提及。
+    这个区分决定了「死人出场」检查能不能低误报。
+  · 闪回/梦境/引文请写 flags: [flashback]，否则一致性检查会反复告警。
+  · 不要手填 x-words，派生字段由脚本重算。
+  · 正文之后必须追加 ---CHANGES--- 段（无变化也要写 "changes": []）。
+-->
+
+---CHANGES---
+{"chapter":"ch-0NN","changes":[]}
