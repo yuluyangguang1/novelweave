@@ -1,0 +1,292 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://novelweave.dev/schema/story-bible.v1.json",
+  "title": "NovelWeave Story Bible v1",
+  "description": "Web 端与 agent 脚本共用的唯一格式定义。只实现 NWBible.validate 支持的关键字子集；出现未实现关键字会被当作违规报出，而不是静默放过。",
+  "$defs": {
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$" },
+    "bookId": { "type": "string", "pattern": "^(novel_[a-z0-9]+|[a-z0-9][a-z0-9-]{1,60})$" },
+    "chapterId": { "type": "string", "pattern": "^(ch-[0-9]{3,6}|ch_[a-z0-9]+)$" },
+    "charId": { "type": "string", "pattern": "^(char-[a-z0-9-]+|char_[a-z0-9]+)$" },
+    "worldId": { "type": "string", "pattern": "^(wb-[a-z0-9-]+|wb_[a-z0-9]+)$" },
+    "slug": { "type": "string", "pattern": "^[a-z0-9\\u4e00-\\u9fff][a-z0-9\\u4e00-\\u9fff-]{0,63}$" },
+    "idList": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+
+    "chapter": {
+      "type": "object",
+      "description": "manuscript/chapters/*.md 的 frontmatter（正文不计入 schema）",
+      "required": ["id", "number", "title", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "id": { "$ref": "#/$defs/chapterId" },
+        "number": { "type": "integer", "minimum": 1 },
+        "slug": { "$ref": "#/$defs/slug" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "enum": ["outline", "draft", "revised", "final", "complete"] },
+        "pov": { "type": "string", "nullable": true },
+        "time_anchor": { "type": "string", "nullable": true },
+        "locations": { "$ref": "#/$defs/idList" },
+        "characters": { "$ref": "#/$defs/idList" },
+        "mentions": { "$ref": "#/$defs/idList" },
+        "flags": { "type": "array", "items": { "enum": ["flashback", "dream", "quoted", "offscreen", "montage"] }, "uniqueItems": true },
+        "summary": { "type": "string", "maxLength": 400 },
+        "x-words": { "type": "integer" },
+        "x-updated": { "type": "string" }
+      }
+    },
+
+    "book": {
+      "type": "object",
+      "required": ["schemaVersion", "id", "slug", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "id": { "$ref": "#/$defs/bookId" },
+        "slug": { "$ref": "#/$defs/slug" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "genre": { "type": "string" },
+        "language": { "type": "string" },
+        "description": { "type": "string" },
+        "audience": { "type": "string" },
+        "target": { "type": "object", "additionalProperties": false, "properties": { "chapters": { "type": "integer" }, "wordsPerChapter": { "type": "integer" } } },
+        "voice": { "type": "object", "additionalProperties": false, "properties": { "person": { "type": "string" }, "tense": { "type": "string" }, "povDefault": { "type": "string", "nullable": true }, "notes": { "type": "string" } } },
+        "created": { "type": "string", "nullable": true },
+        "updated": { "type": "string", "nullable": true },
+        "_derived": { "type": "object" }
+      }
+    },
+
+    "appearanceToken": {
+      "type": "object",
+      "description": "带生效区间的外貌特征。这是把「断臂长回来」变成机器可判的唯一办法。",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "since": { "type": "string", "nullable": true },
+        "until": { "type": "string", "nullable": true },
+        "allowIn": { "$ref": "#/$defs/idList" }
+      }
+    },
+
+    "alias": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["nickname", "title", "code", "former", "self"] },
+        "who": { "$ref": "#/$defs/idList" },
+        "since": { "type": "string", "nullable": true },
+        "until": { "type": "string", "nullable": true },
+        "note": { "type": "string" }
+      }
+    },
+
+    "character": {
+      "type": "object",
+      "description": "字段名与 story-skills 的 story.schema.json 对齐（role/status/died-in）",
+      "required": ["schemaVersion", "id", "name", "role", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "id": { "$ref": "#/$defs/charId" },
+        "slug": { "type": "string", "nullable": true },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "role": { "enum": ["protagonist", "antagonist", "deuteragonist", "supporting", "minor", "narrator"] },
+        "status": { "enum": ["alive", "deceased", "unknown", "missing"] },
+        "died-in": { "type": "string", "nullable": true },
+        "first": { "type": "string", "nullable": true },
+        "aliases": { "type": "array", "items": { "$ref": "#/$defs/alias" } },
+        "appearance": { "type": "object", "additionalProperties": false, "properties": { "summary": { "type": "string" }, "tokens": { "type": "array", "items": { "$ref": "#/$defs/appearanceToken" } } } },
+        "personality": { "type": "string" },
+        "background": { "type": "string" },
+        "goals": { "type": "string" },
+        "notes": { "type": "string" },
+        "voice": { "type": "object" },
+        "gender": { "type": "string", "nullable": true },
+        "age": { "type": "object", "nullable": true },
+        "enabled": { "type": "boolean" },
+        "created": { "type": "string", "nullable": true },
+        "_derived": { "type": "object" }
+      }
+    },
+
+    "worldEntry": {
+      "type": "object",
+      "description": "严格超集于 Character Card V2 的 character_book.entries[]，字段名保持原样以便直接导出 lorebook",
+      "x-standard-origin": "Character Card Spec v2 / SillyTavern World Info",
+      "required": ["schemaVersion", "id", "name", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "id": { "$ref": "#/$defs/worldId" },
+        "slug": { "type": "string", "nullable": true },
+        "comment": { "type": "string" },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["location", "faction", "rule", "system", "item", "creature", "custom"] },
+        "keys": { "$ref": "#/$defs/idList" },
+        "secondary_keys": { "$ref": "#/$defs/idList" },
+        "selective": { "type": "boolean" },
+        "constant": { "type": "boolean" },
+        "position": { "enum": ["before_character_definition", "after_character_definition", "before_example_messages", "after_example_messages"] },
+        "insertion_order": { "type": "integer" },
+        "priority": { "type": "integer" },
+        "enabled": { "type": "boolean" },
+        "case_sensitive": { "type": "boolean" },
+        "content": { "type": "string" },
+        "details": { "type": "object" },
+        "constraints": { "type": "array", "items": { "type": "string" } },
+        "lifecycle": { "type": "object", "additionalProperties": false, "properties": { "destroyed-in": { "type": "string", "nullable": true }, "revealed-in": { "type": "string", "nullable": true } } },
+        "created": { "type": "string", "nullable": true },
+        "_derived": { "type": "object" }
+      }
+    },
+
+    "promiseItem": {
+      "type": "object",
+      "description": "伏笔登记表：promise（埋设/回收）与 question（悬念）合表，用 type 区分",
+      "required": ["id", "type", "title", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[pq]-[0-9]{3,6}$" },
+        "type": { "enum": ["promise", "question"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "enum": ["planned", "planted", "paid-off", "dropped", "open", "answered", "resolved"] },
+        "setup": { "type": "object", "additionalProperties": false, "properties": { "chapter": { "type": "string", "nullable": true }, "evidence": { "type": "string" }, "quote": { "type": "string" } } },
+        "payoff": { "type": "object", "additionalProperties": false, "properties": { "chapter": { "type": "string", "nullable": true }, "due": { "type": "string", "nullable": true }, "evidence": { "type": "string" } } },
+        "characters": { "$ref": "#/$defs/idList" },
+        "world": { "$ref": "#/$defs/idList" },
+        "weight": { "enum": ["major", "minor", "candidate"] },
+        "notes": { "type": "string" },
+        "created": { "type": "string", "nullable": true },
+        "updated": { "type": "string", "nullable": true }
+      }
+    },
+
+    "promises": {
+      "type": "object",
+      "required": ["schemaVersion", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/promiseItem" } }
+      }
+    },
+
+    "stateEntity": {
+      "type": "object",
+      "description": "v1 只做 6 维。下一章写作只读这份快照，不回灌历史正文。",
+      "additionalProperties": false,
+      "properties": {
+        "loc": { "type": "string", "nullable": true },
+        "alive": { "enum": ["alive", "deceased", "unknown", "missing", null] },
+        "injury": { "type": "array", "items": { "type": "string" } },
+        "items": { "type": "array", "items": { "type": "string" } },
+        "knows": { "type": "array", "items": { "type": "string" } },
+        "goal": { "type": "string" }
+      }
+    },
+
+    "states": {
+      "type": "object",
+      "required": ["schemaVersion", "byChapter"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "budgetPerChapter": { "type": "integer" },
+        "byChapter": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "$ref": "#/$defs/stateEntity" } } },
+        "_derived": { "type": "object" }
+      }
+    },
+
+    "timeAnchor": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^(ev|bs)-[0-9]{3,6}$" },
+        "chapter": { "type": "string", "nullable": true },
+        "label": { "type": "string", "minLength": 1 },
+        "at": { "type": "object", "additionalProperties": false, "properties": { "day": { "type": "number" }, "clock": { "enum": ["晨", "午", "暮", "夜", "三更", "黎明", null] } } },
+        "thread": { "type": "string", "nullable": true },
+        "kind": { "enum": ["story", "backstory"] },
+        "entities": { "$ref": "#/$defs/idList" },
+        "confidence": { "enum": ["explicit", "implied", "author"] },
+        "evidence": { "type": "string" }
+      }
+    },
+
+    "timeline": {
+      "type": "object",
+      "required": ["schemaVersion", "anchors"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "unit": { "type": "string" },
+        "calendar": { "type": "string" },
+        "threads": { "type": "array", "items": { "type": "object", "required": ["id"], "additionalProperties": false, "properties": { "id": { "type": "string" }, "name": { "type": "string" } } } },
+        "anchors": { "type": "array", "items": { "$ref": "#/$defs/timeAnchor" } },
+        "backstory": { "type": "array", "items": { "$ref": "#/$defs/timeAnchor" } }
+      }
+    },
+
+    "lexicon": {
+      "type": "object",
+      "description": "名字 → 实体 id 的唯一判定表。所有称谓/未登记实体类规则只读它。",
+      "required": ["schemaVersion", "names"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "names": { "type": "object", "additionalProperties": { "type": "string" } },
+        "terms": { "type": "object" },
+        "forbidden": { "type": "object" },
+        "allowlist": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "diagnostic": {
+      "type": "object",
+      "description": "机器规则与 LLM 规则共用同一信封，差异只在 source / confidence / needsReview",
+      "required": ["rule", "source", "severity", "message", "fingerprint"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "rule": { "type": "string", "minLength": 1 },
+        "source": { "enum": ["machine", "llm"] },
+        "severity": { "enum": ["error", "warn", "info"] },
+        "book": { "type": "string" },
+        "chapter": { "type": "string", "nullable": true },
+        "range": { "type": "object", "nullable": true },
+        "entity": { "type": "string", "nullable": true },
+        "evidence": { "type": "object", "additionalProperties": false, "properties": { "quote": { "type": "string" }, "offset": { "type": "array", "items": { "type": "integer" } }, "basis": { "type": "array", "items": { "type": "string" } } } },
+        "message": { "type": "string" },
+        "suggestion": { "type": "string" },
+        "confidence": { "type": "number" },
+        "needsReview": { "type": "boolean" },
+        "fingerprint": { "type": "string" },
+        "suppressedBy": { "type": "string", "nullable": true },
+        "firstSeen": { "type": "string" },
+        "lastSeen": { "type": "string" }
+      }
+    }
+  },
+  "type": "object",
+  "description": "顶层入口是 .novelweave/project.json",
+  "required": ["schemaVersion", "books"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "type": "string" },
+    "updatedAt": { "type": "string" },
+    "books": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["slug", "id", "path"],
+        "additionalProperties": false,
+        "properties": { "slug": { "$ref": "#/$defs/slug" }, "id": { "$ref": "#/$defs/bookId" }, "title": { "type": "string" }, "path": { "type": "string" } }
+      }
+    }
+  }
+}
