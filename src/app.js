@@ -38,6 +38,8 @@ const TABS = [
   { id: 'chapters',   icon: '📝', label: '章节',     hasAdd: true,  addTitle: '添加章节' },
   { id: 'characters', icon: '👥', label: '角色',     hasAdd: true,  addTitle: '添加角色' },
   { id: 'world',      icon: '🌍', label: '世界设定', hasAdd: true,  addTitle: '添加设定' },
+  { id: 'promises',   icon: '🧵', label: '伏笔',     hasAdd: true,  addTitle: '登记伏笔' },
+  { id: 'continuity', icon: '🔍', label: '连续性',   hasAdd: false, addTitle: '' },
   { id: 'notes',      icon: '📒', label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
   { id: 'settings',   icon: '⚙️', label: 'AI 设置',  hasAdd: false, addTitle: '' },
 ];
@@ -264,6 +266,7 @@ async function enterWorkspace(params) {
   APP.novel = novel;
 
   const chapters = await NovelDB.chapters.list(novelId);
+  APP.chaptersCache = chapters;
   let target = params.chapterId ? chapters.find((c) => c.id === params.chapterId) : null;
   if (!target && !params.chapterId) target = chapters[0] || null;
   if (!target && params.chapterId) {
@@ -288,6 +291,7 @@ async function renderSidebar() {
     chapters: (await NovelDB.chapters.list(novel.id)).length,
     characters: (await NovelDB.characters.list(novel.id)).length,
     world: (await NovelDB.worldbuilding.list(novel.id)).length,
+    promises: (await NovelDB.promises.list(novel.id)).filter((p) => ['planned', 'planted'].includes(p.status)).length,
     notes: (await NovelDB.notes.list(novel.id)).length,
   };
 
@@ -311,15 +315,25 @@ const ADD_ACTIONS = {
   'nav-add-chapters': () => addChapter(),
   'nav-add-characters': () => showCreateCharacter(),
   'nav-add-world': () => showCreateWorldbuilding(),
+  'nav-add-promises': () => showCreatePromise(),
   'nav-add-notes': () => showCreateNote(),
 };
 Object.assign(ACTIONS, ADD_ACTIONS);
+Object.assign(ACTIONS, {
+  'edit-promise':    (id) => editPromise(id),
+  'del-promise':     (id) => removePromise(id),
+  'jump-diag':       (id, el) => jumpToEvidence(el.dataset.chapter, el.dataset.start, el.dataset.len),
+  'suppress-diag':   (id, el) => suppressDiagnostic(el.dataset.fp, el),
+  'rerun-continuity': () => renderSidebarPanel(),
+});
 
 /** 侧栏面板分派表。旧版定义了四个列表函数却从不调用，导致四个 tab 永远空白。 */
 const SIDEBAR_VIEWS = {
   chapters: renderChapterList,
   characters: showCharacterList,
   world: showWorldList,
+  promises: showPromiseList,
+  continuity: showContinuity,
   notes: showNotesList,
   settings: renderWorkspaceSettings,
 };
@@ -500,6 +514,26 @@ async function updateChapterTitle(id, title) {
 
 // ═══════════════════ 角色 ═══════════════════
 
+const CHARACTER_STATUS_ZH = { alive: '在世', deceased: '已死亡', unknown: '未知', missing: '下落不明' };
+
+/** appearance_tokens ⇄ 「特征词 | 从第N章 | 到第M章」行式文本 */
+function tokensToText(tokens) {
+  const num = (id) => { const c = (APP.chaptersCache || []).find((x) => x.id === id); return c ? c.order : null; };
+  return (tokens || []).map((t) => {
+    const from = num(t.since), to = num(t.until);
+    return [t.key, from ? `从第${from}章` : '', to ? `到第${to}章` : ''].filter(Boolean).join(' | ');
+  }).join('\n');
+}
+
+function textToTokens(text) {
+  const byOrder = new Map((APP.chaptersCache || []).map((c) => [c.order, c.id]));
+  const chapterOf = (s) => { const m = String(s || '').match(/(\d+)/); return m ? (byOrder.get(+m[1]) || null) : null; };
+  return String(text || '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [key, from, to] = line.split('|').map((x) => (x || '').trim());
+    return { key, since: chapterOf(from), until: chapterOf(to) };
+  }).filter((t) => t.key);
+}
+
 function characterFields(prefix, c = {}) {
   return `
     <div class="settings-field"><label class="settings-label">角色名称</label>
@@ -508,10 +542,22 @@ function characterFields(prefix, c = {}) {
       <select class="settings-select" id="${prefix}-role">
         ${NovelDB.CHARACTER_ROLES.map((r) => `<option value="${attr(r)}" ${c.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}
       </select></div>
+    <div class="settings-field"><label class="settings-label">状态</label>
+      <select class="settings-select" id="${prefix}-status">
+        ${NovelDB.CHARACTER_STATUS.map((s) => `<option value="${attr(s)}" ${(c.status || 'alive') === s ? 'selected' : ''}>${esc(CHARACTER_STATUS_ZH[s] || s)}</option>`).join('')}
+      </select>
+      <div class="settings-hint">标为「已死亡」后，之后章节里他一旦有动作就会被查出来。</div></div>
+    <div class="settings-field"><label class="settings-label">死于哪章（仅已死亡时填）</label>${chapterSelect(`${prefix}-diedin`, c['died-in'])}</div>
+    <div class="settings-field"><label class="settings-label">首次出场</label>${chapterSelect(`${prefix}-first`, c.first)}</div>
     <div class="settings-field"><label class="settings-label">性格特点</label>
       <textarea class="settings-input" id="${prefix}-personality" rows="2" placeholder="简短描述性格">${esc(c.personality || '')}</textarea></div>
     <div class="settings-field"><label class="settings-label">外观描述</label>
       <textarea class="settings-input" id="${prefix}-appearance" rows="2" placeholder="外貌、穿着等">${esc(c.appearance || '')}</textarea></div>
+    <div class="settings-field"><label class="settings-label">外貌特征区间（每行一条）</label>
+      <textarea class="settings-input mono" id="${prefix}-tokens" rows="3" placeholder="左臂断裂 | 从第3章&#10;断臂 | 从第3章 | 到第9章">${esc(tokensToText(c.appearance_tokens))}</textarea>
+      <div class="settings-hint">格式：<code>特征词 | 从第N章 | 到第M章</code>，后两项可省。填了才能查出「断臂又长回来了」。</div></div>
+    <div class="settings-field"><label class="settings-label">别称（顿号分隔）</label>
+      <input class="settings-input" id="${prefix}-aliases" value="${attr((c.aliases || []).map((a) => (typeof a === 'string' ? a : a.text)).join('、'))}" placeholder="小焰、林师兄"></div>
     <div class="settings-field"><label class="settings-label">背景故事</label>
       <textarea class="settings-input" id="${prefix}-background" rows="3" placeholder="角色的背景经历">${esc(c.background || '')}</textarea></div>
     <div class="settings-field"><label class="settings-label">备注</label>
@@ -522,8 +568,13 @@ function readCharacterForm(prefix) {
   return {
     name: val(`${prefix}-name`),
     role: val(`${prefix}-role`),
+    status: val(`${prefix}-status`),
+    'died-in': val(`${prefix}-diedin`) || null,
+    first: val(`${prefix}-first`) || null,
     personality: val(`${prefix}-personality`),
     appearance: val(`${prefix}-appearance`),
+    appearance_tokens: textToTokens(document.getElementById(`${prefix}-tokens`)?.value || ''),
+    aliases: val(`${prefix}-aliases`).split(/[、,，]/).map((s) => s.trim()).filter(Boolean).map((text) => ({ text, kind: 'nickname' })),
     background: val(`${prefix}-background`),
     notes: val(`${prefix}-notes`),
   };
@@ -687,14 +738,218 @@ async function showNotesList(host) {
   </div>`;
 }
 
+// ═══════════════════ 伏笔登记表 ═══════════════════
+
+function chapterSelect(idName, selected) {
+  const chapters = APP.chaptersCache || [];
+  return `<select class="settings-select" id="${idName}">
+    <option value="">（未定）</option>
+    ${chapters.map((c) => `<option value="${attr(c.id)}" ${selected === c.id ? 'selected' : ''}>第${c.order}章 ${esc(c.title)}</option>`).join('')}
+  </select>`;
+}
+
+const PROMISE_STATUS_ZH = { planned: '计划埋设', planted: '已埋未收', 'paid-off': '已回收', dropped: '已弃用' };
+const PROMISE_WEIGHT_ZH = { major: '主线级', minor: '支线级', candidate: '待确认' };
+
+function promiseFields(prefix, p = {}) {
+  const setup = p.setup || {}, payoff = p.payoff || {};
+  return `
+    <div class="settings-field"><label class="settings-label">伏笔是什么</label>
+      <input class="settings-input" id="${prefix}-p-title" value="${attr(p.title || '')}" placeholder="例：半枚铜印的来历"></div>
+    <div class="settings-field"><label class="settings-label">状态</label>
+      <select class="settings-select" id="${prefix}-p-status">
+        ${NovelDB.PROMISE_STATUS.map((s) => `<option value="${attr(s)}" ${p.status === s ? 'selected' : ''}>${esc(PROMISE_STATUS_ZH[s] || s)}</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><label class="settings-label">分量</label>
+      <select class="settings-select" id="${prefix}-p-weight">
+        ${NovelDB.PROMISE_WEIGHTS.map((w) => `<option value="${attr(w)}" ${(p.weight || 'minor') === w ? 'selected' : ''}>${esc(PROMISE_WEIGHT_ZH[w] || w)}</option>`).join('')}
+      </select>
+      <div class="settings-hint">主线级埋下 10 章未收即告警，支线级 25 章。待确认的不打扰你。</div></div>
+    <div class="settings-field"><label class="settings-label">埋于哪一章</label>${chapterSelect(`${prefix}-p-setup`, setup.chapter)}</div>
+    <div class="settings-field"><label class="settings-label">埋设时的原文依据</label>
+      <textarea class="settings-input" id="${prefix}-p-evidence" rows="2" placeholder="贴一句正文，将来判断有没有回收全靠它">${esc(setup.evidence || '')}</textarea></div>
+    <div class="settings-field"><label class="settings-label">回收于哪一章</label>${chapterSelect(`${prefix}-p-payoff`, payoff.chapter)}</div>
+    <div class="settings-field"><label class="settings-label">最迟该在哪章收</label>${chapterSelect(`${prefix}-p-due`, payoff.due)}
+      <div class="settings-hint">设了期限就走「逾期」检查，比笼统的未回收更准。</div></div>
+    <div class="settings-field"><label class="settings-label">备注</label>
+      <textarea class="settings-input" id="${prefix}-p-notes" rows="2">${esc(p.notes || '')}</textarea></div>`;
+}
+
+function readPromiseForm(prefix) {
+  return {
+    title: val(`${prefix}-p-title`),
+    status: val(`${prefix}-p-status`),
+    weight: val(`${prefix}-p-weight`),
+    setup_chapter: val(`${prefix}-p-setup`),
+    setup_evidence: val(`${prefix}-p-evidence`),
+    payoff_chapter: val(`${prefix}-p-payoff`),
+    payoff_due: val(`${prefix}-p-due`),
+    notes: val(`${prefix}-p-notes`),
+  };
+}
+
+function showCreatePromise() {
+  showModal('登记伏笔', promiseFields('m'), async () => {
+    const data = readPromiseForm('m');
+    if (!data.title) { showToast('请写清这条伏笔是什么'); return; }
+    await NovelDB.promises.save(APP.novel.id, data);
+    closeModal();
+    showToast('已登记');
+    await switchTab('promises');
+  });
+  setTimeout(() => document.getElementById('m-p-title')?.focus(), 60);
+}
+
+async function editPromise(id) {
+  const p = await NovelDB.promises.get(id);
+  if (!p) { showToast('伏笔不存在'); return; }
+  showModal(`伏笔 · ${p.title}`, promiseFields('e', p), async () => {
+    await NovelDB.promises.save(APP.novel.id, { ...readPromiseForm('e'), id: p.id, created_at: p.created_at });
+    closeModal();
+    showToast('已更新');
+    await switchTab('promises');
+  }, async () => { await removePromise(id); });
+}
+
+async function removePromise(id) {
+  if (!confirm('删除这条伏笔登记？')) return;
+  await NovelDB.promises.delete(id);
+  closeModal();
+  showToast('已删除');
+  await switchTab('promises');
+}
+
+async function showPromiseList(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const items = await NovelDB.promises.list(APP.novel.id);
+  if (!items.length) { host.innerHTML = emptyHint('点击 + 登记第一条伏笔'); return; }
+  const open = items.filter((i) => ['planned', 'planted'].includes(i.status)).length;
+  host.innerHTML = `<div class="char-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+    <div style="padding:8px 12px;font-size:12px;color:var(--text-secondary);">共 ${items.length} 条，未收 ${open} 条</div>
+    ${items.map((p) => {
+      const unpaid = ['planned', 'planted'].includes(p.status);
+      return `<div class="char-card" data-action="edit-promise" data-id="${attr(p.id)}">
+        <div class="char-card-name">${unpaid ? '🟡' : p.status === 'paid-off' ? '✅' : '⚪'} ${esc(p.title)}</div>
+        <div class="char-card-role">${esc(PROMISE_STATUS_ZH[p.status] || p.status)} · ${esc(PROMISE_WEIGHT_ZH[p.weight] || p.weight)}</div>
+        <div class="char-card-desc">${esc(p.setup?.evidence || p.notes || '')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// ═══════════════════ 连续性面板 ═══════════════════
+
+/** 读全库装配 ctx。与 CLI 唯一的差别是不跑 schema 校验（浏览器里没有那份 JSON）。 */
+async function loadStoryCtx() {
+  const novelId = APP.novel.id;
+  const [novel, chapters, characters, world, promises, timeline, suppressions] = await Promise.all([
+    NovelDB.novels.get(novelId), NovelDB.chapters.list(novelId), NovelDB.characters.list(novelId),
+    NovelDB.worldbuilding.list(novelId), NovelDB.promises.list(novelId),
+    NovelDB.timeline.list(novelId), NovelDB.suppressions.list(novelId),
+  ]);
+  APP.chaptersCache = chapters;
+  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions });
+}
+
+async function showContinuity(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  host.innerHTML = `<div style="padding:12px;">
+    <button class="btn btn-secondary" style="width:100%" data-action="rerun-continuity">🔍 重新检查</button>
+    <div id="diag-body" style="margin-top:10px;">检查中…</div>
+  </div>`;
+
+  const ctx = await loadStoryCtx();
+  const diags = NWRules.runRules(ctx);
+  APP.diags = diags;
+  const s = NWRules.summarize(diags);
+  const body = document.getElementById('diag-body');
+  if (!body) return;
+
+  const counts = `❌ ${s.error} · ⚠️ ${s.warn} · ℹ️ ${s.info}` + (s.suppressed ? ` · 🚫 已豁免 ${s.suppressed}` : '');
+  const visible = diags.filter((d) => !d.suppressedBy);
+  if (!visible.length) {
+    body.innerHTML = `<div style="color:var(--success);font-size:13px;">✅ 没有发现矛盾（${ctx.chapters.length} 章）</div>
+      <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 10 条规则，不判断文笔与情节好坏。伏笔、角色状态、外貌区间填得越全，检查越准。</div>`;
+    return;
+  }
+  body.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">${counts}</div>`
+    + visible.map((d) => {
+      const icon = d.severity === 'error' ? '❌' : d.severity === 'warn' ? '⚠️' : 'ℹ️';
+      const code = NWRules.RULES[d.rule]?.code || d.rule;
+      const quote = d.evidence?.quote;
+      const off = d.evidence?.offset || [];
+      return `<div class="char-card" ${d.chapter ? `data-action="jump-diag" data-chapter="${attr(d.chapter)}" data-start="${off[0] ?? ''}" data-len="${(off[1] ?? 0) - (off[0] ?? 0)}"` : ''}>
+        <div class="char-card-name">${icon} ${code} · ${esc(d.chapter || '全书')}</div>
+        <div class="char-card-desc">${esc(d.message)}</div>
+        ${quote ? `<div class="diag-quote">「${esc(quote)}」</div>` : ''}
+        ${d.suggestion ? `<div class="diag-suggest">→ ${esc(d.suggestion)}</div>` : ''}
+        <div class="diag-actions">
+          <button class="btn btn-secondary" data-action="suppress-diag" data-fp="${attr(d.fingerprint)}" title="确认是有意的（闪回/伏笔故意悬置），不再提醒">豁免</button>
+        </div>
+      </div>`;
+    }).join('');
+}
+
+async function suppressDiagnostic(fingerprint, el) {
+  const reason = prompt('豁免理由（会留痕，随时可撤销）：', '作者确认，是有意的');
+  if (reason === null) return;
+  await NovelDB.suppressions.save(APP.novel.id, fingerprint, reason || '作者确认');
+  showToast('已豁免，可撤销');
+  await renderSidebarPanel();
+}
+
+/** 点诊断跳到正文：选中依据句并按行高比例滚动过去。 */
+async function jumpToEvidence(chapterId, startRaw, lenRaw) {
+  if (!chapterId) return;
+  await openChapterById(chapterId);
+  const ta = document.getElementById('edt-content');
+  if (!ta) return;
+  // 书级/跨章诊断没有 offset；Number('')===0 会被误当成正文开头
+  if (startRaw === '' || startRaw == null || !Number.isFinite(+startRaw)) { ta.focus(); return; }
+  const start = +startRaw;
+  const len = Number(lenRaw) || 0;
+  ta.focus();
+  ta.setSelectionRange(start, start + len);
+  const linesBefore = ta.value.slice(0, start).split('\n').length - 1;
+  const totalLines = ta.value.split('\n').length || 1;
+  ta.scrollTop = Math.max(0, (linesBefore / totalLines) * ta.scrollHeight - ta.clientHeight / 3);
+}
+
 // ═══════════════════ AI 工具箱 ═══════════════════
 
 function renderAIPanelTools() {
   const host = document.getElementById('ai-panel-tools');
   if (!host) return;
+  const temp = NovelLLM.getConfig()?.temperature ?? 0.8;
   host.innerHTML = AI_TOOLS.map((t) =>
     `<button class="ai-tool-btn" data-action="run-ai" data-tool="${attr(t.id)}">${t.icon} ${esc(t.label)}</button>`
-  ).join('');
+  ).join('') + `
+    <label class="ai-temp">写作温度 <b id="ai-temp-val">${Number(temp).toFixed(1)}</b>
+      <input type="range" id="ai-temp" min="0.2" max="1.4" step="0.1" value="${attr(temp)}">
+    </label>`;
+  host.querySelector('#ai-temp').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    host.querySelector('#ai-temp-val').textContent = v.toFixed(1);
+    NovelLLM.setConfig({ ...(NovelLLM.getConfig() || {}), temperature: v });
+  });
+}
+
+/** 上下文用量条。静默裁切是最坑人的失败方式：不报错，只是产出与前文脱节。 */
+function renderUsageBar(el, usage) {
+  if (!el || !usage) return;
+  const bar = document.createElement('div');
+  bar.className = 'ai-usage';
+  bar.textContent = `上下文 ${usage.bytes} / ${usage.budgetBytes} 字节 · `
+    + usage.sections.map((s) => `${s.present ? '✓' : '✗'}${s.name}${s.included?.length ? `（${s.included.join('、')}）` : ''}`).join('  ');
+  if (usage.truncated || usage.loreDropped?.length) {
+    const warn = document.createElement('div');
+    warn.className = 'ai-usage-warn';
+    warn.textContent = `⚠️ 有内容被裁掉${usage.loreDropped?.length ? `：${usage.loreDropped.length} 条世界设定` : ''}。AI 没看到被裁的部分，产出可能与前文脱节。`;
+    bar.appendChild(warn);
+  }
+  el.prepend(bar);
 }
 
 async function runAIPanel(toolId) {
@@ -743,18 +998,21 @@ async function runAITool(toolId, target) {
     NovelDB.worldbuilding.list(novelId),
   ]);
   let messages = [];
+  APP.lastAIUsage = null;
 
   if (toolId === 'continue') {
     const ctx = await NovelDB.chapters.getWithPrev(novelId, APP.chapter.id);
+    const built = NovelLLM.buildContinueContext({
+      novel: APP.novel,
+      characters,
+      worldEntries: world,
+      currentChapter: ctx?.chapter ? { ...ctx.chapter, content } : { title: APP.chapter.title, content },
+      prevChapter: ctx?.prevChapter || null,
+    });
+    APP.lastAIUsage = built.usage;
     messages = [
       { role: 'system', content: '你是一名经验丰富的中文网文作家，负责在既有设定与前文之下续写。' },
-      { role: 'user', content: NovelLLM.buildContinuePrompt({
-          novel: APP.novel,
-          characters,
-          worldEntries: world,
-          currentChapter: ctx?.chapter ? { ...ctx.chapter, content } : { title: APP.chapter.title, content },
-          prevChapter: ctx?.prevChapter || null,
-      }) },
+      { role: 'user', content: built.prompt },
     ];
   } else if (toolId === 'consistency') {
     messages = [
@@ -782,12 +1040,19 @@ async function runAITool(toolId, target) {
   target.textContent = '';
   APP.lastAIResult = '';
   APP.aiAbort = new AbortController();
+  const temperature = NovelLLM.getConfig()?.temperature;
   let full = '';
   let aborted = false;
 
-  for await (const msg of NovelLLM.streamChat(messages, { max_tokens: spec.maxTokens, signal: APP.aiAbort.signal })) {
+  for await (const msg of NovelLLM.streamChat(messages, {
+      max_tokens: spec.maxTokens, signal: APP.aiAbort.signal, temperature,
+  })) {
     if (msg.type === 'chunk') { full += msg.content; target.textContent = full; target.scrollTop = target.scrollHeight; }
-    else if (msg.type === 'error') { target.textContent = `⚠️ ${msg.content}`; APP.aiAbort = null; return; }
+    else if (msg.type === 'error') {
+      APP.aiAbort = null;
+      renderAIError(target, toolId, msg.content);
+      return;
+    }
     else if (msg.type === 'aborted') { aborted = true; break; }
   }
   APP.aiAbort = null;
@@ -800,11 +1065,29 @@ async function runAITool(toolId, target) {
   renderAIResult(target, full, { toolId, aborted });
 }
 
+/** 失败要能一键重试：网络中断与限流大多再发一次就好，不该逼用户重新点一遍流程。 */
+function renderAIError(el, toolId, message) {
+  el.textContent = '';
+  const head = document.createElement('div');
+  head.textContent = `⚠️ ${message}`;
+  el.appendChild(head);
+  const bar = document.createElement('div');
+  bar.className = 'ai-result-actions';
+  const retry = document.createElement('button');
+  retry.className = 'btn btn-secondary';
+  retry.style.cssText = 'font-size:13px;padding:6px 14px;margin-top:10px;';
+  retry.textContent = '🔄 重试';
+  retry.onclick = () => { el.textContent = '正在处理…'; runAITool(toolId, el); };
+  bar.appendChild(retry);
+  el.appendChild(bar);
+}
+
 /** 结果用 textContent 落文本、按钮用 DOM API 追加。
  *  旧版把模型输出 innerHTML 进面板（模型返回什么就执行什么），
  *  且 applyToEditor 从 textContent 回读，导致插入时多带一段按钮文字。 */
 function renderAIResult(el, text, meta = {}) {
   el.textContent = text;
+  renderUsageBar(el, APP.lastAIUsage);
 
   const bar = document.createElement('div');
   bar.className = 'ai-result-actions';
@@ -893,6 +1176,169 @@ Object.assign(ACTIONS, {
   'goto-global-settings': () => router.go('settings'),
 });
 
+// ═══════════════════ .novelweave/ 导出与导入 ═══════════════════
+
+const fsAvailable = () => typeof window.showDirectoryPicker === 'function';
+
+async function pickDirectory(mode) {
+  try {
+    const handle = await window.showDirectoryPicker(mode === 'readwrite'
+      ? { mode: 'readwrite', id: 'nw-book' } : { id: 'nw-book' });
+    // 权限要显式申请，否则 Chrome 会在下次调用时才弹，导致这里以为拿到了写权限
+    if (mode === 'readwrite' && handle.queryPermission) {
+      const perm = await handle.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') throw new Error('没有获得目录写权限');
+    }
+    return handle;
+  } catch (e) {
+    if (e.name === 'AbortError') return null;
+    throw e;
+  }
+}
+
+async function writeTreeToDir(rootHandle, tree) {
+  for (const [rel, text] of Object.entries(tree)) {
+    const parts = rel.split('/');
+    let dir = rootHandle;
+    for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
+    const fh = await dir.getFileHandle(parts.at(-1), { create: true });
+    const w = await fh.createWritable();
+    await w.write(text);
+    await w.close();
+  }
+}
+
+async function readTreeFromDir(dirHandle, prefix = '') {
+  const out = {};
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind === 'file') out[prefix + name] = await (await handle.getFile()).text();
+    else Object.assign(out, await readTreeFromDir(handle, `${prefix}${name}/`));
+  }
+  return out;
+}
+
+function downloadText(filename, text, type = 'application/json') {
+  const blob = new Blob([text], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+async function exportNovelweave() {
+  if (!APP.novel) { showToast('先进入一部作品再导出'); return; }
+  const ctx = await loadStoryCtx();
+  const tree = await NWProject.buildProjectTree(ctx);
+  if (!fsAvailable()) {
+    downloadText(`novelweave-${ctx.book.slug}-dir.json`, JSON.stringify({ app: 'novelweave-tree', tree }, null, 2));
+    showToast('此浏览器不支持目录写入，已导出为单文件目录树');
+    return;
+  }
+  const handle = await pickDirectory('readwrite');
+  if (!handle) return;
+  // 只写自己格式内的文件；不碰目录里的其他内容
+  await writeTreeToDir(handle, tree);
+  showToast(`已导出 ${Object.keys(tree).length} 个文件到 ${handle.name}`);
+}
+
+/**
+ * 逐条比较：file = 目录里的现在值，local = 库里的现在值，base = 上次导出时 sync.json 记的值。
+ * 库里没有这条 → new；只有一边动过 → 取那一边；两边都动过 → conflict，绝不自动选边。
+ */
+async function buildMergePlan(parsed, currentRows) {
+  const base = parsed.sync?.records || {};
+  const plan = [];
+  const buckets = [
+    ['chapters', 'chapter', parsed.chapters, currentRows.chapters],
+    ['characters', 'character', parsed.characters, currentRows.characters],
+    ['worldbuilding', 'world', parsed.world, currentRows.worldbuilding],
+    ['promises', 'promise', parsed.promises, currentRows.promises],
+    ['timeline', 'anchor', parsed.timeline, currentRows.timeline],
+  ];
+  for (const [store, kind, fileRows, localRows] of buckets) {
+    const localById = new Map(localRows.map((r) => [r.id, r]));
+    for (const fr of fileRows) {
+      const lr = localById.get(fr.id);
+      const tag = NWProject.tagFor(kind, fr.id);
+      const fileHash = await NWProject.hashRecord(kind, fr);
+      if (!lr) { plan.push({ tag, kind, store, id: fr.id, action: 'new', fileRow: fr, localRow: null }); continue; }
+      const localHash = await NWProject.hashRecord(kind, lr);
+      plan.push({
+        tag, kind, store, id: fr.id,
+        action: NWProject.classify(base[tag]?.hash ?? null, fileHash, localHash),
+        fileRow: fr, localRow: lr,
+      });
+    }
+  }
+  return plan;
+}
+
+async function importNovelweave() {
+  let files;
+  if (fsAvailable()) {
+    const handle = await pickDirectory('read');
+    if (!handle) return;
+    files = await readTreeFromDir(handle);
+  } else {
+    showToast('此浏览器不支持目录读取，请用「导入备份 JSON」');
+    return;
+  }
+  let parsed;
+  try {
+    parsed = NWProject.parseFileMap(files);
+  } catch (e) {
+    showToast(`不是合法的 .novelweave/ 目录：${e.message}`);
+    return;
+  }
+
+  // 目标作品：库里已有同 id 就合并，没有就按文件原样建档
+  let novel = await NovelDB.novels.get(parsed.book.id);
+  if (!novel) {
+    novel = await NovelDB.putRow('novels', {
+      id: parsed.book.id, title: parsed.book.title, genre: parsed.book.genre,
+      description: parsed.book.description || '', word_count: 0, chapter_count: 0,
+      created_at: NWText.fromISO(parsed.book.created) || Date.now(), updated_at: Date.now(),
+    });
+  }
+  const current = {
+    chapters: await NovelDB.chapters.list(novel.id),
+    characters: await NovelDB.characters.list(novel.id),
+    worldbuilding: await NovelDB.worldbuilding.list(novel.id),
+    promises: await NovelDB.promises.list(novel.id),
+    timeline: await NovelDB.timeline.list(novel.id),
+  };
+  const plan = await buildMergePlan(parsed, current);
+  const conflicts = plan.filter((p) => p.action === 'conflict');
+  const apply = plan.filter((p) => ['new', 'take-file'].includes(p.action));
+
+  for (const item of apply) {
+    await NovelDB.putRow(item.store, { ...item.fileRow, novel_id: novel.id });
+  }
+  await NovelDB.recountNovelStats(novel.id);
+  for (const s of parsed.suppressions || []) {
+    await NovelDB.putRow('suppressions', { id: 'sup_' + NWText.fnv1a(s.fingerprint), novel_id: novel.id, fingerprint: s.fingerprint, reason: s.reason || '作者确认', at: NWText.fromISO(s.at) || Date.now() });
+  }
+
+  if (conflicts.length) {
+    const conflictTree = {};
+    for (const c of conflicts) {
+      conflictTree[`conflicts/${c.tag}-file.json`] = JSON.stringify({ ...c.fileRow, novel_id: novel.id }, null, 2) + '\n';
+      conflictTree[`conflicts/${c.tag}-local.json`] = JSON.stringify({ ...c.localRow, novel_id: novel.id }, null, 2) + '\n';
+    }
+    if (fsAvailable()) {
+      try {
+        const dir = await pickDirectory('readwrite');
+        if (dir) await writeTreeToDir(dir, conflictTree);
+      } catch { /* 写不下就用下载兜底，下面一定给出一份 */ }
+    }
+    downloadText(`novelweave-conflicts-${Date.now()}.json`, JSON.stringify({ app: 'novelweave-conflicts', conflicts: conflicts.map(({ fileRow, localRow, ...m }) => ({ ...m, fileRow, localRow })) }, null, 2));
+  }
+
+  showToast(`导入完成：新增/更新 ${apply.length} 条` + (conflicts.length ? `，${conflicts.length} 条冲突未覆盖` : ''));
+  await renderHomePage();
+}
+
 // ═══════════════════ 全局设置页 ═══════════════════
 
 function renderSettings() {
@@ -925,7 +1371,19 @@ function renderSettings() {
     <div class="settings-section" style="margin-top:20px;">
       <div class="settings-section-title">数据</div>
       <div class="settings-hint" style="margin-bottom:10px;">作品存在本机浏览器 IndexedDB 里。清浏览器数据会一起丢，请定期导出备份。</div>
-      <button class="btn btn-secondary" data-action="export-backup">导出全部作品备份</button>
+      <div class="settings-field">
+        <button class="btn btn-secondary" data-action="export-backup">导出全部作品备份（单文件快照）</button>
+        <button class="btn btn-secondary" data-action="import-backup">导入备份 JSON</button>
+      </div>
+      <div class="settings-field">
+        <button class="btn btn-primary" data-action="export-novelweave">导出当前作品为 .novelweave/</button>
+        <button class="btn btn-secondary" data-action="import-novelweave">从 .novelweave/ 目录导入</button>
+        <div class="settings-hint" style="margin-top:8px;">
+          目录是与命令行 agent 共享的工作副本：正文是 Markdown，状态是 JSON。
+          导入时逐条三方比较，两侧都改过的记录不会被自动覆盖，会连本地版一起导出到 conflicts/ 让你选。
+          ${fsAvailable() ? '' : '<br>此浏览器不支持目录读写，导出会退回单个 JSON 文件。'}
+        </div>
+      </div>
     </div>
     <div class="settings-section" style="margin-top:20px;">
       <div class="settings-section-title">关于织文</div>
@@ -957,9 +1415,36 @@ Object.assign(ACTIONS, {
     const r = await NovelLLM.testConnection({ baseURL: val('s-baseurl'), apiKey: val('s-apikey'), model: val('s-model') });
     el.textContent = r.ok ? '✅ 连接成功' : `❌ ${r.message}`;
   },
+  'export-novelweave': () => exportNovelweave(),
+  'import-novelweave': () => importNovelweave(),
+  'import-backup': () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const dump = JSON.parse(await file.text());
+        if (!dump?.data?.novels) { showToast('不是织文的备份文件'); return; }
+        if (!confirm('导入会按 id 覆盖库里同名记录，且不可撤销。建议先点上面的「导出全部作品备份」存一份。继续吗？')) return;
+        let n = 0;
+        for (const [store, rows] of Object.entries(dump.data)) {
+          for (const row of rows || []) { await NovelDB.putRow(store, row); n++; }
+        }
+        await NovelDB.recountAll();
+        showToast(`已导入 ${n} 条记录`);
+        await renderHomePage();
+      } catch (e) {
+        showToast(`导入失败：${e.message}`);
+      }
+    };
+    input.click();
+  },
   'export-backup': async () => {
     const dump = { app: 'novelweave', schemaVersion: 1, exportedAt: new Date().toISOString(), data: {} };
-    for (const store of ['novels', 'chapters', 'characters', 'worldbuilding', 'notes']) {
+    // 从数据层推导，不再手写表名 —— 手写清单在加表时会静默漏备份
+    for (const store of ['novels', ...NovelDB.CASCADE_STORES]) {
       dump.data[store] = await NovelDB.dump(store);
     }
     const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });

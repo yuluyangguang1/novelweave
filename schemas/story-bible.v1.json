@@ -95,6 +95,7 @@
         "slug": { "type": "string", "nullable": true },
         "name": { "type": "string", "minLength": 1, "maxLength": 60 },
         "role": { "enum": ["protagonist", "antagonist", "deuteragonist", "supporting", "minor", "narrator"] },
+        "role_zh": { "type": "string", "x-standard-origin": "NovelWeave 扩展：保留中文定位标签（主角/配角/…），使 Web 端往返不丢显示信息" },
         "status": { "enum": ["alive", "deceased", "unknown", "missing"] },
         "died-in": { "type": "string", "nullable": true },
         "first": { "type": "string", "nullable": true },
@@ -150,7 +151,7 @@
       "required": ["id", "type", "title", "status"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[pq]-[0-9]{3,6}$" },
+        "id": { "type": "string", "pattern": "^[pq][-_][a-z0-9][a-z0-9-]{0,20}$" },
         "type": { "enum": ["promise", "question"] },
         "title": { "type": "string", "minLength": 1, "maxLength": 200 },
         "status": { "enum": ["planned", "planted", "paid-off", "dropped", "open", "answered", "resolved"] },
@@ -206,7 +207,7 @@
       "required": ["id", "label"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^(ev|bs)-[0-9]{3,6}$" },
+        "id": { "type": "string", "pattern": "^(ev|bs)[-_][a-z0-9][a-z0-9-]{0,20}$" },
         "chapter": { "type": "string", "nullable": true },
         "label": { "type": "string", "minLength": 1 },
         "at": { "type": "object", "additionalProperties": false, "properties": { "day": { "type": "number" }, "clock": { "enum": ["晨", "午", "暮", "夜", "三更", "黎明", null] } } },

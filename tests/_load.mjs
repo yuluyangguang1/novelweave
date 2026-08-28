@@ -17,6 +17,8 @@ globalThis.window = globalThis;
 export const NWText = (globalThis.NWText = require('../src/core/text.js'));
 export const NWBible = (globalThis.NWBible = require('../src/core/bible.js'));
 export const NWRules = (globalThis.NWRules = require('../src/core/rules.js'));
+export const NWStory = (globalThis.NWStory = require('../src/core/story.js'));
+export const NWProject = (globalThis.NWProject = require('../src/core/project.js'));
 export const NovelLLM = (globalThis.NovelLLM = require('../src/core/llm.js'));
 export const routerMod = require('../src/router.js');
 

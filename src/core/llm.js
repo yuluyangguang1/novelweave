@@ -137,20 +137,29 @@
    * opts: { novel, characters, worldEntries, currentChapter, prevChapter, nextTitle, budget }
    */
   function buildContinuePrompt(opts = {}) {
+    return buildContinueContext(opts).prompt;
+  }
+
+  /**
+   * 构造续写上下文，并附一份**用量报告**。
+   * 静默裁切是最坑人的失败方式：它不报错，只是写出来的东西和前文脱节，
+   * 而作者会以为模型看过了全书。所以截断必须显式回传。
+   */
+  function buildContinueContext(opts = {}) {
     const b = Object.assign({}, DEFAULT_BUDGET, opts.budget);
     const { novel, characters, worldEntries, currentChapter, prevChapter } = opts;
 
     const scanText = [prevChapter?.content, currentChapter?.content].filter(Boolean).join('\n');
     const lore = loreTrigger(scanText, worldEntries, b);
-
     const prevTail = prevChapter?.content
       ? `【上一章《${prevChapter.title || '未命名'}》结尾】\n…${prevChapter.content.slice(-b.prevTailChars)}\n\n`
       : '';
-    const curBody = currentChapter?.content?.trim()
+    const fresh = !!currentChapter?.content?.trim();
+    const curBody = fresh
       ? `【本章《${currentChapter.title || '未命名'}》已写正文】\n…${currentChapter.content.slice(-b.currentTailChars)}\n\n请从上面正文的末尾接着写下去，不要重复已有内容。\n`
       : `【本章《${opts.nextTitle || currentChapter?.title || '下一章'}》尚未开始】\n请接着上一章写本章。\n`;
 
-    return `${novel?.description ? '【作品设定】\n' + novel.description + '\n\n' : ''}${renderLore(lore.entries)}${lore.entries.length ? '\n\n' : ''}【角色设定】
+    const prompt = `${novel?.description ? '【作品设定】\n' + novel.description + '\n\n' : ''}${renderLore(lore.entries)}${lore.entries.length ? '\n\n' : ''}【角色设定】
 ${renderCharacters(characters)}
 
 ${prevTail}${curBody}
@@ -160,6 +169,26 @@ ${prevTail}${curBody}
 - 风格：${novel?.genre || '玄幻小说'}
 - 字数要求 3000-5000 字
 - 只输出小说正文，不要任何解释${opts.extraInstructions ? '\n- ' + opts.extraInstructions : ''}`;
+
+    return {
+      prompt,
+      usage: {
+        bytes: NWText.bytesOf(prompt),
+        budgetBytes: b.contextBytes,
+        sections: [
+          { name: '作品设定', present: !!novel?.description, bytes: NWText.bytesOf(novel?.description || '') },
+          { name: '世界设定', present: lore.entries.length > 0, bytes: lore.bytes,
+            included: lore.entries.map((e) => e.name), dropped: lore.dropped },
+          { name: '角色设定', present: !!(characters || []).length, bytes: NWText.bytesOf(renderCharacters(characters)) },
+          { name: '上一章结尾', present: !!prevTail, bytes: NWText.bytesOf(prevTail) },
+          { name: '本章已写正文', present: fresh, bytes: NWText.bytesOf(curBody) },
+        ],
+        hasPrevChapter: !!prevTail,
+        hasCurrentBody: fresh,
+        loreDropped: lore.dropped,
+        truncated: lore.dropped.length > 0,
+      },
+    };
   }
 
   /** 一致性检查。输入是当前章正文 + 全部角色 + 触发的世界条目。 */
@@ -317,7 +346,7 @@ ${chText}
     CONFIG_KEY: NW_LLM_CONFIG_KEY,
     getConfig: getLLMConfig, setConfig: setLLMConfig, hasConfig: hasLLMConfig,
     toLoreEntry, loreTrigger,
-    buildContinuePrompt, buildConsistencyCheckPrompt, buildSummarizePrompt,
+    buildContinuePrompt, buildContinueContext, buildConsistencyCheckPrompt, buildSummarizePrompt,
     buildPolishPrompt, buildOutlinePrompt,
     streamChat, requestChat, testConnection,
   };

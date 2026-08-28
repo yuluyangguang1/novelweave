@@ -2,15 +2,17 @@
  * NovelWeave · 织文 — IndexedDB 数据层
  * 小说文本量大，localStorage 不够用。用 IndexedDB 存储全书。
  *
- * 两条纪律：
+ * 三条纪律：
  * 1. 统计量（word_count / chapter_count）永远是派生值，由 recount 全量重算，
  *    不做增量加减。旧版用 wordDelta 增量记账，只在「同时传 content」时才正确，
  *    单改标题会把一整章字数从总数里扣掉。
  * 2. 主键不用 Date.now()。同毫秒连点两次「+」会让后一条静默覆盖前一条。
+ * 3. 加字段不做破坏性迁移：老行在读取时由 normalize* 补默认值，
+ *    用户不必清库就能升级。（清库等于丢作品，这个代价不可接受。）
  */
 
 const DB_NAME = 'novelweave_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let _dbPromise = null;
 
@@ -22,6 +24,13 @@ function openDB() {
       const db = e.target.result;
       if (!db.objectStoreNames.contains('novels')) db.createObjectStore('novels', { keyPath: 'id' });
       for (const name of ['chapters', 'characters', 'worldbuilding', 'notes']) {
+        if (!db.objectStoreNames.contains(name)) {
+          const s = db.createObjectStore(name, { keyPath: 'id' });
+          s.createIndex('novel_id', 'novel_id', { unique: false });
+        }
+      }
+      // v2：Story Bible 的新域。老库升上来只会多出空表，既有数据不动。
+      for (const name of ['promises', 'timeline', 'suppressions']) {
         if (!db.objectStoreNames.contains(name)) {
           const s = db.createObjectStore(name, { keyPath: 'id' });
           s.createIndex('novel_id', 'novel_id', { unique: false });
@@ -150,8 +159,11 @@ async function updateNovel(id, updates) {
   return put('novels', { ...n, ...updates, updated_at: Date.now() });
 }
 
+/** 删书必须一起清掉的从属表；漏一个就会留下再也查不到的孤儿数据。 */
+const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions'];
+
 async function deleteNovel(id) {
-  for (const store of ['chapters', 'characters', 'worldbuilding', 'notes']) {
+  for (const store of CASCADE_STORES) {
     const rows = await getByIndex(store, 'novel_id', id);
     for (const r of rows) await del(store, r.id);
   }
@@ -207,30 +219,119 @@ async function deleteChapter(id) {
   await recountNovelStats(ch.novel_id);
 }
 
-// ═══════════ 角色 ═══════════
+// ═══════════════════ 角色 ═══════════════════
 
 const CHARACTER_ROLES = ['主角', '配角', '反派', '导师', '龙套'];
+const CHARACTER_STATUS = ['alive', 'deceased', 'unknown', 'missing'];
+
+/**
+ * 归一化：老行缺的字段在这里补默认值，不做破坏性迁移。
+ * appearance 保持字符串（改类型会丢数据），外貌「特征区间」平行存 appearance_tokens。
+ */
+function normalizeCharacter(c) {
+  return {
+    ...c,
+    role: c.role || '配角',
+    status: CHARACTER_STATUS.includes(c.status) ? c.status : 'alive',
+    'died-in': c['died-in'] ?? null,
+    first: c.first ?? null,
+    aliases: Array.isArray(c.aliases) ? c.aliases : [],
+    appearance: c.appearance || '',
+    appearance_tokens: Array.isArray(c.appearance_tokens) ? c.appearance_tokens : [],
+    enabled: c.enabled !== false,
+  };
+}
 
 async function listCharacters(novelId) {
-  return stableSort(await getByIndex('characters', 'novel_id', novelId));
+  return stableSort(await getByIndex('characters', 'novel_id', novelId)).map(normalizeCharacter);
+}
+
+async function getCharacter(id) {
+  const c = await get('characters', id);
+  return c ? normalizeCharacter(c) : null;
 }
 
 async function createCharacter(novelId, data) {
-  const ch = await put('characters', {
+  const rec = normalizeCharacter({
     id: newId('char'), novel_id: novelId,
     name: data.name, role: data.role || '配角',
     personality: data.personality || '', appearance: data.appearance || '',
     background: data.background || '', notes: data.notes || '',
+    status: data.status, 'died-in': data['died-in'], first: data.first,
+    aliases: data.aliases, appearance_tokens: data.appearance_tokens,
     created_at: Date.now(),
   });
-  return ch;
+  return put('characters', rec);
 }
 
 async function updateCharacter(id, updates) {
   const ch = await get('characters', id);
   if (!ch) throw new Error('角色不存在');
-  return put('characters', { ...ch, ...updates });
+  return put('characters', normalizeCharacter({ ...ch, ...updates }));
 }
+
+// ═══════════ 伏笔登记表 ═══════════
+
+const PROMISE_STATUS = ['planned', 'planted', 'paid-off', 'dropped'];
+const PROMISE_WEIGHTS = ['major', 'minor', 'candidate'];
+
+async function listPromises(novelId) {
+  return stableSort(await getByIndex('promises', 'novel_id', novelId));
+}
+
+async function savePromise(novelId, data) {
+  const id = data.id || newId('p');
+  const rec = {
+    id, novel_id: novelId,
+    type: data.type === 'question' ? 'question' : 'promise',
+    title: data.title || '未命名伏笔',
+    status: PROMISE_STATUS.includes(data.status) ? data.status : 'planned',
+    weight: PROMISE_WEIGHTS.includes(data.weight) ? data.weight : 'minor',
+    setup: { chapter: data.setup_chapter || null, evidence: data.setup_evidence || '' },
+    payoff: { chapter: data.payoff_chapter || null, due: data.payoff_due || null },
+    characters: Array.isArray(data.characters) ? data.characters : [],
+    notes: data.notes || '',
+    created_at: data.created_at || Date.now(), updated_at: Date.now(),
+  };
+  return put('promises', rec);
+}
+
+async function deletePromise(id) { await del('promises', id); }
+
+// ═══════════ 时间线锚点 ═══════════
+
+async function listTimeline(novelId) {
+  return stableSort(await getByIndex('timeline', 'novel_id', novelId));
+}
+
+async function saveAnchor(novelId, data) {
+  const rec = {
+    id: data.id || newId('ev'), novel_id: novelId,
+    chapter: data.chapter || null, label: data.label || '',
+    day: Number.isFinite(+data.day) ? +data.day : null,
+    clock: data.clock || '', entities: Array.isArray(data.entities) ? data.entities : [],
+    confidence: ['explicit', 'implied', 'author'].includes(data.confidence) ? data.confidence : 'author',
+    created_at: data.created_at || Date.now(),
+  };
+  return put('timeline', rec);
+}
+
+async function deleteAnchor(id) { await del('timeline', id); }
+
+// ═══════════ 连续性豁免 ═══════════
+
+async function listSuppressions(novelId) {
+  return stableSort(await getByIndex('suppressions', 'novel_id', novelId));
+}
+
+async function saveSuppression(novelId, fingerprint, reason) {
+  return put('suppressions', {
+    id: 'sup_' + NWText.fnv1a(fingerprint), novel_id: novelId,
+    fingerprint, reason: reason || '作者确认', at: Date.now(),
+  });
+}
+
+async function deleteSuppression(id) { await del('suppressions', id); }
 
 // ═══════════ 世界设定 ═══════════
 
@@ -280,15 +381,28 @@ async function deleteNote(id) {
 
 // ── 全局暴露 ──
 window.NovelDB = {
-  CHARACTER_ROLES,
-  WORLD_TYPES,
+  CHARACTER_ROLES, CHARACTER_STATUS, WORLD_TYPES, PROMISE_STATUS, PROMISE_WEIGHTS,
+  CASCADE_STORES,
   dump: getAll,
+  /**
+   * 按原样写入一行。导入 .novelweave/ 专用：必须尊重文件里的 id 与时间戳，
+   * 而各 create()/save() 会重新生成主键或补默认值，不能用于导入。
+   */
+  putRow: (store, row) => {
+    if (!['novels', 'chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions'].includes(store)) {
+      throw new Error(`未知 store：${store}`);
+    }
+    return put(store, row);
+  },
   recountNovelStats,
   recountAll,
   resequenceChapters,
   novels:       { list: listNovels, get: (id) => get('novels', id), create: createNovel, update: updateNovel, delete: deleteNovel },
   chapters:     { list: listChapters, get: (id) => get('chapters', id), create: createChapter, update: updateChapter, delete: deleteChapter, nextOrder: nextChapterOrder, getWithPrev: getChapterWithPrev },
-  characters:   { list: listCharacters, get: (id) => get('characters', id), create: createCharacter, update: updateCharacter, delete: (id) => del('characters', id) },
+  characters:   { list: listCharacters, get: getCharacter, create: createCharacter, update: updateCharacter, delete: (id) => del('characters', id) },
   worldbuilding:{ list: listWorldbuilding, get: (id) => get('worldbuilding', id), create: createWorldbuilding, update: updateWorldbuilding, delete: (id) => del('worldbuilding', id) },
   notes:        { list: listNotes, save: saveNote, get: (id) => get('notes', id), update: updateNote, delete: deleteNote },
+  promises:     { list: listPromises, save: savePromise, get: (id) => get('promises', id), delete: deletePromise },
+  timeline:     { list: listTimeline, save: saveAnchor, get: (id) => get('timeline', id), delete: deleteAnchor },
+  suppressions: { list: listSuppressions, save: saveSuppression, delete: deleteSuppression },
 };

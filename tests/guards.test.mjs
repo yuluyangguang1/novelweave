@@ -40,19 +40,49 @@ test('旧的 escapeHtml 已被 NWText.esc 取代（它不转义引号）', () =>
   assert.equal(read('src/app.js').includes('escapeHtml'), false);
 });
 
-test('脚本加载顺序：text.js 先于依赖它的 db.js / llm.js，router.js 先于 app.js', () => {
+test('PWA 一旦存在就必须自洽：清单覆盖页面加载的每个文件', () => {
+  const hasManifest = existsSync(repoPath('manifest.webmanifest'));
+  const hasSw = existsSync(repoPath('sw.js'));
+  if (!hasManifest && !hasSw) return;   // 还没做 PWA，前面的测试已要求 README 不许声称
+  assert.ok(hasManifest && hasSw, 'manifest 与 sw.js 必须同时存在');
+
+  const html = read('index.html');
+  assert.match(html, /rel="manifest"/, 'index.html 没链接 manifest');
+  assert.match(html, /serviceWorker\.register\(['"]\.\/sw\.js['"]\)/, 'index.html 没注册 service worker');
+  // 子路径部署下不能用根绝对路径
+  assert.equal(/href="\/|src="\/|register\(['"]\//.test(html), false, '出现根绝对路径，会破坏 /novelweave/ 子路径部署');
+
+  const sw = read('sw.js');
+  const list = [...sw.matchAll(/^\s*'(.*?)',/gm)].map((m) => m[1]);
+  const precached = new Set(list.filter((p) => p !== ''));
+  const loaded = [...html.matchAll(/(?:src|href)="((?:src|icons)\/[^"?]+)/g)].map((m) => m[1]);
+  const missing = loaded.filter((p) => !precached.has(p));
+  assert.deepEqual(missing, [], `sw.js 预缓存清单漏了这些文件，离线会白屏：${missing.join(', ')}`);
+  for (const p of precached) {
+    assert.ok(existsSync(repoPath(p)), `预缓存清单里的文件不存在：${p}`);
+  }
+});
+
+test('跨域请求绝不进 service worker 缓存（BYOK 请求必须直达服务商）', () => {
+  if (!existsSync(repoPath('sw.js'))) return;
+  const sw = read('sw.js');
+  assert.match(sw, /if \(!isSameOrigin\(req\.url\)\) return;/, '缺少跨域放行守卫');
+  assert.match(sw, /if \(req\.method !== 'GET'\) return;/, '缺少非 GET 放行守卫');
+});
+
+test('核心模块必须全部被页面加载且顺序正确（漏一个是静默失效）', () => {
   const html = read('index.html');
   const order = [...html.matchAll(/src="([^"]+\.js)"/g)].map((m) => m[1]);
+  for (const mod of ['src/core/text.js', 'src/core/bible.js', 'src/core/rules.js', 'src/core/story.js', 'src/core/project.js']) {
+    assert.ok(order.includes(mod), `${mod} 没进加载清单`);
+    assert.ok(order.indexOf('src/core/text.js') <= order.indexOf(mod), `${mod} 必须排在 text.js 之后`);
+  }
+  assert.ok(order.indexOf('src/core/bible.js') < order.indexOf('src/core/rules.js'));
+  assert.ok(order.indexOf('src/core/bible.js') < order.indexOf('src/core/story.js'));
+  assert.ok(order.indexOf('src/core/story.js') < order.indexOf('src/core/project.js'));
   assert.ok(order.indexOf('src/core/text.js') < order.indexOf('src/core/db.js'));
   assert.ok(order.indexOf('src/core/text.js') < order.indexOf('src/core/llm.js'));
   assert.ok(order.indexOf('src/router.js') < order.indexOf('src/app.js'));
-});
-
-test('bible.js 必须被页面加载（浏览器实测抓到过漏加载，NWBible 是 undefined）', () => {
-  const html = read('index.html');
-  const order = [...html.matchAll(/src="([^"]+\.js)"/g)].map((m) => m[1]);
-  assert.ok(order.includes('src/core/bible.js'), 'Story Bible 格式实现没进加载清单');
-  assert.ok(order.indexOf('src/core/text.js') < order.indexOf('src/core/bible.js'));
 });
 
 test('禁止禁缩放：viewport 不得再关掉用户缩放', () => {

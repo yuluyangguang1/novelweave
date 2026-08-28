@@ -17,8 +17,9 @@ AI 驱动的网文创作辅助工具。
 - 纯前端，零构建、零依赖 — 用静态服务器托管后打开即用，也可以直接双击 `index.html`
 - BYOK（用户自带 API Key，浏览器直连 OpenAI 兼容接口）
 - IndexedDB 本地存储（支持大文本）
+- PWA：可离线、可安装（`manifest.webmanifest` + `sw.js`，图标由 `tools/make-icons.mjs` 程序生成）
 
-## 本地运行
+## 本地运行与离线使用
 
 任何静态服务器都行，例如：
 

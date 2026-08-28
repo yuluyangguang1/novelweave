@@ -6,6 +6,9 @@
   <title>NovelWeave · 织文</title>
   <link rel="stylesheet" href="src/styles/app.css?v=1">
   <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <meta name="theme-color" content="#170d02">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -92,12 +95,21 @@
 <!-- ═══════════════════════════════════════════ -->
 <script src="src/core/text.js"></script>
 <script src="src/core/bible.js"></script>
+<script src="src/core/rules.js"></script>
+<script src="src/core/story.js"></script>
+<script src="src/core/project.js"></script>
 <script src="src/core/db.js"></script>
 <script src="src/core/llm.js"></script>
 <script src="src/router.js"></script>
 <script src="src/app.js"></script>
 <script>
   document.addEventListener('DOMContentLoaded', initApp);
+  // file:// 直接打开时不注册，否则每次都会刷一条无意义的 SecurityError
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch((e) => {
+      console.warn('service worker 注册失败', e);
+    }));
+  }
 </script>
 </body>
 </html>
