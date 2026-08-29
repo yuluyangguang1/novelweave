@@ -37,7 +37,9 @@
   function coerce(raw) {
     const s = raw.trim();
     if (s === '') return '';
-    if (/^".*"$/s.test(s) || /^'.*'$/s.test(s)) return s.slice(1, -1);
+    // 双引号一律按 JSON 解码：序列化侧用 JSON.stringify，换行等转义才能原样读回
+    if (/^".*"$/.test(s)) { try { return JSON.parse(s); } catch { return s.slice(1, -1); } }
+    if (/^'.*'$/s.test(s)) return s.slice(1, -1);
     if (s === 'null' || s === '~') return null;
     if (s === 'true') return true;
     if (s === 'false') return false;
@@ -105,6 +107,9 @@
     if (v === null || v === undefined) return 'null';
     if (typeof v === 'number' || typeof v === 'boolean') return String(v);
     const s = String(v);
+    // 含换行的值必须转义成单行，否则下一行会被 frontmatter 解析器当成非法键，
+    // 整本书的导出文件直接不可读（AI 摘要天然是多行结构，最容易踩到这里）。
+    if (/[\r\n]/.test(s)) return JSON.stringify(s);
     // 需要引号的场景：前后空白、特殊起始字符、像数字/布尔、含冒号+空格
     if (/^[\s]|[\s]$/.test(s) || /^[-?:,[\]{}#&*!|>'"%@`]/.test(s) || /: /.test(s)
       || /^(true|false|null|~)$/i.test(s) || /^-?\d+(\.\d+)?$/.test(s) || s === '') {

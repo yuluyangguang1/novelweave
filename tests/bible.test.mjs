@@ -123,3 +123,15 @@ test('v1 状态维度只留 6 个，体积上限写死在常量里', () => {
   assert.equal(NWBible.MAX_STATE_BYTES_PER_CHAPTER, 3072);
   assert.equal(NWBible.MAX_CONTEXT_BYTES, 12288);
 });
+
+test('含换行的值写成转义单行：原样拼行会让 frontmatter 解析器把第二行当成非法键', () => {
+  const meta = { id: 'ch-009', number: 9, title: '夜火', status: 'draft',
+    summary: '核心事件：明长老战死\n出场角色：明长老、林烟火' };
+  const file = NWBible.serializeChapterFile(meta, '正文。');
+  const fmLines = file.split('---')[1].split(/\r?\n/);
+  assert.ok(fmLines.some((l) => /^summary: "/.test(l)), 'summary 必须落在带引号的单行上');
+  assert.equal(fmLines.filter((l) => /^(核心事件|出场角色)/.test(l)).length, 0, '不能有裸的第二行漏到 frontmatter 里');
+  // 抛错的解析器至少是诚实的；静默丢字段才是灾难
+  const back = NWBible.parseChapterFile(file);
+  assert.equal(back.meta.summary, meta.summary, '换行必须原样读回');
+});
