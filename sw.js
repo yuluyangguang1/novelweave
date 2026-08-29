@@ -23,6 +23,7 @@ const PRECACHE = [
   'src/core/bible.js',
   'src/core/rules.js',
   'src/core/story.js',
+  'src/core/context.js',
   'src/core/project.js',
   'src/core/db.js',
   'src/core/llm.js',

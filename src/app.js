@@ -1267,14 +1267,12 @@ async function runAITool(toolId, target) {
   APP.lastAIUsage = null;
 
   if (toolId === 'continue') {
-    const ctx = await NovelDB.chapters.getWithPrev(novelId, APP.chapter.id);
-    const built = NovelLLM.buildContinueContext({
-      novel: APP.novel,
-      characters,
-      worldEntries: world,
-      currentChapter: ctx?.chapter ? { ...ctx.chapter, content } : { title: APP.chapter.title, content },
-      prevChapter: ctx?.prevChapter || null,
-    });
+    // 走统一的 Story-Bible 装配：这样状态快照与未回收伏笔才会真的进 prompt
+    const storyCtx = await loadStoryCtx();
+    const live = storyCtx.chapters.find((c) => c.id === APP.chapter.id);
+    // 编辑器里未保存的正文必须覆盖进去，否则 AI 看到的是上次自动保存的旧内容
+    if (live) live.body = content;
+    const built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: APP.chapter.id });
     APP.lastAIUsage = built.usage;
     messages = [
       { role: 'system', content: '你是一名经验丰富的中文网文作家，负责在既有设定与前文之下续写。' },

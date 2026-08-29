@@ -97,6 +97,81 @@
     };
   }
 
+  /** 上下文字节预算。长篇必爆的第一原因就是无脑塞全文，这里默认按字节硬截。 */
+  const DEFAULT_BUDGET = {
+    contextBytes: 12288,   // 整份派生上下文
+    loreBytes: 4096,       // 其中分给世界设定的额度
+    prevTailChars: 2000,   // 前文结尾
+    currentTailChars: 3000, // 本章已有正文
+  };
+
+  // ═══════════════════ 世界书关键词触发 ═══════════════════
+  // 语义参考 SillyTavern World Info / Character Card V2 的 character_book.entries[]，
+  // 字段名对齐，便于日后「导出为 lorebook」只是搬字段。
+
+  /** 把 IndexedDB 里的 worldbuilding 行归一成 lorebook 条目。 */
+  function toLoreEntry(wb, index = 0) {
+    const keys = Array.isArray(wb.keys) && wb.keys.length ? wb.keys : [wb.name].filter(Boolean);
+    return {
+      id: wb.id,
+      name: wb.name,
+      comment: wb.comment ?? wb.name,
+      type: wb.type || 'custom',
+      content: wb.content ?? wb.description ?? '',
+      keys: keys.map(String),
+      secondary_keys: (wb.secondary_keys || []).map(String),
+      selective: wb.selective ?? false,
+      constant: wb.constant ?? (wb.type === 'rule' || wb.type === 'system'),
+      position: wb.position || 'before_character_definition',
+      insertion_order: wb.insertion_order ?? (100 + index * 10),
+      priority: wb.priority ?? 0,
+      enabled: wb.enabled !== false,
+      case_sensitive: wb.case_sensitive ?? false,
+    };
+  }
+
+  function hasKey(text, key, caseSensitive) {
+    if (!key) return false;
+    if (caseSensitive) return text.includes(key);
+    return text.toLowerCase().includes(key.toLowerCase());
+  }
+
+  /**
+   * 按扫描窗口内出现的关键词挑选世界条目。
+   * constant 条目无条件注入；selective 条目要求主键与副键同时命中。
+   * 排序：priority 降序 → insertion_order 升序；超额即截断（不静默：返回 dropped）。
+   */
+  function loreTrigger(text, entries, opts = {}) {
+    const budget = Object.assign({}, DEFAULT_BUDGET, opts);
+    const hay = String(text || '');
+    const scanWindow = budget.scanDepthChars
+      ? hay.slice(-budget.scanDepthChars)
+      : hay;
+    const pool = (entries || []).map(toLoreEntry).filter((e) => e.enabled && e.content);
+
+    const matched = [];
+    for (const e of pool) {
+      const primary = e.keys.some((k) => hasKey(scanWindow, k, e.case_sensitive));
+      const secondaryOk = !e.selective || !e.secondary_keys.length
+        ? true
+        : e.secondary_keys.some((k) => hasKey(scanWindow, k, e.case_sensitive));
+      if (e.constant || (primary && secondaryOk)) matched.push(e);
+    }
+
+    matched.sort((a, b) => (b.priority - a.priority) || (a.insertion_order - b.insertion_order));
+
+    const included = [], dropped = [];
+    let bytes = 0;
+    for (const e of matched) {
+      const line = `【${e.name}】${e.content}`;
+      const size = NWText.bytesOf(line);
+      if (bytes + size > budget.loreBytes) { dropped.push(e.id); continue; }
+      bytes += size;
+      included.push(e);
+    }
+    return { entries: included, dropped, bytes };
+  }
+
   function fromWorld(e, novelId) {
     return {
       id: e.id, novel_id: novelId, type: e.type || 'location', name: e.name,
@@ -235,6 +310,6 @@
     };
   }
 
-  return { toCharacter, fromCharacter, toWorld, fromWorld, toChapter, toPromise, fromAnchor, fromPromise,
+  return { LORE_BUDGET: DEFAULT_BUDGET, toCharacter, fromCharacter, toWorld, fromWorld, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
     toTimeline, toSuppressions, statesFromRows, stateRowsFromFile, dimsOf, toLines, buildCtx, zhRole };
 });

@@ -132,12 +132,14 @@ test('跨域请求绝不进 service worker 缓存（BYOK 请求必须直达服�
 test('核心模块必须全部被页面加载且顺序正确（漏一个是静默失效）', () => {
   const html = read('index.html');
   const order = [...html.matchAll(/src="([^"]+\.js)"/g)].map((m) => m[1]);
-  for (const mod of ['src/core/text.js', 'src/core/bible.js', 'src/core/rules.js', 'src/core/story.js', 'src/core/project.js']) {
+  for (const mod of ['src/core/text.js', 'src/core/bible.js', 'src/core/rules.js', 'src/core/story.js', 'src/core/context.js', 'src/core/project.js']) {
     assert.ok(order.includes(mod), `${mod} 没进加载清单`);
     assert.ok(order.indexOf('src/core/text.js') <= order.indexOf(mod), `${mod} 必须排在 text.js 之后`);
   }
   assert.ok(order.indexOf('src/core/bible.js') < order.indexOf('src/core/rules.js'));
   assert.ok(order.indexOf('src/core/bible.js') < order.indexOf('src/core/story.js'));
+  assert.ok(order.indexOf('src/core/story.js') < order.indexOf('src/core/context.js'));
+  assert.ok(order.indexOf('src/core/context.js') < order.indexOf('src/core/llm.js'), 'llm 依赖 context，必须后置');
   assert.ok(order.indexOf('src/core/story.js') < order.indexOf('src/core/project.js'));
   assert.ok(order.indexOf('src/core/text.js') < order.indexOf('src/core/db.js'));
   assert.ok(order.indexOf('src/core/text.js') < order.indexOf('src/core/llm.js'));

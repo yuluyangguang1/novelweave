@@ -7,23 +7,15 @@
  * 写出来就崩」无法排查。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText);
+  const mod = factory(root.NWText, root.NWStory, root.NWContext);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NovelLLM = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (NWText) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (NWText, NWStory, NWContext) {
   'use strict';
 
   const NW_LLM_CONFIG_KEY = 'nw_llm_config';
 
-  /** 上下文字节预算。长篇必爆的第一原因就是无脑塞全文，这里默认按字节硬截。 */
-  const DEFAULT_BUDGET = {
-    contextBytes: 12288,   // 整份派生上下文
-    loreBytes: 4096,       // 其中分给世界设定的额度
-    prevTailChars: 2000,   // 前文结尾
-    currentTailChars: 3000, // 本章已有正文
-  };
-
-  const NW_LLM_PRESETS = {
+const NW_LLM_PRESETS = {
     openrouter: { label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'deepseek/deepseek-chat-v3.1', note: '多模型可切换' },
     deepseek: { label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', note: '便宜，长上下文好' },
     siliconflow: { label: 'SiliconFlow', baseURL: 'https://api.siliconflow.cn/v1', defaultModel: 'Qwen/Qwen2.5-72B-Instruct', note: '国内直连' },
@@ -47,73 +39,6 @@
   function setLLMConfig(cfg) { storage()?.setItem(NW_LLM_CONFIG_KEY, JSON.stringify(cfg)); }
   function hasLLMConfig() { return !!getLLMConfig(); }
 
-  // ═══════════════════ 世界书关键词触发 ═══════════════════
-  // 语义参考 SillyTavern World Info / Character Card V2 的 character_book.entries[]，
-  // 字段名对齐，便于日后「导出为 lorebook」只是搬字段。
-
-  /** 把 IndexedDB 里的 worldbuilding 行归一成 lorebook 条目。 */
-  function toLoreEntry(wb, index = 0) {
-    const keys = Array.isArray(wb.keys) && wb.keys.length ? wb.keys : [wb.name].filter(Boolean);
-    return {
-      id: wb.id,
-      name: wb.name,
-      comment: wb.comment ?? wb.name,
-      type: wb.type || 'custom',
-      content: wb.content ?? wb.description ?? '',
-      keys: keys.map(String),
-      secondary_keys: (wb.secondary_keys || []).map(String),
-      selective: wb.selective ?? false,
-      constant: wb.constant ?? (wb.type === 'rule' || wb.type === 'system'),
-      position: wb.position || 'before_character_definition',
-      insertion_order: wb.insertion_order ?? (100 + index * 10),
-      priority: wb.priority ?? 0,
-      enabled: wb.enabled !== false,
-      case_sensitive: wb.case_sensitive ?? false,
-    };
-  }
-
-  function hasKey(text, key, caseSensitive) {
-    if (!key) return false;
-    if (caseSensitive) return text.includes(key);
-    return text.toLowerCase().includes(key.toLowerCase());
-  }
-
-  /**
-   * 按扫描窗口内出现的关键词挑选世界条目。
-   * constant 条目无条件注入；selective 条目要求主键与副键同时命中。
-   * 排序：priority 降序 → insertion_order 升序；超额即截断（不静默：返回 dropped）。
-   */
-  function loreTrigger(text, entries, opts = {}) {
-    const budget = Object.assign({}, DEFAULT_BUDGET, opts);
-    const hay = String(text || '');
-    const scanWindow = budget.scanDepthChars
-      ? hay.slice(-budget.scanDepthChars)
-      : hay;
-    const pool = (entries || []).map(toLoreEntry).filter((e) => e.enabled && e.content);
-
-    const matched = [];
-    for (const e of pool) {
-      const primary = e.keys.some((k) => hasKey(scanWindow, k, e.case_sensitive));
-      const secondaryOk = !e.selective || !e.secondary_keys.length
-        ? true
-        : e.secondary_keys.some((k) => hasKey(scanWindow, k, e.case_sensitive));
-      if (e.constant || (primary && secondaryOk)) matched.push(e);
-    }
-
-    matched.sort((a, b) => (b.priority - a.priority) || (a.insertion_order - b.insertion_order));
-
-    const included = [], dropped = [];
-    let bytes = 0;
-    for (const e of matched) {
-      const line = `【${e.name}】${e.content}`;
-      const size = NWText.bytesOf(line);
-      if (bytes + size > budget.loreBytes) { dropped.push(e.id); continue; }
-      bytes += size;
-      included.push(e);
-    }
-    return { entries: included, dropped, bytes };
-  }
-
   function renderLore(injected) {
     if (!injected.length) return '';
     return '【世界设定（按本章内容触发）】\n' + injected.map((e) => `- ${e.name}：${e.content}`).join('\n');
@@ -129,71 +54,35 @@
 
   // ═══════════════════ Prompt 构造 ═══════════════════
 
+  const WRITING_RULES = (genre) => `写作要求：
+- 保持角色性格和说话方式一致，已建立的设定不得自相矛盾
+- 剧情自然推进，不要跳跃
+- 已死亡或下落不明的人物不得凭空行动；外貌特征受已登记的变化区间约束
+- 风格：${genre || '玄幻小说'}
+- 字数要求 3000-5000 字
+- 只输出小说正文，不要任何解释`;
+
   /**
-   * 续写。旧版这里有个致命问题：形参 chapter 在函数体内完全没被使用，
-   * 而调用点 prevChapter 恒传 null —— 结果是 prompt 里一个字正文都没有，
-   * 模型只看到一份角色清单。现在正文、前文、世界设定三者都进上下文。
+   * 续写上下文。拼装本身在 src/core/context.js —— 那是 Web 与 CLI 共用的唯一实现。
+   * 之前这里自己拼了 5 节，比 CLI 少注入「分章状态快照」与「未结线索」，
+   * 于是作者录进状态矩阵和伏笔表的事实在浏览器里根本没进 prompt。
    *
-   * opts: { novel, characters, worldEntries, currentChapter, prevChapter, nextTitle, budget }
+   * @param opts { ctx: Story-Bible 形状, chapterId: 'ch-003'|'next', budget, extraInstructions }
    */
+  function buildContinueContext(opts = {}) {
+    const built = NWContext.buildSections(opts.ctx, { chapterId: opts.chapterId, budget: opts.budget });
+    const rules = WRITING_RULES(opts.ctx?.book?.genre)
+      + (opts.extraInstructions ? `\n- ${opts.extraInstructions}` : '');
+    return { prompt: NWContext.renderPrompt(built, rules), usage: built.usage, sections: built.sections };
+  }
+
   function buildContinuePrompt(opts = {}) {
     return buildContinueContext(opts).prompt;
   }
 
-  /**
-   * 构造续写上下文，并附一份**用量报告**。
-   * 静默裁切是最坑人的失败方式：它不报错，只是写出来的东西和前文脱节，
-   * 而作者会以为模型看过了全书。所以截断必须显式回传。
-   */
-  function buildContinueContext(opts = {}) {
-    const b = Object.assign({}, DEFAULT_BUDGET, opts.budget);
-    const { novel, characters, worldEntries, currentChapter, prevChapter } = opts;
-
-    const scanText = [prevChapter?.content, currentChapter?.content].filter(Boolean).join('\n');
-    const lore = loreTrigger(scanText, worldEntries, b);
-    const prevTail = prevChapter?.content
-      ? `【上一章《${prevChapter.title || '未命名'}》结尾】\n…${prevChapter.content.slice(-b.prevTailChars)}\n\n`
-      : '';
-    const fresh = !!currentChapter?.content?.trim();
-    const curBody = fresh
-      ? `【本章《${currentChapter.title || '未命名'}》已写正文】\n…${currentChapter.content.slice(-b.currentTailChars)}\n\n请从上面正文的末尾接着写下去，不要重复已有内容。\n`
-      : `【本章《${opts.nextTitle || currentChapter?.title || '下一章'}》尚未开始】\n请接着上一章写本章。\n`;
-
-    const prompt = `${novel?.description ? '【作品设定】\n' + novel.description + '\n\n' : ''}${renderLore(lore.entries)}${lore.entries.length ? '\n\n' : ''}【角色设定】
-${renderCharacters(characters)}
-
-${prevTail}${curBody}
-写作要求：
-- 保持角色性格和说话方式一致，已建立的设定不得自相矛盾
-- 剧情自然推进，不要跳跃
-- 风格：${novel?.genre || '玄幻小说'}
-- 字数要求 3000-5000 字
-- 只输出小说正文，不要任何解释${opts.extraInstructions ? '\n- ' + opts.extraInstructions : ''}`;
-
-    return {
-      prompt,
-      usage: {
-        bytes: NWText.bytesOf(prompt),
-        budgetBytes: b.contextBytes,
-        sections: [
-          { name: '作品设定', present: !!novel?.description, bytes: NWText.bytesOf(novel?.description || '') },
-          { name: '世界设定', present: lore.entries.length > 0, bytes: lore.bytes,
-            included: lore.entries.map((e) => e.name), dropped: lore.dropped },
-          { name: '角色设定', present: !!(characters || []).length, bytes: NWText.bytesOf(renderCharacters(characters)) },
-          { name: '上一章结尾', present: !!prevTail, bytes: NWText.bytesOf(prevTail) },
-          { name: '本章已写正文', present: fresh, bytes: NWText.bytesOf(curBody) },
-        ],
-        hasPrevChapter: !!prevTail,
-        hasCurrentBody: fresh,
-        loreDropped: lore.dropped,
-        truncated: lore.dropped.length > 0,
-      },
-    };
-  }
-
   /** 一致性检查。输入是当前章正文 + 全部角色 + 触发的世界条目。 */
   function buildConsistencyCheckPrompt(content, characters, worldEntries, novel) {
-    const lore = loreTrigger(content, worldEntries);
+    const lore = NWStory.loreTrigger(content, worldEntries);
     return `你是专业的网文编辑。请对比设定与前文，找出不一致的地方。
 
 ${renderLore(lore.entries)}${lore.entries.length ? '\n\n' : ''}【角色设定】
@@ -342,10 +231,9 @@ ${chText}
 
   return {
     PRESETS: NW_LLM_PRESETS,
-    DEFAULT_BUDGET,
     CONFIG_KEY: NW_LLM_CONFIG_KEY,
     getConfig: getLLMConfig, setConfig: setLLMConfig, hasConfig: hasLLMConfig,
-    toLoreEntry, loreTrigger,
+    
     buildContinuePrompt, buildContinueContext, buildConsistencyCheckPrompt, buildSummarizePrompt,
     buildPolishPrompt, buildOutlinePrompt,
     streamChat, requestChat, testConnection,
