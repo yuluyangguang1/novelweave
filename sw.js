@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v1';
+const VERSION = 'nw-v2';
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 

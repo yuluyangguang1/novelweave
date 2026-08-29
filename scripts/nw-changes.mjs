@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   loadBook, resolveBookDir, parseArgs, emit, log, EXIT, SCHEMA_VERSION,
-  readJson, writeJsonAtomic, NWBible, NWText,
+  readJson, writeJsonAtomic, NWBible, NWText, NWProject,
 } from './lib/book.mjs';
 
 const MARKER = /^---CHANGES---\s*$/m;
@@ -147,7 +147,9 @@ switch (sub) {
     if (!wanted.length) { log('没有匹配的 staged 变更'); process.exit(EXIT.OK); }
 
     const applied = [], skipped = [];
-    const touched = new Set();
+    // tag → 变更后的实际内容；结尾用它算真实基线哈希，绝不写占位符
+    const dirty = new Map();
+    const markDirty = (kind, id, row) => dirty.set(NWProject.tagFor(kind, id), { kind, row });
     for (const item of wanted) {
       const op = item.payload;
       const reason = gate(op, ctx);   // apply 前再过一次：stage 与 apply 之间书可能已被改
@@ -162,7 +164,7 @@ switch (sub) {
           if (op.to !== 'deceased') next['died-in'] = null;
           writeJsonAtomic(path.join(bookDir, 'bible', 'characters', `${rec.id}.json`), next);
           Object.assign(rec, next);
-          touched.add(`character:${rec.id}`);
+          markDirty('character', rec.id, rec);
           break;
         }
         case 'character.alias.add': {
@@ -172,7 +174,7 @@ switch (sub) {
             aliases.push({ text: op.text, kind: op.kind || 'nickname', who: op.who || [], since: item.chapter, until: null, note: op.note || '' });
             writeJsonAtomic(path.join(bookDir, 'bible', 'characters', `${rec.id}.json`), { ...rec, aliases });
             Object.assign(rec, { aliases });
-            touched.add(`character:${rec.id}`);
+            markDirty('character', rec.id, rec);
           }
           break;
         }
@@ -182,7 +184,7 @@ switch (sub) {
             weight: op.weight || 'minor', setup: { chapter: op.setup, evidence: op.evidence },
             payoff: { chapter: null, due: op.due || null }, created: stamp(), updated: stamp() });
           writeJsonAtomic(path.join(bookDir, 'bible', 'promises.json'), ctx.promises);
-          touched.add('promises');
+          markDirty('promise', id, ctx.promises.items.at(-1));
           break;
         }
         case 'promise.payoff':
@@ -192,7 +194,7 @@ switch (sub) {
           else Object.assign(it, { status: 'dropped', notes: op.reason || it.notes || '' });
           it.updated = stamp();
           writeJsonAtomic(path.join(bookDir, 'bible', 'promises.json'), ctx.promises);
-          touched.add('promises');
+          markDirty('promise', it.id, it);
           break;
         }
         case 'state.set': {
@@ -212,7 +214,9 @@ switch (sub) {
           }
           ctx.states.byChapter = byChapter;
           writeJsonAtomic(path.join(bookDir, 'bible', 'states.json'), ctx.states);
-          touched.add(`states:${op.chapter}`);
+          markDirty('state', `${op.chapter}|${op.entity}`, {
+            id: `${op.chapter}|${op.entity}`, chapter: op.chapter, entity: op.entity, ...target,
+          });
           break;
         }
         case 'world.destroy': {
@@ -220,7 +224,7 @@ switch (sub) {
           const lifecycle = { ...(w.lifecycle || {}), 'destroyed-in': op.chapter };
           writeJsonAtomic(path.join(bookDir, 'bible', 'world', `${w.id}.json`), { ...w, lifecycle });
           Object.assign(w, { lifecycle });
-          touched.add(`world:${w.id}`);
+          markDirty('world', w.id, w);
           break;
         }
       }
@@ -232,8 +236,13 @@ switch (sub) {
       writeJsonAtomic(pendingFile, pending);
       const sync = ctx.sync || { schemaVersion: SCHEMA_VERSION, records: {} };
       sync.records = sync.records || {};
-      for (const key of touched) {
-        sync.records[key] = { hash: 'sha256:dirty', rev: (sync.records[key]?.rev || 0) + 1, source: 'agent', at: stamp() };
+      for (const [tag, { kind, row }] of dirty) {
+        // 必须是真实哈希：占位符会让 base 与两侧都不等，
+        // 于是每条被 agent 碰过的记录在 Web 导入时都变成假冲突
+        sync.records[tag] = {
+          hash: await NWProject.hashRecord(kind, row),
+          rev: (sync.records[tag]?.rev || 0) + 1, source: 'agent', at: stamp(),
+        };
       }
       writeJsonAtomic(path.join(bookDir, 'meta', 'sync.json'), sync);
       const line = { at: stamp(), applied: applied.map((a) => ({ id: a.id, op: a.op })), skipped };

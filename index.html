@@ -4,12 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>NovelWeave · 织文</title>
-  <link rel="stylesheet" href="src/styles/app.css?v=1">
+  <link rel="stylesheet" href="src/styles/app.css?v=2">
   <!-- PWA -->
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-  <meta name="theme-color" content="#170d02">
+  <meta name="theme-color" content="#150e07" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f6f3ec" media="(prefers-color-scheme: light)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="织文">
@@ -28,7 +29,7 @@
   </div>
   <div class="home-body">
     <div class="home-empty" id="home-empty">
-      <div class="empty-icon">✍️</div>
+      <div class="empty-icon">织</div>
       <div class="empty-text">还没有作品</div>
       <button class="btn btn-primary" data-action="create-novel">创建第一篇小说</button>
     </div>
@@ -44,9 +45,7 @@
   <div class="workspace-layout">
     <!-- 左侧栏：侧边导航 -->
     <aside class="workspace-sidebar" id="workspace-sidebar">
-      <div class="sidebar-header">
-        <button class="sidebar-back" data-action="go-home">← 返回</button>
-      </div>
+      <!-- 返回按钮与书名由 renderSidebar() 渲染，不要在这里再写一份 -->
       <div class="sidebar-nav" id="sidebar-nav"></div>
       <!-- 子页面区域 -->
       <div id="sidebar-content"></div>

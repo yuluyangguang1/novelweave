@@ -375,7 +375,7 @@ async function renderChapterList(host) {
     return;
   }
   // 只放 id，正文留在 IndexedDB
-  host.innerHTML = `<div class="chapter-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+  host.innerHTML = `<div class="chapter-list">
     ${chapters.map((ch) => `
       <div class="chapter-item ${APP.chapter?.id === ch.id ? 'active' : ''}" data-action="open-chapter" data-id="${attr(ch.id)}">
         <span class="chapter-item-number">${ch.order ?? '-'}</span>
@@ -625,7 +625,7 @@ async function showCharacterList(host) {
   if (!host || !APP.novel) return;
   const chars = await NovelDB.characters.list(APP.novel.id);
   if (!chars.length) { host.innerHTML = emptyHint('点击 + 创建角色'); return; }
-  host.innerHTML = `<div class="char-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+  host.innerHTML = `<div class="char-list">
     ${chars.map((c) => `
       <div class="char-card" data-action="edit-char" data-id="${attr(c.id)}">
         <div class="char-card-name">${esc(c.name)}</div>
@@ -687,7 +687,7 @@ async function showWorldList(host) {
   const items = await NovelDB.worldbuilding.list(APP.novel.id);
   const icons = { location: '📍', faction: '🏛', rule: '📜', system: '⚡' };
   if (!items.length) { host.innerHTML = emptyHint('点击 + 添加设定'); return; }
-  host.innerHTML = `<div class="char-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+  host.innerHTML = `<div class="char-list">
     ${items.map((w) => `
       <div class="char-card" data-action="edit-world" data-id="${attr(w.id)}">
         <div class="char-card-name">${icons[w.type] || '📌'} ${esc(w.name)}</div>
@@ -738,7 +738,7 @@ async function showNotesList(host) {
   if (!host || !APP.novel) return;
   const notes = await NovelDB.notes.list(APP.novel.id);
   if (!notes.length) { host.innerHTML = emptyHint('点击 + 添加笔记'); return; }
-  host.innerHTML = `<div class="char-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+  host.innerHTML = `<div class="char-list">
     ${notes.map((n) => `
       <div class="char-card" data-action="edit-note" data-id="${attr(n.id)}">
         <div class="char-card-name">${esc(n.title)}</div>
@@ -834,7 +834,7 @@ async function showPromiseList(host) {
   const items = await NovelDB.promises.list(APP.novel.id);
   if (!items.length) { host.innerHTML = emptyHint('点击 + 登记第一条伏笔'); return; }
   const open = items.filter((i) => ['planned', 'planted'].includes(i.status)).length;
-  host.innerHTML = `<div class="char-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+  host.innerHTML = `<div class="char-list">
     <div style="padding:8px 12px;font-size:12px;color:var(--text-secondary);">共 ${items.length} 条，未收 ${open} 条</div>
     ${items.map((p) => {
       const unpaid = ['planned', 'planted'].includes(p.status);
@@ -924,7 +924,7 @@ async function showTimelineList(host) {
   }
   const byChapter = new Map((APP.chaptersCache || []).map((c) => [c.id, c]));
   const sorted = [...rows].sort((a, b) => (byChapter.get(a.chapter)?.order ?? 0) - (byChapter.get(b.chapter)?.order ?? 0) || (a.day ?? 0) - (b.day ?? 0));
-  host.innerHTML = `<div class="char-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+  host.innerHTML = `<div class="char-list">
     ${sorted.map((a) => `
       <div class="char-card" data-action="edit-anchor" data-id="${attr(a.id)}">
         <div class="char-card-name">第${a.day ?? '?'}天${a.clock ? '·' + esc(a.clock) : ''} ${esc(a.label)}</div>

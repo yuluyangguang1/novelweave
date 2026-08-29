@@ -41,6 +41,32 @@ test('旧的 escapeHtml 已被 NWText.esc 取代（它不转义引号）', () =>
   assert.equal(read('src/app.js').includes('escapeHtml'), false);
 });
 
+test('样式自洽：界面上用到的每个 class 都必须有定义', () => {
+  // 重构时发现 workspace-main / ws-section 两个结构类完全没有样式、
+  // 删掉静态侧栏头后留下死规则 —— 这类问题肉眼看不出来。
+  const html = read('index.html');
+  const js = read('src/app.js');
+  const css = read('src/styles/app.css');
+
+  const defined = new Set([...css.matchAll(/\.([a-zA-Z][\w-]*)/g)].map((m) => m[1]));
+  const VALID = /^[a-zA-Z][\w-]*$/;
+  const used = new Set();
+  for (const src of [html, js]) {
+    for (const m of src.matchAll(/class="([^"]*)"/g)) {
+      const raw = m[1];
+      // 插值里的字符串字面量也是类名引用，如 class="${conflict ? 'cell-bad' : ''}"
+      for (const q of raw.matchAll(/'([\w-]+)'/g)) used.add(q[1]);
+      // 剥掉插值后再取静态部分，避免 ${ 之类残片被当成类名
+      for (const c of raw.replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)) {
+        if (VALID.test(c)) used.add(c);
+      }
+    }
+    for (const m of src.matchAll(/classList\.(?:add|toggle|remove)\('([\w-]+)'/g)) used.add(m[1]);
+  }
+  const missing = [...used].filter((c) => VALID.test(c) && !defined.has(c)).sort();
+  assert.deepEqual(missing, [], `app.css 里缺这些 class 的定义：${missing.join(', ')}`);
+});
+
 test('index.html 加载的每个脚本必须能通过语法解析', () => {
   // 起因：app.js 里多写一个右括号 → 整页函数全部消失，而 110 项测试全绿，
   // 因为没有任何测试会把 app.js 当脚本解析。这类错误必须静态拦住。

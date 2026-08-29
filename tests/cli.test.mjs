@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  NWBible, NWText, repoRoot,
+  NWBible, NWText, repoRoot, NWProject,
   scaffoldBook, upsertProject, writeJsonAtomic, writeFileAtomic,
 } from './_load-cli.mjs';
 
@@ -187,7 +187,7 @@ test('context 产出 ≤ 预算的上下文文档，并如实报告裁掉了什�
   assert.equal(roomy.truncated, false, '正常预算下不该有裁切');
 });
 
-test('changes：未过门禁的声明绝不落地，过了门禁的要作者 apply 才写库', () => {
+test('changes：未过门禁的声明绝不落地，过了门禁的要作者 apply 才写库', async () => {
   const draft = path.join(bookDir, 'manuscript', 'chapters', 'ch-005-next.md');
   const meta = { ...NWBible.newChapter({ id: 'ch-005', number: 5, slug: 'next', title: '第五章', status: 'draft' }), schemaVersion: '1' };
   const body = NWBible.serializeChapterFile(meta, '新的正文。\n\n---CHANGES---\n' + JSON.stringify({
@@ -219,6 +219,22 @@ test('changes：未过门禁的声明绝不落地，过了门禁的要作者 app
   const promises = JSON.parse(fs.readFileSync(path.join(bookDir, 'bible', 'promises.json'), 'utf8'));
   assert.ok(promises.items.some((i) => i.title === '涧底的钟声' && i.status === 'planted'));
   assert.ok(fs.existsSync(path.join(bookDir, 'meta', 'changelog.jsonl')), '落地必须留痕');
+
+  // 基线哈希必须可信：占位符会让 Web 端导入时把这些记录全判成冲突
+  const sync = JSON.parse(fs.readFileSync(path.join(bookDir, 'meta', 'sync.json'), 'utf8'));
+  const agentRecords = Object.entries(sync.records).filter(([, v]) => v.source === 'agent');
+  assert.ok(agentRecords.length >= 2, `apply 应登记至少 2 条基线，实际 ${agentRecords.length}`);
+  for (const [tag, v] of agentRecords) {
+    assert.match(v.hash, /^sha256:[0-9a-f]{64}$/, `${tag} 的基线不是真实哈希：${v.hash}`);
+  }
+  // 用磁盘当前内容按同一投影重算，必须等于记录的基线
+  const linForHash = JSON.parse(fs.readFileSync(path.join(bookDir, 'bible', 'characters', 'char-lin.json'), 'utf8'));
+  assert.equal(await NWProject.hashRecord('character', linForHash), sync.records['character:char-lin'].hash,
+    '角色基线与文件实际内容不符：导入会把这条误判成两侧都改过');
+  const planted = JSON.parse(fs.readFileSync(path.join(bookDir, 'bible', 'promises.json'), 'utf8'))
+    .items.find((i) => i.title === '涧底的钟声');
+  assert.equal(await NWProject.hashRecord('promise', planted), sync.records[`promise:${planted.id}`].hash,
+    '伏笔基线与文件实际内容不符');
 });
 
 test('被拒的变更不会污染登记表', () => {
