@@ -126,8 +126,12 @@ summary: 林烟火违师命下山，遇袭失左臂
 1. 跑 First Steps 1–4。
 2. 只用「上下文文档 + 上一章尾部 2000 字」写作，**不要**回读更早的全文。
 3. 写 `manuscript/chapters/ch-0NN-<slug>.md`，frontmatter 用 `assets/templates/chapter.md.tmpl`。
-4. 结尾追加 `---CHANGES---`。没有状态变化也要写 `"changes": []`，表示"本章不改任何既定事实"。
-5. stage → continuity → 交给作者 apply。
+4. **同时填这一章的 `summary`**（写完才填，别照着不存在的正文编）。上下文里的
+   「前情摘要」一节就是各章 `summary`，四行结构时只取「核心事件」那一行 ——
+   位置 / 伤势 / 持有物走状态快照、伏笔走未结线索，所以这里不要再抄一遍。
+   留空不会报错，只会让第 40 章忘掉第 30 章，而这正是长篇最常见的失败方式。
+5. 结尾追加 `---CHANGES---`。没有状态变化也要写 `"changes": []`，表示"本章不改任何既定事实"。
+6. stage → continuity → 交给作者 apply。
 
 ### B. 修订既有章节
 改完必须重跑该章及其后所有章的 `dead-character-on-stage`、`appearance-token-violation`、

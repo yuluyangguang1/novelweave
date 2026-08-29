@@ -10,7 +10,7 @@ locations: []
 characters: []
 mentions: []
 flags: []
-summary: <≤80 字，供后续召回>
+summary: 核心事件：<一句话，≤80 字>
 ---
 正文……
 
@@ -20,6 +20,8 @@ summary: <≤80 字，供后续召回>
     这个区分决定了「死人出场」检查能不能低误报。
   · 闪回/梦境/引文请写 flags: [flashback]，否则一致性检查会反复告警。
   · 不要手填 x-words，派生字段由脚本重算。
+  · summary 会被后面章节的「前情摘要」取用，且只取「核心事件」一行。状态变化写进
+    ---CHANGES--- 的 state.set、伏笔写进 promise.*，别抄进 summary：那是三份会互相打架的真相。
   · 正文之后必须追加 ---CHANGES--- 段（无变化也要写 "changes": []）。
 -->
 

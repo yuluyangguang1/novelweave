@@ -609,3 +609,50 @@ select.settings-select { cursor: pointer; }
 
 /* 顶栏与工具栏里的纯图标按钮：去掉文字尺寸留下的空隙 */
 .header-btn .icon, .editor-toolbar .icon { display: block; }
+
+/* ── 19. 本章摘要 / 正文历史 ────────────────────────────── */
+
+/* 摘要缺失只弱提示：没填不影响这一章，影响的是后面每一章的前情 */
+.chapter-item-flag {
+  flex-shrink: 0; padding: 1px 4px;
+  font-family: var(--mono); font-size: .6rem; letter-spacing: .06em;
+  color: var(--warn); border: 1px solid rgb(var(--warn-base) / .42);
+}
+
+.editor-toolbar button.filled { opacity: 1; position: relative; }
+.editor-toolbar button.filled::after {
+  content: ''; position: absolute; top: 4px; right: 4px; width: 3px; height: 3px;
+  background: var(--accent);
+}
+
+.rev-list { display: flex; flex-direction: column; }
+.rev-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.rev-row:last-child { border-bottom: none; }
+.rev-row.current { padding-left: 10px; box-shadow: inset 2px 0 0 var(--accent); }
+
+.rev-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: .68rem; letter-spacing: .05em; color: var(--dim);
+}
+.rev-time { color: var(--mid); }
+.rev-src { color: var(--accent); }
+.rev-words { margin-left: auto; }
+.rev-tag { padding: 1px 6px; border: 1px solid var(--border-strong); color: var(--mid); }
+
+.rev-preview {
+  margin-top: 6px; font-family: var(--serif); font-size: 13.5px;
+  line-height: 1.75; color: var(--dim);
+}
+.rev-actions { display: flex; gap: 8px; margin-top: 9px; }
+.rev-actions .btn { padding: 5px 12px; font-size: .66rem; }
+
+.rev-body {
+  max-height: 320px; overflow-y: auto; margin: 10px 0 0; padding: 12px 14px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  font-family: var(--serif); font-size: 14px; line-height: 1.9; color: var(--mid);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* 摘要长度计：与 schema 的 maxLength 同口径，超了只变色不拦（作者说了算） */
+.sum-count { float: right; letter-spacing: .04em; color: var(--dim); }
+.sum-count.over { color: var(--warn); }

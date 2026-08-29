@@ -248,3 +248,30 @@ test('sync.json 里的哈希与 CLI 的 authorHash 用同一套算法', async ()
   const b = await NWProject.hashOf({ ...rec, _derived: { hits: 999 }, 'x-words': 12 });
   assert.equal(a, b, '派生字段必须不参与哈希');
 });
+
+test('Web 写的多行摘要，CLI 读得懂、上下文也带得动（一条链断在哪都算没做）', async () => {
+  const rows = rowsFixture();
+  rows.chapters[0] = { ...rows.chapters[0], summary: '核心事件：明长老夜谈下山，当战死于山门口\n出场角色：明长老、林烟火\n状态变化：山门半焚\n新埋或回收的伏笔：半枚铜印' };
+  const tree = await NWProject.buildProjectTree(NWStory.buildCtx(rows));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-recap-'));
+  try {
+    for (const [rel, text] of Object.entries(tree)) {
+      const f = path.join(tmp, '.novelweave', rel);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, text, 'utf8');
+    }
+    const bookDir = path.join(tmp, '.novelweave', '桥接测试');
+    const v = run('nw-validate.mjs', [bookDir, '--json', '--no-write']);
+    assert.equal(v.code, 0, '含换行的摘要写进文件后必须仍然合法：' + v.stdout.slice(0, 400));
+
+    const c = run('nw-context.mjs', [bookDir, '--chapter', 'ch_a2', '--json']);
+    assert.equal(c.code, 0, c.stderr);
+    const built = JSON.parse(c.stdout);
+    const recap = built.sections.map((s) => s.name);
+    assert.ok(recap.includes('前情摘要'), 'CLI 上下文要有这一节：' + recap.join(','));
+    assert.ok(built.document.includes('明长老夜谈下山'), 'document 里应看到摘要的核心事件内容');
+    assert.ok(!built.document.includes('状态变化：山门半焚'), '四行结构里其余行不该进 recap');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

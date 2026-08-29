@@ -12,7 +12,7 @@
  */
 
 const DB_NAME = 'novelweave_db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let _dbPromise = null;
 
@@ -42,6 +42,12 @@ function openDB() {
         const s = db.createObjectStore('states', { keyPath: 'id' });
         s.createIndex('novel_id', 'novel_id', { unique: false });
         s.createIndex('chapter', 'chapter', { unique: false });
+      }
+      // v4：正文版本快照。润色是整章替换，没有留底就是不可逆的覆盖。
+      if (!db.objectStoreNames.contains('revisions')) {
+        const s = db.createObjectStore('revisions', { keyPath: 'id' });
+        s.createIndex('novel_id', 'novel_id', { unique: false });
+        s.createIndex('chapter_id', 'chapter_id', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -176,7 +182,7 @@ async function updateNovel(id, updates) {
 }
 
 /** 删书必须一起清掉的从属表；漏一个就会留下再也查不到的孤儿数据。 */
-const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states'];
+const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions'];
 
 async function deleteNovel(id) {
   for (const store of CASCADE_STORES) {
@@ -198,10 +204,10 @@ async function nextChapterOrder(novelId) {
   return chapters.reduce((max, c) => Math.max(max, c.order || 0), 0) + 1;
 }
 
-async function createChapter(novelId, { title, content = '', order }) {
+async function createChapter(novelId, { title, content = '', order, summary = '' }) {
   const finalOrder = order ?? (await nextChapterOrder(novelId));
   const ch = {
-    id: newId('ch'), novel_id: novelId, title, content,
+    id: newId('ch'), novel_id: novelId, title, content, summary,
     word_count: words(content), order: finalOrder,
     created_at: Date.now(), updated_at: Date.now(),
   };
@@ -232,6 +238,7 @@ async function deleteChapter(id) {
   if (!ch) return;
   await del('chapters', id);
   await clearChapterStates(id);
+  await clearChapterRevisions(id);
   await resequenceChapters(ch.novel_id);
   await recountNovelStats(ch.novel_id);
 }
@@ -397,6 +404,42 @@ async function clearChapterStates(chapterId) {
   for (const r of await listStatesForChapter(chapterId)) await del('states', r.id);
 }
 
+// ═══════════ 正文版本快照 ═══════════
+
+const REVISION_KEEP = 20;
+
+/**
+ * 覆盖正文前留一底。自动保存不留（噪声会淹没有效版本），
+ * 只在手动保存、AI 整章替换、导入覆盖这三处调用。
+ */
+async function snapshotRevision(chapter, source = 'manual') {
+  if (!chapter?.id) return null;
+  const content = chapter.content || '';
+  const history = await listRevisions(chapter.id);
+  // 与最近一版内容相同就不重复存，避免连点保存堆出无意义版本
+  if (history[0] && history[0].content === content) return null;
+  const rec = {
+    id: newId('rev'), novel_id: chapter.novel_id, chapter_id: chapter.id,
+    title: chapter.title || '', content, word_count: words(content), source, at: Date.now(),
+  };
+  await put('revisions', rec);
+  // 裁剪：不限量会让 IndexedDB 随写作时长无限膨胀
+  const rest = history.slice(REVISION_KEEP - 1);
+  for (const r of rest) await del('revisions', r.id);
+  return rec;
+}
+
+async function listRevisions(chapterId) {
+  const rows = (await tx('revisions', 'readonly', (s) => s.index('chapter_id').getAll(chapterId))) || [];
+  return rows.sort((a, b) => b.at - a.at);
+}
+
+async function deleteRevision(id) { await del('revisions', id); }
+
+async function clearChapterRevisions(chapterId) {
+  for (const r of await listRevisions(chapterId)) await del('revisions', r.id);
+}
+
 // ═══════════ 世界设定 ═══════════
 
 const WORLD_TYPES = { location: '地点', faction: '势力/组织', rule: '规则/法则', system: '力量体系' };
@@ -474,6 +517,10 @@ window.NovelDB = {
     list: listStates, listForChapter: listStatesForChapter, save: saveState,
     delete: deleteState, clearChapter: clearChapterStates, bytes: chapterStateBytes,
     dims: STATE_DIMS, idOf: stateId,
+  },
+  revisions: {
+    snapshot: snapshotRevision, list: listRevisions, delete: deleteRevision,
+    clearChapter: clearChapterRevisions, keep: REVISION_KEEP,
   },
   STATE_DIMS,
 };

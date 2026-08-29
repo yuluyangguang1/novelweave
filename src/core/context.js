@@ -67,6 +67,30 @@
     ].join('\n');
   }
 
+  const RECAP_ITEMS = 12;
+  const RECAP_CHARS = 80;
+
+  /** 摘要若是 buildSummarizePrompt 的四行结构，只取「核心事件」：位置/伤势/持有物
+   *  由「分章状态快照」承载，伏笔由「未结线索」承载。12 章各 200 字会挤爆整份预算。 */
+  function recapLine(summary) {
+    const raw = String(summary).trim();
+    const m = raw.match(/核心事件[:：][ \t]*([^\n]+)/);
+    const text = (m ? m[1] : raw).replace(/\s+/g, ' ').trim();
+    return text.length > RECAP_CHARS ? text.slice(0, RECAP_CHARS) + '…' : text;
+  }
+
+  /** 前情摘要：目标章之前、最近 12 章的 summary。更早的章由摘要本身承载。 */
+  function recapBlock(chapters, current) {
+    const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
+    const withSummary = chapters.slice(0, Math.max(0, upto)).filter((c) => (c.summary || '').trim());
+    if (!withSummary.length) return '（各章摘要尚未填写 —— 长篇里它替代"回读全文"）';
+    const shown = withSummary.slice(-RECAP_ITEMS);
+    const lines = shown.map((c) => `- 第${c.number}章《${c.title}》：${recapLine(c.summary)}`);
+    const folded = withSummary.length - shown.length;
+    if (folded > 0) lines.unshift(`（更早 ${folded} 章的摘要未列出，需要时回读原章）`);
+    return lines.join('\n');
+  }
+
   function stateBlock(states, prev, characters = []) {
     const snap = prev ? states?.byChapter?.[prev.id] : null;
     if (!snap) return `（${prev ? prev.id + ' 没有状态快照' : '无上一章，无需快照'}）`;
@@ -86,6 +110,9 @@
     const chapters = ctx.chapters || [];
     const wantNext = !opts.chapterId || opts.chapterId === 'next';
     const current = wantNext ? null : chapters.find((c) => c.id === opts.chapterId) || null;
+    // 找不到就直接说找不到：往下走会在 current.id 上抛裸 TypeError，
+    // 而 CLI 那边只会显示成一句看不出原因的堆栈。
+    if (!wantNext && !current) throw new Error(`章节「${opts.chapterId}」不在本书中（共 ${chapters.length} 章）`);
     const idx = wantNext ? chapters.length - 1 : chapters.findIndex((c) => c.id === current.id);
     // 'next' 时上一章就是最后一章；指定章节时 prev 是它的前一本，不是它自己
     const prev = wantNext ? (chapters[idx] || null) : (chapters[idx - 1] || null);
@@ -108,6 +135,7 @@
       { name: '出场角色', text: characterBlock(chars) },
       { name: '分章状态快照', text: stateBlock(ctx.states, prev, ctx.characters) },
       { name: '未结线索', text: promiseBlock(ctx.promises) },
+      { name: '前情摘要', text: recapBlock(chapters, current) },
       { name: '相关世界设定', text: lore.entries.length
         ? lore.entries.map((e) => `- ${e.name}：${e.content}`).join('\n') : '（未触发任何世界条目）' },
     ];
@@ -168,5 +196,5 @@
     return sections.map((s) => s.block).join('\n\n') + (extra ? `\n\n${extra}` : '');
   }
 
-  return { buildSections, renderDocument, renderPrompt, DEFAULTS, characterBlock, promiseBlock, stateBlock, activeCharacters };
+  return { buildSections, renderDocument, renderPrompt, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters };
 });

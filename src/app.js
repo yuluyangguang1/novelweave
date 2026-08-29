@@ -18,6 +18,7 @@ const APP = {
   dirty: false,
   lastAIResult: '',
   aiAbort: null,
+  revisions: null,
 };
 
 const { esc, attr, countWords } = NWText;
@@ -60,11 +61,14 @@ async function initApp() {
   try { await NovelDB.recountAll(); } catch (e) { console.warn('统计校正失败', e); }
 
   router.onPage = onPageEntered;
+  const enteredOn = (location.hash || '').replace(/^#/, '');
   router.start();
 
   if (!NovelLLM.hasConfig()) {
-    showToast('请先配置 API Key');
-    router.go('settings');
+    showToast('这本书可以先写；续写 / 润色要先配 API Key');
+    // 只从首页进来时才把人带去设置页：刷新自己那一章、或打开分享的深链接，
+    // 不该被弹走（旧做法会让 hash 写着章节、页面却是设置页）。
+    if (enteredOn === '' || enteredOn === '/' || enteredOn === '/home') router.go('settings');
   }
 }
 
@@ -92,6 +96,10 @@ const ACTIONS = {
   'edit-note':     (id) => editNote(id),
   'save-chapter':  () => saveChapter(),
   'edit-cast':     () => showCastPanel(),
+  'edit-summary':  () => showSummaryEditor(),
+  'show-revisions': () => showRevisions(),
+  'toggle-revision': (id, el) => toggleRevision(id, el),
+  'restore-revision': (id) => restoreRevision(id),
   'run-ai':        (id, el) => runAIPanel(el.dataset.tool || id),
   'close-ai':      () => closeAIPanel(),
   'switch-tab':    (id, el) => switchTab(el.dataset.tab),
@@ -156,8 +164,8 @@ function showModal(title, bodyHTML, onSave, onDelete) {
     <div class="modal-actions">
       ${onDelete ? '<button class="btn btn-danger" id="modal-del-btn">删除</button>' : ''}
       <div style="flex:1"></div>
-      <button class="btn btn-secondary" id="modal-cancel">取消</button>
-      <button class="btn btn-primary" id="modal-save">保存</button>
+      <button class="btn btn-secondary" id="modal-cancel">${onSave ? '取消' : '关闭'}</button>
+      ${onSave ? '<button class="btn btn-primary" id="modal-save">保存</button>' : ''}
     </div></div>`;
   // 标题可能是书名等用户数据，用 textContent 而不是拼进 HTML
   o.querySelector('.modal-title').textContent = title;
@@ -165,7 +173,7 @@ function showModal(title, bodyHTML, onSave, onDelete) {
   o.querySelector('#modal-cancel').onclick = () => o.remove();
   o.addEventListener('click', (e) => { if (e.target === o) o.remove(); });
   if (onDelete) o.querySelector('#modal-del-btn').onclick = onDelete;
-  o.querySelector('#modal-save').onclick = onSave;
+  if (onSave) o.querySelector('#modal-save').onclick = onSave;
   return o;
 }
 
@@ -383,6 +391,8 @@ async function renderChapterList(host) {
       <div class="chapter-item ${APP.chapter?.id === ch.id ? 'active' : ''}" data-action="open-chapter" data-id="${attr(ch.id)}">
         <span class="chapter-item-number">${ch.order ?? '-'}</span>
         <span class="chapter-item-title">${esc(ch.title)}</span>
+        ${(ch.word_count || 0) >= 300 && !(ch.summary || '').trim()
+          ? `<span class="chapter-item-flag" title="摘要未填：续写时注入的前情会缺这一章">摘缺</span>` : ''}
         <span class="chapter-item-words">${formatWordCount(ch.word_count)}</span>
         <button class="chapter-item-del" data-action="del-chapter" data-id="${attr(ch.id)}" title="删除本章">${icon('close','icon-sm')}</button>
       </div>`).join('')}
@@ -440,8 +450,11 @@ async function openChapter(chapter) {
       <button data-action="toggle-sidebar" title="展开/收起侧栏">${icon('menu')}</button>
       <span class="word-count" id="wc-label">${formatWordCount(fresh.word_count)}</span>
       ${AI_TOOLS.filter((t) => t.id !== 'outline').map((t) => `
-        <button data-action="run-ai" data-tool="${attr(t.id)}" title="${attr(t.label)}">${t.icon}</button>`).join('')}
+        <button data-action="run-ai" data-tool="${attr(t.id)}" title="${attr(t.label)}">${icon(t.icon)}</button>`).join('')}
       <button data-action="edit-cast" title="声明本章出场角色">${icon('cast')}</button>
+      <button data-action="edit-summary" class="${(fresh.summary || '').trim() ? 'filled' : ''}"
+        title="${(fresh.summary || '').trim() ? '本章摘要（已填）' : '本章摘要（未填 —— 续写时前情会缺这一章）'}">${icon('scroll')}</button>
+      <button data-action="show-revisions" title="正文历史版本">${icon('revisions')}</button>
       <button data-action="save-chapter" title="保存 (Ctrl+S)">${icon('save')}</button>
     </div>`;
 
@@ -500,6 +513,11 @@ async function saveChapter(idOrSkip, silent) {
   if (!ta) { if (!silent) showToast('编辑器未打开'); return; }
 
   try {
+    // 只给「作者主动定稿」留版本：自动保存 15 秒一发，留底会被噪声淹掉
+    if (!silent) await NovelDB.revisions.snapshot({
+      ...APP.chapter, id, novel_id: APP.chapter?.novel_id || APP.novel?.id,
+      title: titleEl?.value ?? APP.chapter?.title, content: ta.value,
+    }, 'save');
     const saved = await NovelDB.chapters.update(id, { title: titleEl?.value ?? APP.chapter?.title, content: ta.value });
     APP.chapter = { ...APP.chapter, ...saved };
     APP.dirty = false;
@@ -522,6 +540,145 @@ async function updateChapterTitle(id, title) {
   if (APP.chapter?.id === id) APP.chapter = { ...APP.chapter, title: clean };
   await renderChapterList();
   showToast('标题已更新');
+}
+
+// ═══════════════════ 本章摘要 / 正文历史 ═══════════════════
+
+/** 摘要写回后，工具栏按钮与列表标记都要跟上，否则会一直显示「未填」。 */
+async function refreshSummaryMarks() {
+  const btn = document.querySelector('[data-action="edit-summary"]');
+  if (btn && APP.chapter) {
+    const has = !!(APP.chapter.summary || '').trim();
+    btn.classList.toggle('filled', has);
+    btn.title = has ? '本章摘要（已填）' : '本章摘要（未填 —— 续写时前情会缺这一章）';
+  }
+  await renderChapterList();
+}
+
+async function saveSummary(text) {
+  if (!APP.chapter) throw new Error('没有打开中的章节');
+  const saved = await NovelDB.chapters.update(APP.chapter.id, { summary: String(text || '').trim() });
+  APP.chapter = { ...APP.chapter, ...saved };
+  await refreshSummaryMarks();
+  return saved;
+}
+
+/** 超 400 不拦（作者说了算），但要说出来：导出后 nw-validate 会把整本书判成违规。 */
+function announceSummary(saved) {
+  const n = (saved.summary || '').length;
+  showToast(n > 400 ? `摘要已存，但 ${n} 字超 schema 上限 400` : '摘要已保存', n > 400 ? 4200 : 2200);
+}
+
+function showSummaryEditor() {
+  const ch = APP.chapter;
+  if (!ch) { showToast('请先打开章节'); return; }
+  showModal(`本章摘要 · ${ch.title}`, `
+    <div class="settings-field">
+      <label class="settings-label">前情摘要 <span class="sum-count" id="sum-count"></span></label>
+      <textarea class="settings-input" id="inp-summary" rows="7" spellcheck="false"
+        placeholder="核心事件：&#10;出场角色：&#10;状态变化：&#10;新埋或回收的伏笔：">${esc(ch.summary || '')}</textarea>
+      <div class="settings-hint">续写时这一节替代「回读全文」：只取每章「核心事件」一行进上下文，
+        位置 / 伤势 / 持有物走状态快照、伏笔走未结线索，互不重复。
+        也可以用 AI 工具箱的「总结本章」生成后一键写回。</div>
+    </div>`, async () => {
+      try {
+        announceSummary(await saveSummary(val('inp-summary')));
+        closeModal();
+      } catch (e) { showToast('保存失败：' + e.message); }
+    });
+  const ta = document.getElementById('inp-summary');
+  // 上限与 schemas/story-bible.v1.json 的 maxLength 同口径（UTF-16 长度），
+  // 超了这里不拦，但导出后 nw-validate 会把整本书判成违规
+  const meter = document.getElementById('sum-count');
+  const paint = () => {
+    const n = ta.value.length;
+    meter.textContent = `${n} / 400`;
+    meter.classList.toggle('over', n > 400);
+  };
+  ta.addEventListener('input', paint);
+  paint();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+const REVISION_SOURCE_ZH = {
+  save: '保存定格', 'pre-polish': 'AI 替换前', 'pre-import': '导入覆盖前', 'pre-restore': '回退前',
+};
+
+function revTime(ms) {
+  if (!ms) return '未知时间';
+  return new Date(ms).toLocaleString('zh-CN', { hour12: false });
+}
+
+async function showRevisions() {
+  const ch = APP.chapter;
+  if (!ch) { showToast('请先打开章节'); return; }
+  const list = await NovelDB.revisions.list(ch.id);
+  APP.revisions = list;
+  const keep = NovelDB.revisions.keep;
+  const curContent = document.getElementById('edt-content')?.value ?? ch.content ?? '';
+  // 同一份文字可能在两个时间点各留一版（保存过一次、导入又盖回同样的内容），
+  // 逐行按文本相等判「当前」会让两行都亮起来 —— 只标最新那条。
+  let curTagged = false;
+  const body = list.length ? `
+    <div class="settings-hint" style="margin-bottom:10px;">每章最多留 ${keep} 版，更早的自动丢弃。
+      正文历史只在本机，不进 .novelweave/ 导出 —— 目录那份交给 git。</div>
+    <div class="rev-list">${list.map((r) => {
+      const same = (r.content || '') === curContent;
+      const isCur = same && !curTagged;
+      if (isCur) curTagged = true;
+      return `
+      <div class="rev-row${isCur ? ' current' : ''}">
+        <div class="rev-head">
+          <span class="rev-time">${esc(revTime(r.at))}</span>
+          <span class="rev-src">${esc(REVISION_SOURCE_ZH[r.source] || r.source)}</span>
+          <span class="rev-words">${formatWordCount(r.word_count)}</span>
+          ${isCur ? '<span class="rev-tag">当前</span>' : ''}
+        </div>
+        <div class="rev-preview">${esc(previewLine(r.content))}</div>
+        <div class="rev-actions">
+          <button class="btn btn-secondary" data-action="toggle-revision" data-id="${attr(r.id)}">${icon('search', 'icon-sm')}<span>查看</span></button>
+          ${same ? '' : `<button class="btn btn-secondary" data-action="restore-revision" data-id="${attr(r.id)}">${icon('undo', 'icon-sm')}<span>回退到这一版</span></button>`}
+        </div>
+        <pre class="rev-body" id="rev-body-${attr(r.id)}" hidden></pre>
+      </div>`; }).join('')}
+    </div>` : emptyHint(`还没有历史版本。手动保存（Ctrl+S）、AI 整章替换、导入覆盖这几处会各留一版，最多 ${keep} 版。`);
+  showModal(`正文历史 · ${ch.title}`, body, null);
+}
+
+function previewLine(content) {
+  const flat = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!flat) return '（空）';
+  return flat.slice(0, 90) + (flat.length > 90 ? '…' : '');
+}
+
+function toggleRevision(id, el) {
+  const rev = (APP.revisions || []).find((r) => r.id === id);
+  const pre = document.getElementById('rev-body-' + id);
+  if (!rev || !pre) return;
+  const open = !pre.hidden;
+  pre.hidden = open;
+  if (!open && !pre.dataset.filled) { pre.textContent = rev.content || '（这一版是空的）'; pre.dataset.filled = '1'; }
+  if (el) el.querySelector('span').textContent = open ? '查看' : '收起';
+}
+
+async function restoreRevision(id) {
+  const rev = (APP.revisions || []).find((r) => r.id === id);
+  const ch = APP.chapter;
+  if (!rev || !ch) return;
+  const target = `${revTime(rev.at)}（${formatWordCount(rev.word_count)}）`;
+  if (!confirm(`把正文回退到 ${target} 这一版？\n当前编辑器里的文字会先留成一版，不会丢。`)) return;
+  const ta = document.getElementById('edt-content');
+  try {
+    if (ta) await NovelDB.revisions.snapshot({ ...ch, content: ta.value }, 'pre-restore');
+    const saved = await NovelDB.chapters.update(ch.id, { content: rev.content || '' });
+    APP.chapter = { ...APP.chapter, ...saved };
+    APP.dirty = false;
+    if (ta) { ta.value = saved.content || ''; ta.dispatchEvent(new Event('input')); }
+    await renderChapterList();
+    showToast(`已回退到 ${target}`);
+    await showRevisions();
+  } catch (e) { showToast('回退失败：' + e.message); }
 }
 
 // ═══════════════════ 角色 ═══════════════════
@@ -1268,11 +1425,17 @@ async function runAITool(toolId, target) {
 
   if (toolId === 'continue') {
     // 走统一的 Story-Bible 装配：这样状态快照与未回收伏笔才会真的进 prompt
-    const storyCtx = await loadStoryCtx();
-    const live = storyCtx.chapters.find((c) => c.id === APP.chapter.id);
-    // 编辑器里未保存的正文必须覆盖进去，否则 AI 看到的是上次自动保存的旧内容
-    if (live) live.body = content;
-    const built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: APP.chapter.id });
+    let built;
+    try {
+      const storyCtx = await loadStoryCtx();
+      const live = storyCtx.chapters.find((c) => c.id === APP.chapter.id);
+      // 编辑器里未保存的正文必须覆盖进去，否则 AI 看到的是上次自动保存的旧内容
+      if (live) live.body = content;
+      built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: APP.chapter.id });
+    } catch (e) {
+      renderAIError(target, toolId, '组装上下文失败：' + e.message);
+      return;
+    }
     APP.lastAIUsage = built.usage;
     messages = [
       { role: 'system', content: '你是一名经验丰富的中文网文作家，负责在既有设定与前文之下续写。' },
@@ -1374,6 +1537,11 @@ function renderAIResult(el, text, meta = {}) {
     mk(meta.toolId === 'polish' ? 'replace' : 'insert', meta.toolId === 'polish' ? '替换正文' : '插入编辑器', null, () => applyToEditor(meta.toolId));
   }
   if (meta.toolId === 'summarize') {
+    mk('check', '写回本章摘要', '存进 chapter.summary，后续续写会把它当前情注入', async () => {
+      try {
+        announceSummary(await saveSummary(APP.lastAIResult));
+      } catch (e) { showToast('写回失败：' + e.message); }
+    });
     mk('save', '存为笔记', null, async () => {
       await NovelDB.notes.save(APP.novel.id, { title: `${APP.chapter.title} · 摘要`, content: APP.lastAIResult });
       showToast('已存入笔记');
@@ -1382,11 +1550,13 @@ function renderAIResult(el, text, meta = {}) {
   el.appendChild(bar);
 }
 
-function applyToEditor(mode) {
+async function applyToEditor(mode) {
   const text = APP.lastAIResult;
   const ta = document.getElementById('edt-content');
   if (!ta || !text) { showToast('请先打开章节'); return; }
   if (mode === 'polish') {
+    // 整章替换是不可逆覆盖，先把屏幕上的原文留成一版
+    if (APP.chapter) await NovelDB.revisions.snapshot({ ...APP.chapter, content: ta.value }, 'pre-polish');
     ta.value = text;
   } else {
     const pos = ta.selectionStart ?? ta.value.length;
@@ -1579,6 +1749,10 @@ async function importNovelweave() {
   const apply = plan.filter((p) => ['new', 'take-file'].includes(p.action));
 
   for (const item of apply) {
+    // take-file 会直接盖掉本地正文，留一版才谈得上回退
+    if (item.store === 'chapters' && item.localRow) {
+      await NovelDB.revisions.snapshot(item.localRow, 'pre-import');
+    }
     await NovelDB.putRow(item.store, { ...item.fileRow, novel_id: novel.id });
   }
   await NovelDB.recountNovelStats(novel.id);
@@ -1693,10 +1867,17 @@ Object.assign(ACTIONS, {
       try {
         const dump = JSON.parse(await file.text());
         if (!dump?.data?.novels) { showToast('不是织文的备份文件'); return; }
-        if (!confirm('导入会按 id 覆盖库里同名记录，且不可撤销。建议先点上面的「导出全部作品备份」存一份。继续吗？')) return;
+        if (!confirm('导入会按 id 覆盖库里同名记录（正文覆盖前会各留一版，可在该章「正文历史」回退；'
+          + '其余记录不会留底）。建议先点上面的「导出全部作品备份」存一份。继续吗？')) return;
         let n = 0;
         for (const [store, rows] of Object.entries(dump.data)) {
-          for (const row of rows || []) { await NovelDB.putRow(store, row); n++; }
+          for (const row of rows || []) {
+            if (store === 'chapters') {
+              const local = await NovelDB.chapters.get(row.id);
+              if (local) await NovelDB.revisions.snapshot(local, 'pre-import');
+            }
+            await NovelDB.putRow(store, row); n++;
+          }
         }
         await NovelDB.recountAll();
         showToast(`已导入 ${n} 条记录`);
