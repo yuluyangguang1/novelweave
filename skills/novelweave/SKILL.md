@@ -29,7 +29,9 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 触发仲裁（同一请求两边都能接时）：
 - 目标是**产出一批新正文**（"帮我写一本 20 章的悬疑小说"）→ 交给批量成稿类 skill，本 skill 不参与。
 - 目标是**维护或校验已有状态**（"这章有没有前后矛盾""把林烟火的状态更新一下"）→ 本 skill 承担。
-- 目标是**改文字质感**（去 AI 味、弱动词、句式）→ 交给文体分析类 skill；本 skill 的润色只改连续性事实。
+- 目标是**改文字质感**（去 AI 味、弱动词、句式）→ 判断仍交给文体类 skill，但**由本 skill 发起交接**：
+  `nw-prose.mjs probe` 看本机有什么 → `packet` 取该章的交接包 → 调用它或照它的清单自查、
+  改完 `record` 记结论。本 skill 的润色只改连续性事实，不评价文笔。
 - 目标是**排版出书**（PDF/EPUB）→ 交给出版类 skill。
 
 本 skill **不做**的事，无论用户怎么问：
@@ -49,6 +51,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 | "这章有没有矛盾 / 查一下人设有没有崩" | 转 `novelweave-continuity` |
 | "林烟火这章受了重伤，记一下状态" | `nw-changes.mjs stage` 提案，等作者 apply |
 | "这条伏笔回收了" | 同上（`promise.payoff`） |
+| "这章读着像 AI 写的" | `nw-prose.mjs probe` + `packet`，按引擎清单交接（见 `references/prose-handoff.md`） |
 | "把这本书导出给织文网页 / 从网页备份导入" | `references/io.md` |
 | "这是什么格式？字段什么意思" | 读 `references/schema-v1.md` |
 
@@ -126,16 +129,22 @@ summary: 林烟火违师命下山，遇袭失左臂
 1. 跑 First Steps 1–4。
 2. 只用「上下文文档 + 上一章尾部 2000 字」写作，**不要**回读更早的全文。
 3. 写 `manuscript/chapters/ch-0NN-<slug>.md`，frontmatter 用 `assets/templates/chapter.md.tmpl`。
-4. **同时填这一章的 `summary`**（写完才填，别照着不存在的正文编）。上下文里的
+4. **文体交接（在写 `---CHANGES---` 之前）**：`nw-prose.mjs packet --chapter <id>` 取交接包 →
+   按其中引擎的清单自查或调用它 → 要改正文先给作者点头 → `record` 写回结论。
+   本机没有可用引擎就 `record --engine none --result skipped --note "原因"`，
+   并在交付时说明这一章没做文体检查。**不准跳过记录**：没有台账，作者问起来你只能凭印象答。
+   放在 CHANGES 之前，是因为改句子会让 `evidence` 引文与正文对不上。
+5. **同时填这一章的 `summary`**（写完才填，别照着不存在的正文编）。上下文里的
    「前情摘要」一节就是各章 `summary`，四行结构时只取「核心事件」那一行 ——
    位置 / 伤势 / 持有物走状态快照、伏笔走未结线索，所以这里不要再抄一遍。
    留空不会报错，只会让第 40 章忘掉第 30 章，而这正是长篇最常见的失败方式。
-5. 结尾追加 `---CHANGES---`。没有状态变化也要写 `"changes": []`，表示"本章不改任何既定事实"。
-6. stage → continuity → 交给作者 apply。
+6. 结尾追加 `---CHANGES---`。没有状态变化也要写 `"changes": []`，表示"本章不改任何既定事实"。
+7. stage → continuity → 交给作者 apply。
 
 ### B. 修订既有章节
 改完必须重跑该章及其后所有章的 `dead-character-on-stage`、`appearance-token-violation`、
-`promise-*`（改一处可能牵动后面全部）。
+`promise-*`（改一处可能牵动后面全部）。文字动过还有一件事：该章的文体结论自动作废，
+`nw-prose.mjs status` 会列成「正文已改，结论过期」，按 Workflow A 第 4 步重新交接一次。
 
 ```bash
 node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
@@ -155,6 +164,7 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 - 涉及导入导出、双向同步、冲突 → 读 `references/io.md`
 - 要写 `---CHANGES---` 但 op 不熟、或某条变更被拒 → 读 `references/changes-protocol.md`
 - 用户质疑某条诊断、或要求解释规则 → 读 `../novelweave-continuity/references/rules.md`
+- 要做文体（去 AI 味）检查、或 `status` 里一堆「正文已改，结论过期」→ 读 `references/prose-handoff.md`
 - 需要新建文件 → 用 `assets/templates/` 下的模板，别手搓字段
 - `locate` 报 `needsMigrate: true` → 立即读 `references/schema-v1.md` 的 Migration 段，停止其他操作
 
@@ -169,6 +179,10 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 | `nw-continuity.mjs explain --rule R1` | 需要向用户解释某条规则 | 0 |
 | `nw-context.mjs` | 每次写作前取上下文 | 0 |
 | `nw-changes.mjs stage/list/apply/reject` | 状态变更提案闭环 | 0 / 1 有拒 / 6 待确认 |
+| `nw-prose.mjs probe` | 动笔前一次：本机有没有能做文体检查的引擎 | 0 |
+| `nw-prose.mjs packet --chapter <id>` | 本章写完，取交接包（正文路径 + 引擎用法 + 边界） | 0 |
+| `nw-prose.mjs record --chapter <id> --engine <id> --result …` | 把外部引擎的结论记进 `continuity/prose.json` | 0 / 2 参数不合规 |
+| `nw-prose.mjs status` | 作者问"这几章文字靠谱吗"、或交付前自查 | **恒为 0，不是门禁** |
 
 统一约定：`--json` 走 stdout 纯结果，人类日志走 stderr。**不要解析 stderr。**
 
