@@ -100,7 +100,12 @@
       syncRecords[tagFor('promise', item.id)] = { hash: await hashRecord('promise', item), source: 'web' };
     }
 
-    files[p('bible/states.json')] = JSON.stringify(ctx.states || Bible.emptyStates(), null, 2) + '\n';
+    const statesOut = ctx.states || Bible.emptyStates();
+    files[p('bible/states.json')] = JSON.stringify(statesOut, null, 2) + '\n';
+    // 摊平成行再哈希：导出侧与导入侧必须是同一个形状，否则会产生假冲突
+    for (const row of Story.stateRowsFromFile(statesOut, ctx.book.id)) {
+      syncRecords[tagFor('state', row.id)] = { hash: await hashRecord('state', row), source: 'web' };
+    }
     files[p('bible/relations.json')] = JSON.stringify(ctx.relations || { schemaVersion: Bible.SCHEMA_VERSION, edges: [] }, null, 2) + '\n';
 
     const tl = ctx.timeline || Bible.emptyTimeline();
@@ -195,6 +200,9 @@
         const a = row.at ? row : { ...row, at: { day: row.day ?? null, clock: row.clock || null } };
         return { id: a.id, chapter: a.chapter ?? null, label: a.label || '', day: a.at?.day ?? null, clock: a.at?.clock ?? null };
       }
+      case 'state': {
+        return { id: row.id, chapter: row.chapter ?? null, entity: row.entity ?? null, dims: Story.dimsOf(row) };
+      }
       default: throw new Error(`未知投影类型 ${kind}`);
     }
   }
@@ -247,6 +255,7 @@
       characters: readDir('characters').map((rec) => Story.fromCharacter(rec, novelId)),
       world: readDir('world').map((rec) => Story.fromWorld(rec, novelId)),
       promises: (json(files, `${slug}/bible/promises.json`)?.items || []).map((rec) => Story.fromPromise(rec)),
+      states: Story.stateRowsFromFile(json(files, `${slug}/bible/states.json`), novelId),
       timeline: (json(files, `${slug}/bible/timeline.json`)?.anchors || []).map((rec) => Story.fromAnchor(rec)),
       suppressions: json(files, `${slug}/continuity/suppressions.json`)?.items || [],
       sync: json(files, `${slug}/meta/sync.json`),

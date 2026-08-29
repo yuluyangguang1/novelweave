@@ -37,6 +37,10 @@ function rowsFixture() {
     promises: [{ id: 'p_001', type: 'promise', title: '半枚铜印', status: 'planted', weight: 'major',
       setup: { chapter: 'ch_a1', evidence: '师父塞给我' }, payoff: { chapter: null, due: 'ch_a1' } }],
     timeline: [{ id: 'ev_001', chapter: 'ch_a1', label: '山门夜火', day: 1, clock: '夜', thread: '甲线', confidence: 'author' }],
+    states: [
+      { id: 'ch_a1|char_ming', novel_id: 'novel_bridge', chapter: 'ch_a1', entity: 'char_ming',
+        loc: '青雾山山门', alive: 'deceased', injury: [], items: ['半枚铜印'], knows: ['铜印来历'], goal: '' },
+    ],
     suppressions: [{ id: 'sup_1', fingerprint: 'appearance-token-violation:ch_a2:char_ming', reason: '闪回', at: 1 }],
   };
 }
@@ -107,6 +111,7 @@ test('导出是幂等的：导出→解析→再导出，文件内容逐字节�
     chapters: parsed.chapters.map((c) => ({ ...c, created_at: 1 })),
     characters: parsed.characters, world: parsed.world,
     promises: parsed.promises,
+    states: parsed.states,
     timeline: parsed.timeline, suppressions: parsed.suppressions,
   });
   // 时间锚点的 day / clock 必须在往返后仍然在（这次就是在这里丢的）
@@ -181,6 +186,22 @@ test('导入按正文重算字数，不照抄文件里过期的 x-words', () => 
   const parsed = NWProject.parseFileMap(tree);
   assert.equal(parsed.chapters[0].word_count, NWText.countWords('她推开门，看见雪。'),
     '导入应重算字数；照抄 999 会让章节列表永久显示错数字');
+});
+
+test('状态快照能完整走过「导出 → CLI 校验 → 摊回库行」这条链', async () => {
+  const ctx = NWStory.buildCtx(rowsFixture());
+  const tree = await NWProject.buildProjectTree(ctx);
+  const states = JSON.parse(tree['桥接测试/bible/states.json']);
+  assert.deepEqual(states.byChapter.ch_a1.char_ming,
+    { loc: '青雾山山门', alive: 'deceased', items: ['半枚铜印'], knows: ['铜印来历'] },
+    '空维度（injury/goal）不该被写进文件');
+  const sync = JSON.parse(tree['桥接测试/meta/sync.json']);
+  assert.ok(sync.records['state:ch_a1|char_ming']?.hash, 'sync.json 没给状态快照留基线哈希，导入会全表假冲突');
+
+  const parsed = NWProject.parseFileMap(tree);
+  assert.equal(parsed.states.length, 1);
+  assert.equal(parsed.states[0].id, 'ch_a1|char_ming');
+  assert.deepEqual(parsed.states[0].injury, []);
 });
 
 test('thread 必须在导出往返中存活（R6 靠它区分并行叙事线）', async () => {

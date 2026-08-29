@@ -12,7 +12,7 @@
  */
 
 const DB_NAME = 'novelweave_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let _dbPromise = null;
 
@@ -35,6 +35,13 @@ function openDB() {
           const s = db.createObjectStore(name, { keyPath: 'id' });
           s.createIndex('novel_id', 'novel_id', { unique: false });
         }
+      }
+      // v3：分章状态快照。一行 = 一个（章节, 实体），主键 `${chapter}|${entity}`
+      // 这样导出/导入与三方合并能按记录对齐，而不是把全书状态塞成一个大对象。
+      if (!db.objectStoreNames.contains('states')) {
+        const s = db.createObjectStore('states', { keyPath: 'id' });
+        s.createIndex('novel_id', 'novel_id', { unique: false });
+        s.createIndex('chapter', 'chapter', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -169,7 +176,7 @@ async function updateNovel(id, updates) {
 }
 
 /** 删书必须一起清掉的从属表；漏一个就会留下再也查不到的孤儿数据。 */
-const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions'];
+const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states'];
 
 async function deleteNovel(id) {
   for (const store of CASCADE_STORES) {
@@ -224,6 +231,7 @@ async function deleteChapter(id) {
   const ch = await get('chapters', id);
   if (!ch) return;
   await del('chapters', id);
+  await clearChapterStates(id);
   await resequenceChapters(ch.novel_id);
   await recountNovelStats(ch.novel_id);
 }
@@ -343,6 +351,52 @@ async function saveSuppression(novelId, fingerprint, reason) {
 
 async function deleteSuppression(id) { await del('suppressions', id); }
 
+// ═══════════ 分章状态快照（六维） ═══════════
+
+const STATE_DIMS = ['loc', 'alive', 'injury', 'items', 'knows', 'goal'];
+
+function stateId(chapter, entity) { return `${chapter}|${entity}`; }
+
+async function listStates(novelId) {
+  return stableSort(await getByIndex('states', 'novel_id', novelId));
+}
+
+async function listStatesForChapter(chapterId) {
+  return (await tx('states', 'readonly', (s) => s.index('chapter').getAll(chapterId))) || [];
+}
+
+/** 写入一行快照。injury / items / knows 允许传数组或多行文本，统一切成数组。 */
+async function saveState(novelId, data) {
+  const chapter = data.chapter, entity = data.entity;
+  if (!chapter || !entity) throw new Error('状态快照必须有 chapter 与 entity');
+  const rec = {
+    id: stateId(chapter, entity), novel_id: novelId, chapter, entity,
+    loc: data.loc || '', alive: data.alive || '',
+    injury: NWStory.toLines(data.injury),
+    items: NWStory.toLines(data.items),
+    knows: NWStory.toLines(data.knows),
+    goal: data.goal || '',
+    updated_at: Date.now(),
+  };
+  await put('states', rec);
+  return rec;
+}
+
+/** 本章快照的 UTF-8 字节数；schema 规定每章上限 3072。 */
+async function chapterStateBytes(chapterId) {
+  const rows = await listStatesForChapter(chapterId);
+  const byEntity = {};
+  // 复用 story 的 dimsOf：哪些维度算「一条事实」只能有一处定义
+  for (const r of rows) byEntity[r.entity] = NWStory.dimsOf(r);
+  return NWText.bytesOf(NWText.canonicalJson(byEntity));
+}
+
+async function deleteState(id) { await del('states', id); }
+
+async function clearChapterStates(chapterId) {
+  for (const r of await listStatesForChapter(chapterId)) await del('states', r.id);
+}
+
 // ═══════════ 世界设定 ═══════════
 
 const WORLD_TYPES = { location: '地点', faction: '势力/组织', rule: '规则/法则', system: '力量体系' };
@@ -399,7 +453,8 @@ window.NovelDB = {
    * 而各 create()/save() 会重新生成主键或补默认值，不能用于导入。
    */
   putRow: (store, row) => {
-    if (!['novels', 'chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions'].includes(store)) {
+    // 复用 CASCADE_STORES 作为「全部从属表」的唯一清单，避免两处名单各说各话
+    if (!['novels', ...CASCADE_STORES].includes(store)) {
       throw new Error(`未知 store：${store}`);
     }
     return put(store, row);
@@ -415,4 +470,10 @@ window.NovelDB = {
   promises:     { list: listPromises, save: savePromise, get: (id) => get('promises', id), delete: deletePromise },
   timeline:     { list: listTimeline, save: saveAnchor, get: (id) => get('timeline', id), delete: deleteAnchor },
   suppressions: { list: listSuppressions, save: saveSuppression, delete: deleteSuppression },
+  states: {
+    list: listStates, listForChapter: listStatesForChapter, save: saveState,
+    delete: deleteState, clearChapter: clearChapterStates, bytes: chapterStateBytes,
+    dims: STATE_DIMS, idOf: stateId,
+  },
+  STATE_DIMS,
 };

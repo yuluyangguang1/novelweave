@@ -108,6 +108,47 @@ test('空库（新书）不该炸，也不该报任何东西', () => {
   assert.equal(ctx.lexicon.names && Object.keys(ctx.lexicon.names).length, 0);
 });
 
+test('states：行聚合会丢掉空维度（空不是事实，否则 R2 会拿空去比角色卡）', () => {
+  const states = NWStory.statesFromRows([
+    { chapter: 'ch-001', entity: 'char-a', loc: '青雾山', alive: 'alive', injury: [], items: ['铜印'], knows: [], goal: '' },
+    { chapter: 'ch-001', entity: 'char-b', loc: '', alive: '', injury: [], items: [], knows: [], goal: '' },
+  ]);
+  assert.deepEqual(states.byChapter['ch-001']['char-a'], { loc: '青雾山', alive: 'alive', items: ['铜印'] });
+  assert.deepEqual(states.byChapter['ch-001']['char-b'], {}, '全空的行不该产出任何维度');
+  assert.equal(states.budgetPerChapter, 3072);
+});
+
+test('states：行 ⇄ 文件 双向可逆', () => {
+  const file = NWStory.statesFromRows([
+    { chapter: 'ch-001', entity: 'char-a', loc: '山门', alive: 'deceased', injury: ['断臂'], items: [], knows: ['师父已死'], goal: '下山' },
+  ]);
+  const back = NWStory.stateRowsFromFile(file, 'n1');
+  assert.equal(back.length, 1);
+  assert.equal(back[0].id, 'ch-001|char-a', '主键必须保持 章节|实体，合并才能按记录对齐');
+  assert.equal(back[0].alive, 'deceased');
+  assert.deepEqual(back[0].injury, ['断臂']);
+  assert.deepEqual(back[0].items, [], '列表维度缺值应是空数组而不是空串');
+});
+
+test('states：快照与角色卡互斥时，浏览器装配路径必须报出 R2', () => {
+  const ctx = NWStory.buildCtx({
+    novel: { id: 'n1', title: '测试', genre: '玄幻', word_count: 0, chapter_count: 2 },
+    chapters: [
+      { id: 'ch-001', order: 1, title: '一', content: '甲还活着。' },
+      { id: 'ch-002', order: 2, title: '二', content: '乙死了。' },
+    ],
+    characters: [{ id: 'char-a', name: '甲某', role: '主角', status: 'alive' }],
+    world: [], promises: [], timeline: [], suppressions: [],
+    states: [{ id: 'ch-002|char-a', novel_id: 'n1', chapter: 'ch-002', entity: 'char-a',
+      loc: '', alive: 'deceased', injury: [], items: [], knows: [], goal: '' }],
+  });
+  assert.equal(ctx.states.byChapter['ch-002']['char-a'].alive, 'deceased', 'buildCtx 应把行聚合成 byChapter');
+  const d = NWRules.runRules(ctx).filter((x) => x.rule === 'status-declared-contradiction');
+  assert.equal(d.length, 1, 'R2 的快照分支在 Web 端此前从未被触发');
+  assert.equal(d[0].chapter, 'ch-002');
+  assert.ok(d[0].evidence.basis.join().includes('character.status=alive'));
+});
+
 test('旧库（v1 行，缺全部新字段）归一化后仍可跑', () => {
   const legacy = { ...rows, characters: [{ id: 'char_ming', name: '明长老', role: '导师' }] };
   const ctx = NWStory.buildCtx(legacy);

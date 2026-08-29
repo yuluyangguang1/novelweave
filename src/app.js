@@ -40,6 +40,7 @@ const TABS = [
   { id: 'world',      icon: '🌍', label: '世界设定', hasAdd: true,  addTitle: '添加设定' },
   { id: 'promises',   icon: '🧵', label: '伏笔',     hasAdd: true,  addTitle: '登记伏笔' },
   { id: 'timeline',   icon: '🕐', label: '时间线',   hasAdd: true,  addTitle: '添加时间锚点' },
+  { id: 'states',     icon: '🧭', label: '状态',     hasAdd: false, addTitle: '' },
   { id: 'continuity', icon: '🔍', label: '连续性',   hasAdd: false, addTitle: '' },
   { id: 'notes',      icon: '📒', label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
   { id: 'settings',   icon: '⚙️', label: 'AI 设置',  hasAdd: false, addTitle: '' },
@@ -326,6 +327,7 @@ Object.assign(ACTIONS, {
   'edit-promise':    (id) => editPromise(id),
   'del-promise':     (id) => removePromise(id),
   'edit-anchor':     (id) => editAnchor(id),
+  'edit-state':      (id, el) => showStateEditor(el.dataset.chapter, el.dataset.entity),
   'jump-diag':       (id, el) => jumpToEvidence(el.dataset.chapter, el.dataset.start, el.dataset.len),
   'suppress-diag':   (id, el) => suppressDiagnostic(el.dataset.fp, el),
   'rerun-continuity': () => renderSidebarPanel(),
@@ -338,6 +340,7 @@ const SIDEBAR_VIEWS = {
   world: showWorldList,
   promises: showPromiseList,
   timeline: showTimelineList,
+  states: showStatesPanel,
   continuity: showContinuity,
   notes: showNotesList,
   settings: renderWorkspaceSettings,
@@ -981,18 +984,133 @@ async function showCastPanel() {
     });
 }
 
+// ═══════════════════ 状态矩阵 ═══════════════════
+
+const ALIVE_ZH = { alive: '在世', deceased: '已亡', unknown: '不明', missing: '失踪' };
+
+/** 格子摘要：位置首词 + 生死 + 三个列表维度的计数 */
+function stateCellText(row, card) {
+  if (!row) return '<span class="cell-empty">·</span>';
+  const bits = [];
+  if (row.loc) bits.push(esc(String(row.loc).slice(0, 6)));
+  if (row.alive) bits.push(ALIVE_ZH[row.alive] || row.alive);
+  const counts = ['injury', 'items', 'knows'].map((d) => (row[d] || []).length).reduce((a, b) => a + b, 0);
+  if (counts) bits.push(`${counts}项`);
+  if (row.goal) bits.push('◎');
+  const conflict = row.alive && card && row.alive !== card.status;
+  return `<span class="${conflict ? 'cell-conflict' : ''}">${bits.join(' · ') || '·'}</span>`;
+}
+
+async function showStatesPanel(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const [chars, rows, chapters] = await Promise.all([
+    NovelDB.characters.list(APP.novel.id), NovelDB.states.list(APP.novel.id), NovelDB.chapters.list(APP.novel.id),
+  ]);
+  if (!chars.length) { host.innerHTML = emptyHint('先到「角色」里登记人物，再记录他们的状态'); return; }
+  if (!chapters.length) { host.innerHTML = emptyHint('先到「章节」里建一章'); return; }
+
+  const byKey = new Map(rows.map((r) => [r.id, r]));
+  const total = rows.length;
+  host.innerHTML = `<div class="state-wrap">
+    <div class="state-legend">已记录 ${total} 格 · 红格=与角色卡状态冲突 · 点任意格子编辑（空格子=新增）</div>
+    <table class="state-matrix">
+      <thead><tr><th class="col-name">角色</th>
+        ${chapters.map((c) => `<th title="${attr(c.title)}">${c.order}</th>`).join('')}
+      </tr></thead>
+      <tbody>
+      ${chars.map((card) => `<tr>
+        <td class="col-name">${esc(card.name)}${card.status === 'deceased' ? ' <em>亡</em>' : ''}</td>
+        ${chapters.map((c) => {
+          const row = byKey.get(NovelDB.states.idOf(c.id, card.id));
+          const conflict = row?.alive && row.alive !== card.status;
+          return `<td class="${conflict ? 'cell-bad' : ''}" data-action="edit-state" data-chapter="${attr(c.id)}" data-entity="${attr(card.id)}">${stateCellText(row, card)}</td>`;
+        }).join('')}
+      </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function showStateEditor(chapterId, entityId) {
+  const [chapter, card] = await Promise.all([NovelDB.chapters.get(chapterId), NovelDB.characters.get(entityId)]);
+  if (!chapter || !card) { showToast('章节或角色不存在'); return; }
+  const chapterRows = await NovelDB.states.listForChapter(chapterId);
+  const row = chapterRows.find((r) => r.entity === entityId) || {};
+  const p = 'st';
+
+  const area = (label, key, value, hint, rows = 2) => `
+    <div class="settings-field"><label class="settings-label">${esc(label)}</label>
+      <textarea class="settings-input" id="${p}-${key}" rows="${rows}" placeholder="${attr(hint)}">${esc(Array.isArray(value) ? value.join('\n') : value || '')}</textarea></div>`;
+
+  const conflictHint = row.alive && row.alive !== card.status
+    ? `<div class="state-conflict">⚠️ 这里写「${ALIVE_ZH[row.alive]}」，但角色卡是「${ALIVE_ZH[card.status] || card.status}」——连续性检查会按矛盾报出（R2）。</div>` : '';
+
+  showModal(`${card.name} · 第${chapter.order}章结束时`, `
+    ${conflictHint}
+    ${area('位置', 'loc', row.loc, '在哪；写地点名或一句话', 1)}
+    <div class="settings-field"><label class="settings-label">生死状态</label>
+      <select class="settings-select" id="${p}-alive">
+        <option value="">（未记）</option>
+        ${Object.entries(ALIVE_ZH).map(([v, l]) => `<option value="${attr(v)}" ${row.alive === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+      </select>
+      <div class="settings-hint">与角色卡不一致时会被 R2 报出；留空表示本章没改变他的状态。</div></div>
+    ${area('伤势', 'injury', row.injury, '每行一条')}${area('持有物', 'items', row.items, '每行一条')}
+    ${area('已知信息', 'knows', row.knows, '每行一条：他知道而别人不知道的，最容易写漏')}
+    ${area('当前目标', 'goal', row.goal, '一句话', 1)}
+    <div class="state-bytes" id="${p}-bytes"></div>
+  `, async () => {
+    const g = (k) => document.getElementById(`${p}-${k}`)?.value ?? '';
+    await NovelDB.states.save(APP.novel.id, {
+      chapter: chapterId, entity: entityId,
+      loc: g('loc').trim(), alive: g('alive'), injury: g('injury'),
+      items: g('items'), knows: g('knows'), goal: g('goal').trim(),
+    });
+    closeModal();
+    showToast('状态已记录');
+    await renderSidebarPanel();
+  }, row.id ? async () => {
+    if (!confirm(`删除 ${card.name} 在第${chapter.order}章的状态记录？`)) return;
+    await NovelDB.states.delete(row.id);
+    closeModal(); showToast('已删除'); await renderSidebarPanel();
+  } : null);
+
+  const refreshBytes = async () => {
+    const el = document.getElementById(`${p}-bytes`);
+    if (!el) return;
+    // 把正在编辑的内容算进去，否则作者要保存后才知道超没超
+    const draft = { chapter: chapterId, entity: entityId,
+      loc: document.getElementById(`${p}-loc`)?.value.trim() || '',
+      alive: document.getElementById(`${p}-alive`)?.value || '',
+      injury: NWStory.toLines(document.getElementById(`${p}-injury`)?.value),
+      items: NWStory.toLines(document.getElementById(`${p}-items`)?.value),
+      knows: NWStory.toLines(document.getElementById(`${p}-knows`)?.value),
+      goal: document.getElementById(`${p}-goal`)?.value.trim() || '' };
+    const others = (await NovelDB.states.listForChapter(chapterId)).filter((r) => r.entity !== entityId);
+    const bytes = NWText.bytesOf(NWText.canonicalJson(
+      Object.fromEntries([...others, draft].map((r) => [r.entity, NWStory.dimsOf(r)]))));
+    const limit = NWBible.MAX_STATE_BYTES_PER_CHAPTER;
+    el.textContent = `本章快照 ${bytes} / ${limit} 字节`;
+    el.classList.toggle('over', bytes > limit);
+    if (bytes > limit) el.textContent += '（超限：写作时会被裁切，请精简 mood/goal 这类低价值维度）';
+  };
+  document.getElementById(`${p}-bytes`) && [`${p}-loc`, `${p}-alive`, `${p}-injury`, `${p}-items`, `${p}-knows`, `${p}-goal`]
+    .forEach((id) => document.getElementById(id)?.addEventListener('input', refreshBytes));
+  refreshBytes();
+}
+
 // ═══════════════════ 连续性面板 ═══════════════════
 
 /** 读全库装配 ctx。与 CLI 唯一的差别是不跑 schema 校验（浏览器里没有那份 JSON）。 */
 async function loadStoryCtx() {
   const novelId = APP.novel.id;
-  const [novel, chapters, characters, world, promises, timeline, suppressions] = await Promise.all([
+  const [novel, chapters, characters, world, promises, timeline, suppressions, states] = await Promise.all([
     NovelDB.novels.get(novelId), NovelDB.chapters.list(novelId), NovelDB.characters.list(novelId),
     NovelDB.worldbuilding.list(novelId), NovelDB.promises.list(novelId),
-    NovelDB.timeline.list(novelId), NovelDB.suppressions.list(novelId),
+    NovelDB.timeline.list(novelId), NovelDB.suppressions.list(novelId), NovelDB.states.list(novelId),
   ]);
   APP.chaptersCache = chapters;
-  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions });
+  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states });
 }
 
 async function showContinuity(host) {
@@ -1398,6 +1516,7 @@ async function buildMergePlan(parsed, currentRows) {
     ['worldbuilding', 'world', parsed.world, currentRows.worldbuilding],
     ['promises', 'promise', parsed.promises, currentRows.promises],
     ['timeline', 'anchor', parsed.timeline, currentRows.timeline],
+    ['states', 'state', parsed.states || [], currentRows.states || []],
   ];
   for (const [store, kind, fileRows, localRows] of buckets) {
     const localById = new Map(localRows.map((r) => [r.id, r]));
@@ -1450,6 +1569,7 @@ async function importNovelweave() {
     worldbuilding: await NovelDB.worldbuilding.list(novel.id),
     promises: await NovelDB.promises.list(novel.id),
     timeline: await NovelDB.timeline.list(novel.id),
+    states: await NovelDB.states.list(novel.id),
   };
   const plan = await buildMergePlan(parsed, current);
   const conflicts = plan.filter((p) => p.action === 'conflict');

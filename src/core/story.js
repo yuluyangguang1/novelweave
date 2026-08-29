@@ -163,6 +163,54 @@
     return { items: rows.map((r) => ({ fingerprint: r.fingerprint, reason: r.reason, by: 'author', at: T.toISO(r.at) })) };
   }
 
+  const LIST_STATE_DIMS = ['injury', 'items', 'knows'];
+
+  /** 多行文本或数组 → 去空去重后的数组。规则只在这里定义一次。 */
+  function toLines(v) {
+    if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
+    return String(v ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+  }
+
+  /** 只保留非空维度：空串与空数组不是事实，写进快照会让 R2 拿「空」去比角色卡。 */
+  function dimsOf(src) {
+    const dims = {};
+    for (const d of Bible.STATE_DIMS) {
+      const v = src?.[d];
+      if (v === '' || v == null) continue;
+      if (Array.isArray(v) && !v.length) continue;
+      dims[d] = v;
+    }
+    return dims;
+  }
+
+  /** 库行（一行一个 章节×实体）→ schema 的 states.byChapter */
+  function statesFromRows(rows) {
+    const byChapter = {};
+    for (const r of rows || []) {
+      if (!r.chapter || !r.entity) continue;
+      byChapter[r.chapter] = byChapter[r.chapter] || {};
+      byChapter[r.chapter][r.entity] = dimsOf(r);
+    }
+    return { schemaVersion: Bible.SCHEMA_VERSION, budgetPerChapter: Bible.MAX_STATE_BYTES_PER_CHAPTER, byChapter };
+  }
+
+  /** schema 的 states → 库行，供导入按原样落库（不重新生成主键） */
+  function stateRowsFromFile(states, novelId) {
+    const out = [];
+    for (const [chapter, entities] of Object.entries(states?.byChapter || {})) {
+      for (const [entity, dims] of Object.entries(entities || {})) {
+        const row = { id: `${chapter}|${entity}`, novel_id: novelId, chapter, entity };
+        for (const d of Bible.STATE_DIMS) {
+          const v = dims?.[d];
+          if (v == null) row[d] = LIST_STATE_DIMS.includes(d) ? [] : '';
+          else row[d] = v;
+        }
+        out.push(row);
+      }
+    }
+    return out;
+  }
+
   /** 组装 rules.js 需要的 ctx。schema 传 null：浏览器不跑结构校验，由 CLI 负责。 */
   function buildCtx(rows) {
     const characters = (rows.characters || []).map(toCharacter);
@@ -178,7 +226,8 @@
       chapters, characters,
       world: (rows.world || []).map(toWorld),
       promises: { schemaVersion: Bible.SCHEMA_VERSION, items: (rows.promises || []).map(toPromise) },
-      states: rows.states || Bible.emptyStates(),
+      // rows.states 传「库行数组」；已是聚合形状（CLI 的 loadBook 产物）就直接用
+      states: Array.isArray(rows.states) ? statesFromRows(rows.states) : (rows.states || statesFromRows([])),
       timeline: toTimeline(rows.timeline || []),
       lexicon,
       suppressions: toSuppressions(rows.suppressions || []),
@@ -187,5 +236,5 @@
   }
 
   return { toCharacter, fromCharacter, toWorld, fromWorld, toChapter, toPromise, fromAnchor, fromPromise,
-    toTimeline, toSuppressions, buildCtx, zhRole };
+    toTimeline, toSuppressions, statesFromRows, stateRowsFromFile, dimsOf, toLines, buildCtx, zhRole };
 });
