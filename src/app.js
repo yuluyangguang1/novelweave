@@ -22,28 +22,31 @@ const APP = {
 
 const { esc, attr, countWords } = NWText;
 
+/** 引用 index.html 里的内联 sprite；描线继承 currentColor，故自动跟随主题。 */
+const icon = (name, cls = '') => `<svg class="icon${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+
 const AUTOSAVE_MS = 15000;
 
 /** AI 工具箱的唯一权威表：面板按钮和 runAITool 的分支由它保证一致。
  *  旧版 index.html 里写死了四个 onclick 调用根本不存在的函数，面板整块是死的。 */
 const AI_TOOLS = [
-  { id: 'continue',    icon: '✍️', label: '续写',     needsChapter: true,  maxTokens: 8000 },
-  { id: 'polish',      icon: '✨', label: '润色',     needsChapter: true,  maxTokens: 4000, needsContent: true },
-  { id: 'consistency', icon: '🔍', label: '一致性检查', needsChapter: true,  maxTokens: 4000, needsContent: 100 },
-  { id: 'summarize',   icon: '📋', label: '总结本章',  needsChapter: true,  maxTokens: 1000, needsContent: true },
-  { id: 'outline',     icon: '📖', label: '生成大纲',  needsChapter: true,  maxTokens: 4000 },
+  { id: 'continue',    icon: 'insert',  label: '续写',     needsChapter: true,  maxTokens: 8000 },
+  { id: 'polish',      icon: 'sparkle', label: '润色',     needsChapter: true,  maxTokens: 4000, needsContent: true },
+  { id: 'consistency', icon: 'search',  label: '一致性检查', needsChapter: true,  maxTokens: 4000, needsContent: 100 },
+  { id: 'summarize',   icon: 'note',    label: '总结本章',  needsChapter: true,  maxTokens: 1000, needsContent: true },
+  { id: 'outline',     icon: 'chapter', label: '生成大纲',  needsChapter: true,  maxTokens: 4000 },
 ];
 
 const TABS = [
-  { id: 'chapters',   icon: '📝', label: '章节',     hasAdd: true,  addTitle: '添加章节' },
-  { id: 'characters', icon: '👥', label: '角色',     hasAdd: true,  addTitle: '添加角色' },
-  { id: 'world',      icon: '🌍', label: '世界设定', hasAdd: true,  addTitle: '添加设定' },
-  { id: 'promises',   icon: '🧵', label: '伏笔',     hasAdd: true,  addTitle: '登记伏笔' },
-  { id: 'timeline',   icon: '🕐', label: '时间线',   hasAdd: true,  addTitle: '添加时间锚点' },
-  { id: 'states',     icon: '🧭', label: '状态',     hasAdd: false, addTitle: '' },
-  { id: 'continuity', icon: '🔍', label: '连续性',   hasAdd: false, addTitle: '' },
-  { id: 'notes',      icon: '📒', label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
-  { id: 'settings',   icon: '⚙️', label: 'AI 设置',  hasAdd: false, addTitle: '' },
+  { id: 'chapters',   icon: 'chapter',  label: '章节',     hasAdd: true,  addTitle: '添加章节' },
+  { id: 'characters', icon: 'users',    label: '角色',     hasAdd: true,  addTitle: '添加角色' },
+  { id: 'world',      icon: 'globe',    label: '世界设定', hasAdd: true,  addTitle: '添加设定' },
+  { id: 'promises',   icon: 'thread',   label: '伏笔',     hasAdd: true,  addTitle: '登记伏笔' },
+  { id: 'timeline',   icon: 'clock',    label: '时间线',   hasAdd: true,  addTitle: '添加时间锚点' },
+  { id: 'states',     icon: 'compass',  label: '状态',     hasAdd: false, addTitle: '' },
+  { id: 'continuity', icon: 'search',   label: '连续性',   hasAdd: false, addTitle: '' },
+  { id: 'notes',      icon: 'note',     label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
+  { id: 'settings',   icon: 'settings', label: 'AI 设置',  hasAdd: false, addTitle: '' },
 ];
 
 // ═══════════════════ 初始化 ═══════════════════
@@ -195,7 +198,7 @@ async function renderHomePage() {
     const d = n.updated_at ? new Date(n.updated_at).toLocaleDateString('zh-CN') : '';
     return `<div class="novel-card" data-action="open-novel" data-id="${attr(n.id)}">
       <div class="novel-card-actions">
-        <button class="del-btn" data-action="del-novel" data-id="${attr(n.id)}" title="删除作品">🗑️</button>
+        <button class="del-btn" data-action="del-novel" data-id="${attr(n.id)}" title="删除作品">${icon('trash')}</button>
       </div>
       <div class="novel-card-title">${esc(n.title)}</div>
       <div class="novel-card-meta">
@@ -300,16 +303,16 @@ async function renderSidebar() {
 
   document.getElementById('sidebar-nav').innerHTML = `
     <div style="padding:12px; border-bottom:1px solid var(--border);">
-      <button class="sidebar-back" data-action="go-home">← 返回</button>
+      <button class="sidebar-back" data-action="go-home">${icon('back')}<span>返回</span></button>
       <div style="margin-top:6px; font-size:14px; color:var(--text-primary); font-family:Georgia,serif; font-weight:600;">${esc(novel.title)}</div>
       <div style="margin-top:2px; font-size:12px; color:var(--text-secondary);">${counts.chapters} 章 · ${formatWordCount(novel.word_count)}</div>
     </div>
     <div style="padding:8px;">
       ${TABS.map((t) => `
         <div class="sidebar-nav-item ${APP.activeTab === t.id ? 'active' : ''}" data-action="switch-tab" data-tab="${attr(t.id)}">
-          <span class="sidebar-nav-icon">${t.icon}</span><span class="sidebar-nav-label">${esc(t.label)}</span>
+          <span class="sidebar-nav-icon">${icon(t.icon)}</span><span class="sidebar-nav-label">${esc(t.label)}</span>
           ${counts[t.id] != null ? `<span class="sidebar-nav-count">${counts[t.id]}</span>` : ''}
-          ${t.hasAdd ? `<span class="sidebar-nav-add" data-action="${attr('nav-add-' + t.id)}" title="${attr(t.addTitle)}">+</span>` : ''}
+          ${t.hasAdd ? `<span class="sidebar-nav-add" data-action="${attr('nav-add-' + t.id)}" title="${attr(t.addTitle)}">${icon('plus')}</span>` : ''}
         </div>`).join('')}
     </div>`;
 }
@@ -381,7 +384,7 @@ async function renderChapterList(host) {
         <span class="chapter-item-number">${ch.order ?? '-'}</span>
         <span class="chapter-item-title">${esc(ch.title)}</span>
         <span class="chapter-item-words">${formatWordCount(ch.word_count)}</span>
-        <button class="chapter-item-del" data-action="del-chapter" data-id="${attr(ch.id)}" title="删除本章">×</button>
+        <button class="chapter-item-del" data-action="del-chapter" data-id="${attr(ch.id)}" title="删除本章">${icon('close','icon-sm')}</button>
       </div>`).join('')}
   </div>`;
 }
@@ -434,12 +437,12 @@ async function openChapter(chapter) {
   hdr.innerHTML = `
     <input class="editor-title" id="edt-title" value="${attr(fresh.title)}" data-chapter-id="${attr(fresh.id)}">
     <div class="editor-toolbar">
-      <button data-action="toggle-sidebar" title="展开/收起侧栏">☰</button>
+      <button data-action="toggle-sidebar" title="展开/收起侧栏">${icon('menu')}</button>
       <span class="word-count" id="wc-label">${formatWordCount(fresh.word_count)}</span>
       ${AI_TOOLS.filter((t) => t.id !== 'outline').map((t) => `
         <button data-action="run-ai" data-tool="${attr(t.id)}" title="${attr(t.label)}">${t.icon}</button>`).join('')}
-      <button data-action="edit-cast" title="声明本章出场角色">🎭</button>
-      <button data-action="save-chapter" title="保存 (Ctrl+S)">💾</button>
+      <button data-action="edit-cast" title="声明本章出场角色">${icon('cast')}</button>
+      <button data-action="save-chapter" title="保存 (Ctrl+S)">${icon('save')}</button>
     </div>`;
 
   area.innerHTML = `<textarea class="editor-textarea" id="edt-content" placeholder="开始写作吧..." spellcheck="false"></textarea>`;
@@ -685,12 +688,12 @@ async function showWorldList(host) {
   host = host || document.getElementById('sidebar-content');
   if (!host || !APP.novel) return;
   const items = await NovelDB.worldbuilding.list(APP.novel.id);
-  const icons = { location: '📍', faction: '🏛', rule: '📜', system: '⚡' };
+  const WORLD_ICONS = { location: 'pin', faction: 'bank', rule: 'scroll', system: 'bolt' };
   if (!items.length) { host.innerHTML = emptyHint('点击 + 添加设定'); return; }
   host.innerHTML = `<div class="char-list">
     ${items.map((w) => `
       <div class="char-card" data-action="edit-world" data-id="${attr(w.id)}">
-        <div class="char-card-name">${icons[w.type] || '📌'} ${esc(w.name)}</div>
+        <div class="char-card-name">${icon(WORLD_ICONS[w.type] || 'dot')} ${esc(w.name)}</div>
         <div class="char-card-desc">${esc((w.description || '').slice(0, 80))}</div>
       </div>`).join('')}
   </div>`;
@@ -839,7 +842,7 @@ async function showPromiseList(host) {
     ${items.map((p) => {
       const unpaid = ['planned', 'planted'].includes(p.status);
       return `<div class="char-card" data-action="edit-promise" data-id="${attr(p.id)}">
-        <div class="char-card-name">${unpaid ? '🟡' : p.status === 'paid-off' ? '✅' : '⚪'} ${esc(p.title)}</div>
+        <div class="char-card-name">${icon(unpaid ? 'dot' : p.status === 'paid-off' ? 'check' : 'ban', 'sev-' + (unpaid ? 'warn' : p.status === 'paid-off' ? 'ok' : 'dim'))} ${esc(p.title)}</div>
         <div class="char-card-role">${esc(PROMISE_STATUS_ZH[p.status] || p.status)} · ${esc(PROMISE_WEIGHT_ZH[p.weight] || p.weight)}</div>
         <div class="char-card-desc">${esc(p.setup?.evidence || p.notes || '')}</div>
       </div>`;
@@ -996,7 +999,7 @@ function stateCellText(row, card) {
   if (row.alive) bits.push(ALIVE_ZH[row.alive] || row.alive);
   const counts = ['injury', 'items', 'knows'].map((d) => (row[d] || []).length).reduce((a, b) => a + b, 0);
   if (counts) bits.push(`${counts}项`);
-  if (row.goal) bits.push('◎');
+  if (row.goal) bits.push(icon('target', 'icon-sm'));
   const conflict = row.alive && card && row.alive !== card.status;
   return `<span class="${conflict ? 'cell-conflict' : ''}">${bits.join(' · ') || '·'}</span>`;
 }
@@ -1044,7 +1047,7 @@ async function showStateEditor(chapterId, entityId) {
       <textarea class="settings-input" id="${p}-${key}" rows="${rows}" placeholder="${attr(hint)}">${esc(Array.isArray(value) ? value.join('\n') : value || '')}</textarea></div>`;
 
   const conflictHint = row.alive && row.alive !== card.status
-    ? `<div class="state-conflict">⚠️ 这里写「${ALIVE_ZH[row.alive]}」，但角色卡是「${ALIVE_ZH[card.status] || card.status}」——连续性检查会按矛盾报出（R2）。</div>` : '';
+    ? `<div class="state-conflict">${icon('warn')}这里写「${ALIVE_ZH[row.alive]}」，但角色卡是「${ALIVE_ZH[card.status] || card.status}」——连续性检查会按矛盾报出（R2）。</div>` : '';
 
   showModal(`${card.name} · 第${chapter.order}章结束时`, `
     ${conflictHint}
@@ -1117,7 +1120,7 @@ async function showContinuity(host) {
   host = host || document.getElementById('sidebar-content');
   if (!host || !APP.novel) return;
   host.innerHTML = `<div style="padding:12px;">
-    <button class="btn btn-secondary" style="width:100%" data-action="rerun-continuity">🔍 重新检查</button>
+    <button class="btn btn-secondary" style="width:100%" data-action="rerun-continuity">${icon('search')} 重新检查</button>
     <div id="diag-body" style="margin-top:10px;">检查中…</div>
   </div>`;
 
@@ -1128,21 +1131,23 @@ async function showContinuity(host) {
   const body = document.getElementById('diag-body');
   if (!body) return;
 
-  const counts = `❌ ${s.error} · ⚠️ ${s.warn} · ℹ️ ${s.info}` + (s.suppressed ? ` · 🚫 已豁免 ${s.suppressed}` : '');
+  const counts = [`${icon('x','sev-error')}${s.error}`, `${icon('warn','sev-warn')}${s.warn}`, `${icon('info','sev-info')}${s.info}`]
+    .map((x) => `<span class="count">${x}</span>`).join('')
+    + (s.suppressed ? `<span class="count muted">${icon('ban')}${s.suppressed}</span>` : '');
   const visible = diags.filter((d) => !d.suppressedBy);
   if (!visible.length) {
-    body.innerHTML = `<div style="color:var(--success);font-size:13px;">✅ 没有发现矛盾（${ctx.chapters.length} 章）</div>
+    body.innerHTML = `<div class="diag-clean">${icon('check')}没有发现矛盾（${ctx.chapters.length} 章）</div>
       <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 ${Object.keys(NWRules.RULES).length} 条规则，不判断文笔与情节好坏。伏笔、时间线、角色状态、外貌区间填得越全，检查越准。</div>`;
     return;
   }
   body.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">${counts}</div>`
     + visible.map((d) => {
-      const icon = d.severity === 'error' ? '❌' : d.severity === 'warn' ? '⚠️' : 'ℹ️';
+      const sevIcon = icon(d.rule === 'unregistered-entity' ? 'info' : d.severity === 'error' ? 'x' : d.severity === 'warn' ? 'warn' : 'info', 'sev-' + d.severity);
       const code = NWRules.RULES[d.rule]?.code || d.rule;
       const quote = d.evidence?.quote;
       const off = d.evidence?.offset || [];
       return `<div class="char-card" ${d.chapter ? `data-action="jump-diag" data-chapter="${attr(d.chapter)}" data-start="${off[0] ?? ''}" data-len="${(off[1] ?? 0) - (off[0] ?? 0)}"` : ''}>
-        <div class="char-card-name">${icon} ${code} · ${esc(d.chapter || '全书')}</div>
+        <div class="char-card-name">${sevIcon}<span class="diag-code">${code}</span> · ${esc(d.chapter || '全书')}</div>
         <div class="char-card-desc">${esc(d.message)}</div>
         ${quote ? `<div class="diag-quote">「${esc(quote)}」</div>` : ''}
         ${d.suggestion ? `<div class="diag-suggest">→ ${esc(d.suggestion)}</div>` : ''}
@@ -1185,7 +1190,7 @@ function renderAIPanelTools() {
   if (!host) return;
   const temp = NovelLLM.getConfig()?.temperature ?? 0.8;
   host.innerHTML = AI_TOOLS.map((t) =>
-    `<button class="ai-tool-btn" data-action="run-ai" data-tool="${attr(t.id)}">${t.icon} ${esc(t.label)}</button>`
+    `<button class="ai-tool-btn" data-action="run-ai" data-tool="${attr(t.id)}">${icon(t.icon)} ${esc(t.label)}</button>`
   ).join('') + `
     <label class="ai-temp">写作温度 <b id="ai-temp-val">${Number(temp).toFixed(1)}</b>
       <input type="range" id="ai-temp" min="0.2" max="1.4" step="0.1" value="${attr(temp)}">
@@ -1202,12 +1207,12 @@ function renderUsageBar(el, usage) {
   if (!el || !usage) return;
   const bar = document.createElement('div');
   bar.className = 'ai-usage';
-  bar.textContent = `上下文 ${usage.bytes} / ${usage.budgetBytes} 字节 · `
-    + usage.sections.map((s) => `${s.present ? '✓' : '✗'}${s.name}${s.included?.length ? `（${s.included.join('、')}）` : ''}`).join('  ');
+  bar.innerHTML = `<span class="usage-head">上下文 ${usage.bytes} / ${usage.budgetBytes} 字节</span>`
+    + usage.sections.map((sec) => `<span class="usage-item${sec.present ? '' : ' off'}">${icon(sec.present ? 'check' : 'x', 'icon-sm')}${esc(sec.name)}${sec.included?.length ? `（${sec.included.map(esc).join('、')}）` : ''}</span>`).join('  ');
   if (usage.truncated || usage.loreDropped?.length) {
     const warn = document.createElement('div');
     warn.className = 'ai-usage-warn';
-    warn.textContent = `⚠️ 有内容被裁掉${usage.loreDropped?.length ? `：${usage.loreDropped.length} 条世界设定` : ''}。AI 没看到被裁的部分，产出可能与前文脱节。`;
+    warn.innerHTML = `${icon('warn', 'icon-sm')}<span>有内容被裁掉${usage.loreDropped?.length ? `：${usage.loreDropped.length} 条世界设定` : ''}。AI 没看到被裁的部分，产出可能与前文脱节。</span>`;
     bar.appendChild(warn);
   }
   el.prepend(bar);
@@ -1330,14 +1335,14 @@ async function runAITool(toolId, target) {
 function renderAIError(el, toolId, message) {
   el.textContent = '';
   const head = document.createElement('div');
-  head.textContent = `⚠️ ${message}`;
+  head.innerHTML = `${icon('warn')}<span>${esc(message)}</span>`;
   el.appendChild(head);
   const bar = document.createElement('div');
   bar.className = 'ai-result-actions';
   const retry = document.createElement('button');
   retry.className = 'btn btn-secondary';
   retry.style.cssText = 'font-size:13px;padding:6px 14px;margin-top:10px;';
-  retry.textContent = '🔄 重试';
+  retry.innerHTML = `${icon('retry')}<span>重试</span>`;
   retry.onclick = () => { el.textContent = '正在处理…'; runAITool(toolId, el); };
   bar.appendChild(retry);
   el.appendChild(bar);
@@ -1354,24 +1359,24 @@ function renderAIResult(el, text, meta = {}) {
   bar.className = 'ai-result-actions';
   bar.style.cssText = 'margin-top:12px;border-top:1px solid var(--border);padding-top:12px;';
 
-  const mk = (label, title, fn) => {
+  const mk = (ico, label, title, fn) => {
     const b = document.createElement('button');
     b.className = 'btn btn-secondary';
     b.style.cssText = 'font-size:13px;padding:6px 14px;margin-right:8px;';
-    b.textContent = label;
+    b.innerHTML = `${icon(ico, 'icon-sm')}<span>${esc(label)}</span>`;
     if (title) b.title = title;
     b.onclick = fn;
     bar.appendChild(b);
   };
 
-  mk('📋 复制', null, () => {
+  mk('copy', '复制', null, () => {
     navigator.clipboard.writeText(APP.lastAIResult).then(() => showToast('已复制'), () => showToast('复制失败'));
   });
   if (meta.toolId === 'continue' || meta.toolId === 'polish' || meta.toolId === 'summarize') {
-    mk(meta.toolId === 'polish' ? '♻️ 替换正文' : '✍️ 插入编辑器', null, () => applyToEditor(meta.toolId));
+    mk(meta.toolId === 'polish' ? 'replace' : 'insert', meta.toolId === 'polish' ? '替换正文' : '插入编辑器', null, () => applyToEditor(meta.toolId));
   }
   if (meta.toolId === 'summarize') {
-    mk('💾 存为笔记', null, async () => {
+    mk('save', '存为笔记', null, async () => {
       await NovelDB.notes.save(APP.novel.id, { title: `${APP.chapter.title} · 摘要`, content: APP.lastAIResult });
       showToast('已存入笔记');
     });
@@ -1432,7 +1437,7 @@ Object.assign(ACTIONS, {
     const out = document.getElementById('ws-result');
     out.textContent = '测试中…';
     const r = await NovelLLM.testConnection({ baseURL: val('ws-baseurl'), apiKey: val('ws-apikey'), model: val('ws-model') });
-    out.textContent = r.ok ? '✅ 连接成功' : `❌ ${r.message}`;
+    out.innerHTML = r.ok ? `${icon('check')}<span>连接成功</span>` : `${icon('x')}<span>连接失败：${esc(r.message)}</span>`;
   },
   'goto-global-settings': () => router.go('settings'),
 });
@@ -1676,7 +1681,7 @@ Object.assign(ACTIONS, {
     const el = document.getElementById('s-result');
     el.textContent = '测试中…';
     const r = await NovelLLM.testConnection({ baseURL: val('s-baseurl'), apiKey: val('s-apikey'), model: val('s-model') });
-    el.textContent = r.ok ? '✅ 连接成功' : `❌ ${r.message}`;
+    el.innerHTML = r.ok ? `${icon('check')}<span>连接成功</span>` : `${icon('x')}<span>连接失败：${esc(r.message)}</span>`;
   },
   'export-novelweave': () => exportNovelweave(),
   'import-novelweave': () => importNovelweave(),

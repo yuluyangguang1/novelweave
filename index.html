@@ -17,6 +17,42 @@
   <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
+<!-- ═══ 图标 sprite：24×24 描线，stroke 继承 currentColor，随主题与强调色自动变化 ═══ -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-chapter" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3.3 2.5-5.4 5.5-5.4s5.5 2.1 5.5 5.4"/><circle cx="17" cy="9" r="2.4"/><path d="M15.6 14.9c2.7.2 4.9 2.1 4.9 4.8"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3.2 9.5h17.6M3.2 14.5h17.6"/><path d="M12 3c-2.6 2.4-3.9 5.4-3.9 9s1.3 6.6 3.9 9c2.6-2.4 3.9-5.4 3.9-9S14.6 5.4 12 3Z"/></symbol>
+  <symbol id="i-thread" viewBox="0 0 24 24"><path d="M7 3c0 4 10 5 10 9s-10 5-10 9"/><path d="M17 3c0 4-10 5-10 9s10 5 10 9"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.2 2.2"/></symbol>
+  <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5 13 13l-4.5 2.5L11 11l4.5-2.5Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M6 3h8.5L19 7.5V21H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v3M12 18.2v3M21.2 12h-3M5.8 12h-3M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1M18.5 18.5l-2.1-2.1M7.6 7.6 5.5 5.5"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M11 5 4 12l7 7M4 12h16"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/><path d="M10.5 11v6M13.5 11v6"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M4.5 4.5h12L19.5 7.5v12h-15z"/><path d="M8 4.5v5h7v-5"/><path d="M8 19.5v-6h8v6"/></symbol>
+  <symbol id="i-cast" viewBox="0 0 24 24"><path d="M4 6h9M4 12h9M4 18h6"/><path d="M16.5 7.5 19 10l4-4.5"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6.5-7.2 6.5-11.4A6.5 6.5 0 0 0 5.5 9.6C5.5 13.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.4"/></symbol>
+  <symbol id="i-bank" viewBox="0 0 24 24"><path d="M3.5 9 12 4l8.5 5"/><path d="M6 9.5v8M12 9.5v8M18 9.5v8"/><path d="M3.5 20.5h17"/></symbol>
+  <symbol id="i-scroll" viewBox="0 0 24 24"><path d="M7 4.5h11v15H7"/><path d="M7 4.5a2.2 2.2 0 0 0 0 4.4h1.6M18 19.5a2.2 2.2 0 0 0 0-4.4h-1.6"/><path d="M10.5 9.5h4M10.5 13.5h4"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13.5 2.5 5 13.5h5.5L9.5 21.5 19 10h-6z"/></symbol>
+  <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5 9.5 18 20 6.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.8 8.8l6.4 6.4M15.2 8.8l-6.4 6.4"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5 21.5 20H2.5z"/><path d="M12 9v5"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 7.5h.01"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+  <symbol id="i-retry" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3.5V8h-4.5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="1.5"/><path d="M15.5 5.5v-1a1 1 0 0 0-1-1h-9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h1"/></symbol>
+  <symbol id="i-insert" viewBox="0 0 24 24"><path d="M12 3.5v11"/><path d="M7.5 10 12 14.5 16.5 10"/><path d="M4 20h16"/></symbol>
+  <symbol id="i-replace" viewBox="0 0 24 24"><path d="M4 8h13l-3.2-3.2M20 16H7l3.2 3.2"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3.5"/><path d="M8 7.5 12 3.5l4 4"/><path d="M4.5 14v5.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V14"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3.5V15"/><path d="M8 11l4 4 4-4"/><path d="M4.5 14v5.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V14"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 12h.01"/></symbol>
+</svg>
 <div id="app">
 
 <!-- ═══════════════════════════════════════════ -->
@@ -25,7 +61,7 @@
 <div id="page-home" class="page active">
   <div class="header">
     <div class="header-title">织文</div>
-    <button class="header-btn" data-action="go-settings" title="设置">⚙️</button>
+    <button class="header-btn" data-action="go-settings" title="设置" aria-label="设置"><svg class="icon"><use href="#i-settings"/></svg></button>
   </div>
   <div class="home-body">
     <div class="home-empty" id="home-empty">
@@ -34,7 +70,7 @@
       <button class="btn btn-primary" data-action="create-novel">创建第一篇小说</button>
     </div>
     <div id="novel-list" class="novel-list"></div>
-    <button class="btn btn-float" data-action="create-novel" title="新建小说">＋</button>
+    <button class="btn btn-float" data-action="create-novel" title="新建小说" aria-label="新建小说"><svg class="icon icon-lg"><use href="#i-plus"/></svg></button>
   </div>
 </div>
 
@@ -68,7 +104,7 @@
 <div class="ai-panel hidden" id="ai-panel">
   <div class="ai-panel-header">
     <div class="ai-panel-title">AI 工具箱</div>
-    <button class="ai-panel-close" data-action="close-ai" title="关闭（生成中会同时停止）">✕</button>
+    <button class="ai-panel-close" data-action="close-ai" title="关闭（生成中会同时停止）" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button>
   </div>
   <!-- 按钮由 app.js 的 AI_TOOLS 表渲染，不要在这里写死 -->
   <div class="ai-panel-tools" id="ai-panel-tools"></div>
@@ -80,7 +116,7 @@
 <!-- ═══════════════════════════════════════════ -->
 <div id="page-settings" class="page">
   <div class="header">
-    <button class="header-back" data-action="go-home">←</button>
+    <button class="header-back" data-action="go-home" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button>
     <div class="header-title">设置</div>
     <div style="width:40px"></div>
   </div>

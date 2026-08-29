@@ -77,9 +77,14 @@ README 只写已经能用的一切；这个文件写还没做的。
 - **代价（已知并接受）**：令牌是复制的，不是引用 `../shared.css`。因为本仓库是独立
   子模块，要能单独 clone 与离线当 PWA 用，引用官网根路径会两边都坏。
   官网改配色时这里要跟着改一次。
+- 图标：界面**全面去除 emoji**，改为一期内联的 SVG sprite（`index.html` 里一组 24×24
+  描线 `symbol`，`app.js` 用 `<use>` 引用）。emoji 是彩色位图字形，压在墨色配色上必然跳；
+  图标不带颜色属性，描线由 CSS `stroke: currentColor` 继承，因此自动跟随主题与强调色。
+  **刻意不引外部图标库**（同级 linger 用了 unpkg 的 lucide）——那会破坏离线 PWA 与零依赖。
+- 新增守卫测试：`index.html` / `app.js` / `app.css` 里不允许出现 emoji 字形
+- 样式自洽测试同时生效：每个用到的 class 必须有定义（图标相关的 `.icon` / `.sev-*` /
+  `.usage-*` 等十来个新类都被它盯着）
 - `theme-color` 按官网做法拆成深/浅两条，随系统切换，不再写死一个值
-- 新增样式自洽测试：界面上用到的每个 class 必须在 `app.css` 里有定义。
-  它当场抓出 `workspace-main` / `ws-section` 两个结构类从来没写过样式
 
 没做到（下一步）：
 

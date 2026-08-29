@@ -41,6 +41,19 @@ test('旧的 escapeHtml 已被 NWText.esc 取代（它不转义引号）', () =>
   assert.equal(read('src/app.js').includes('escapeHtml'), false);
 });
 
+test('界面不使用 emoji 字形，一律走内联 SVG 图标', () => {
+  // emoji 是彩色位图字形，压在墨色配色上必然跳；语义已由 currentColor 描线图标 + 颜色承担
+  const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2460}-\u{24FF}\u{1F100}-\u{1F1FF}]/gu;
+  const bad = [];
+  for (const f of ['index.html', 'src/app.js', 'src/styles/app.css']) {
+    read(f).split('\n').forEach((line, i) => {
+      const hit = line.match(EMOJI);
+      if (hit) bad.push(`${f}:${i + 1} ${[...new Set(hit)].join('')} — ${line.trim().slice(0, 60)}`);
+    });
+  }
+  assert.deepEqual(bad, [], `发现 emoji 字形：\n${bad.join('\n')}`);
+});
+
 test('样式自洽：界面上用到的每个 class 都必须有定义', () => {
   // 重构时发现 workspace-main / ws-section 两个结构类完全没有样式、
   // 删掉静态侧栏头后留下死规则 —— 这类问题肉眼看不出来。

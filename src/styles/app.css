@@ -566,3 +566,46 @@ select.settings-select { cursor: pointer; }
   .ai-panel { width: 100vw; }
   body { font-size: 14px; }
 }
+
+/* ── 18. 图标 ───────────────
+   sprite 里的 symbol 不带描线属性，全部由此处继承：
+   于是图标自动跟随所在文字的颜色（含 --accent 与深浅主题）。 */
+.icon {
+  width: 1.05em; height: 1.05em; flex-shrink: 0;
+  fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  vertical-align: -0.18em;
+}
+.icon-sm { width: .9em; height: .9em; }
+.icon-lg { width: 1.35em; height: 1.35em; }
+
+/* 严重度：用颜色而非彩色字形承载语义 */
+.sev-error { color: var(--danger); }
+.sev-warn  { color: var(--warn); }
+.sev-info  { color: var(--dim); }
+.sev-ok    { color: var(--success); }
+.sev-dim   { color: var(--text-dim); }
+
+.count { display: inline-flex; align-items: center; gap: 4px; margin-right: 14px; }
+.count.muted { color: var(--text-dim); }
+
+.diag-clean { display: flex; align-items: center; gap: 7px; color: var(--success); font-size: 13px; }
+.diag-clean .icon { color: var(--success); }
+.diag-code { font-family: var(--mono); font-size: .72rem; letter-spacing: .06em; margin-left: 5px; }
+
+.sidebar-back { display: inline-flex; align-items: center; gap: 5px; }
+
+.ai-usage { display: block; }
+.usage-head { color: var(--mid); margin-right: 6px; }
+.usage-item { display: inline-flex; align-items: center; gap: 3px; margin-right: 10px; }
+.usage-item .icon { color: var(--success); }
+.usage-item.off { color: rgb(var(--dim-base) / .55); }
+.usage-item.off .icon { color: rgb(var(--dim-base) / .55); }
+
+.ai-usage-warn, .state-conflict { display: flex; align-items: flex-start; gap: 6px; }
+.ai-usage-warn .icon { flex-shrink: 0; margin-top: 2px; }
+
+.btn, .ai-tool-btn { display: inline-flex; align-items: center; gap: 7px; }
+
+/* 顶栏与工具栏里的纯图标按钮：去掉文字尺寸留下的空隙 */
+.header-btn .icon, .editor-toolbar .icon { display: block; }
