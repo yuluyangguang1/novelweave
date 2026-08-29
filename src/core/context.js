@@ -85,7 +85,7 @@
     const withSummary = chapters.slice(0, Math.max(0, upto)).filter((c) => (c.summary || '').trim());
     if (!withSummary.length) return '（各章摘要尚未填写 —— 长篇里它替代"回读全文"）';
     const shown = withSummary.slice(-RECAP_ITEMS);
-    const lines = shown.map((c) => `- 第${c.number}章《${c.title}》：${recapLine(c.summary)}`);
+    const lines = shown.map((c) => `- ${Bible.chapterLabel(c)}：${recapLine(c.summary)}`);
     const folded = withSummary.length - shown.length;
     if (folded > 0) lines.unshift(`（更早 ${folded} 章的摘要未列出，需要时回读原章）`);
     return lines.join('\n');

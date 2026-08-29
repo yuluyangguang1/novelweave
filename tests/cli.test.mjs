@@ -287,3 +287,60 @@ test('import 把织文备份转成合法 Story Bible', () => {
   const pr = JSON.parse(fs.readFileSync(path.join(dir, 'bible', 'promises.json'), 'utf8'));
   assert.equal(pr.items[0].weight, 'candidate', '从笔记迁来的伏笔必须标记为待作者确认');
 });
+
+// ═══════════ adopt：散稿建档 ═══════════
+
+test('adopt 建出的书能通过 validate 与连续性检查，且一个源文件都不改', () => {
+  const base = path.join(tmp, 'adopt-case');
+  const drafts = path.join(base, 'drafts');
+  fs.mkdirSync(drafts, { recursive: true });
+  const para = '明长老坐在山门口擦那枚铜印，铜印上的纹路他已经看了三十年。';
+  const src = {
+    '楔子.txt': '据说青雾山原先没有门，只有一个背着铜印的老人上了山。他在山门口坐了三十年，后来再没有人见过他，只有那枚铜印还在。\n',
+    '001-山门.md': `第一章 山门\n\n${para.repeat(3)}\n`,
+    '002-夜袭.md': `第二章 夜袭\n\n${para.repeat(2)}夜里火起，明长老战死在山门口。\n`,
+  };
+  for (const [name, text] of Object.entries(src)) fs.writeFileSync(path.join(drafts, name), text, 'utf8');
+  const out = path.join(base, 'workspace');
+
+  const dry = run('nw-io.mjs', ['adopt', drafts, '--title', ' adopt 测试', '--dir', out, '--dry-run']);
+  assert.equal(fs.existsSync(path.join(out, '.novelweave')), false, '--dry-run 绝不能写盘');
+  assert.match(dry.stdout, /预演/);
+
+  const got = run('nw-io.mjs', ['adopt', drafts, '--title', 'adopt 测试', '--dir', out]);
+  assert.equal(got.code, 0, `建档应无待确认项：\n${got.stdout}`);
+  const dir = path.join(out, '.novelweave', 'adopt-测试');
+  assert.equal(run('nw-validate.mjs', [dir]).code, 0, '建出来的书必须当场通过结构校验');
+  const cont = run('nw-continuity.mjs', [dir, '--json']);
+  const errs = JSON.parse(cont.stdout).diagnostics.filter((d) => d.severity === 'error');
+  assert.deepEqual(errs, [], '建档不该制造连续性 error');
+
+  const files = fs.readdirSync(path.join(dir, 'manuscript', 'chapters')).sort();
+  assert.deepEqual(files, ['ch-000-楔子.md', 'ch-001-山门.md', 'ch-002-夜袭.md'], 'id / 文件名 / 章号三者必须一致');
+
+  const rep = JSON.parse(fs.readFileSync(path.join(dir, 'meta', 'adopt-report.json'), 'utf8'));
+  const names = rep.nameCandidates.map((c) => c.name);
+  assert.ok(names.includes('明长老'), '正文里出现六次的人名该进候选');
+  for (const junk of ['路他已', '经看了', '个背着']) {
+    assert.ok(!names.includes(junk), `虚词拼出来的假名字不该进候选：${junk}`);
+  }
+  // 草稿只读：这是 adopt 唯一不可违背的承诺
+  for (const [name, text] of Object.entries(src)) {
+    assert.equal(fs.readFileSync(path.join(drafts, name), 'utf8'), text, `源文件被改了：${name}`);
+  }
+});
+
+test('adopt 拒绝重号与判不出章号，不猜出一个错序的书', () => {
+  const base = path.join(tmp, 'adopt-bad');
+  const drafts = path.join(base, 'drafts');
+  fs.mkdirSync(drafts, { recursive: true });
+  const para = '明长老坐在山门口擦那枚铜印，铜印上的纹路他已经看了三十年。';
+  fs.writeFileSync(path.join(drafts, '第1章-甲.md'), `第一章\n\n${para.repeat(2)}`, 'utf8');
+  fs.writeFileSync(path.join(drafts, '第1章-乙.md'), `第一章\n\n${para.repeat(2)}`, 'utf8');
+  fs.writeFileSync(path.join(drafts, '随手记.md'), `${para.repeat(2)}`, 'utf8');
+
+  const got = run('nw-io.mjs', ['adopt', drafts, '--title', '坏稿', '--dir', path.join(base, 'workspace')]);
+  assert.equal(got.code, 2);
+  assert.equal(fs.existsSync(path.join(base, 'workspace')), false, '拒绝时不能留下半个项目目录');
+  assert.match(got.stdout, /判不出章号|重号/);
+});

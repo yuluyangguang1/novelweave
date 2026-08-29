@@ -77,7 +77,9 @@ test('chapter schema 拒绝：缺必填、枚举外值、id 不合 pattern、多
   assert.ok(check({}).some((e) => e.keyword === 'required'));
   assert.ok(check({ id: 'ch-001', number: 1, title: 't', status: 'wip' }).some((e) => e.keyword === 'enum'));
   assert.ok(check({ id: 'CH-001', number: 1, title: 't', status: 'draft' }).some((e) => e.keyword === 'pattern'));
-  assert.ok(check({ id: 'ch-001', number: 0, title: 't', status: 'draft' }).some((e) => e.keyword === 'minimum'));
+  // 0 = 前置章（楔子/序）：让散稿建档不必平移作者已有的章号
+  assert.deepEqual(check({ id: 'ch-000', number: 0, title: '楔子', status: 'draft' }), []);
+  assert.ok(check({ id: 'ch-001', number: -1, title: 't', status: 'draft' }).some((e) => e.keyword === 'minimum'));
   assert.ok(check({ id: 'ch-001', number: 1, title: 't', status: 'draft', extra: 1 }).some((e) => e.keyword === 'additionalProperties'));
   assert.deepEqual(check({ id: 'ch-001', number: 1, title: '烟火', status: 'draft', characters: ['char-a'] }), []);
 });

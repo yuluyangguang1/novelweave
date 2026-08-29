@@ -25,6 +25,7 @@ export const NWRules = (globalThis.NWRules = require(core('rules.js')));
 export const NWStory = (globalThis.NWStory = require(core('story.js')));
 export const NWProject = (globalThis.NWProject = require(core('project.js')));
 export const NWContext = (globalThis.NWContext = require(core('context.js')));
+export const NWDraft = (globalThis.NWDraft = require(core('draft.js')));
 export const NovelLLM = (globalThis.NovelLLM = require(core('llm.js')));
 // story / project 提供「什么算作者内容」的唯一投影与记录标识。CLI 必须用同一份，
 // 否则 sync.json 的基线哈希会与 Web 端算出来的不一致，导入时全是假冲突。

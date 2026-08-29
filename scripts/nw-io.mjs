@@ -7,18 +7,20 @@
  *   node scripts/nw-io.mjs init --title 书名 [--genre 玄幻] [--slug s] [--dir PATH]
  *   node scripts/nw-io.mjs export [--out DIR] [--book DIR]
  *   node scripts/nw-io.mjs import --web --file backup.json [--dir PATH]
+ *   node scripts/nw-io.mjs adopt <草稿目录> --title 书名 [--genre 玄幻] [--dry-run] [--json]
  *   node scripts/nw-io.mjs recount [bookDir]
  *   node scripts/nw-io.mjs migrate [--dry-run]
  *
- * 退出码：0 成功 · 2 用法错 · 4 需要迁移 · 5 IO 错 · 6 有对象已存在（幂等提示）
+ * 退出码：0 成功 · 2 用法错 · 4 需要迁移 · 5 IO 错
+ *        · 6 有对象已存在（幂等提示），或 adopt 报告里有待人工确认项
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {
-  PROJECT_DIR, PROJECT_FILE, SCHEMA_VERSION, NWBible, NWText,
+  PROJECT_DIR, PROJECT_FILE, SCHEMA_VERSION, NWBible, NWText, NWDraft,
   findProject, bookDirs, resolveBookDir, readJson, writeJsonAtomic, writeFileAtomic,
-  scaffoldBook, upsertProject, recomputeDerived, recountBook, emit, log, EXIT, authorHash,
+  scaffoldBook, upsertProject, recomputeDerived, recountBook, saveChapter, emit, log, EXIT, authorHash,
 } from './lib/book.mjs';
 
 const sub = process.argv[2];
@@ -39,6 +41,37 @@ const baseDir = flags.dir ? path.resolve(flags.dir) : process.cwd();
 function fail(message, code = EXIT.USAGE) {
   log(message);
   process.exit(code);
+}
+
+const ISSUE_ZH = {
+  'duplicate-number': (i) => `第${i.number}章重号：${i.files.join('、')}`,
+  'gap-number': (i) => `缺第${i.number}章（跳号）`,
+  'no-number': (i) => `判不出章号：${i.file}`,
+  'no-title': (i) => `没有标题：${i.file}`,
+  'suspiciously-short': (i) => `正文短到可疑：${i.file}（${i.words} 字）`,
+};
+
+function humanAdopt(report, dir) {
+  const s = report.stats;
+  const out = [
+    `${dir ? '已建档' : '预演（--dry-run，未写任何文件）'}：${s.chapters} 章 / ${s.words} 字`
+      + (s.positional ? `；${s.positional} 章按楔子/尾声定位（不占作者章号）` : '')
+      + (s.unresolved ? `；${s.unresolved} 个文件判不出章号` : '')
+      + (s.skippedStructured ? `；跳过 ${s.skippedStructured} 个已是 NovelWeave 的文件` : ''),
+    `来源：${report.source}`,
+  ];
+  if (dir) out.push(`目录：${dir}`);
+  out.push('', report.issues.length ? `待人工确认 ${report.issues.length} 项：` : '没有发现编号/标题问题。');
+  out.push(...report.issues.slice(0, 30).map((i) => `  ! ${ISSUE_ZH[i.kind] ? ISSUE_ZH[i.kind](i) : i.kind}`));
+  if (report.issues.length > 30) out.push(`  …另有 ${report.issues.length - 30} 项，见 meta/adopt-report.json`);
+  out.push('', `人名候选 ${report.nameCandidates.length} 个（只是线索，不等于角色）：`,
+    '  ' + (report.nameCandidates.slice(0, 20).map((c) => `${c.name}(${c.n})`).join('、') || '无'));
+  out.push('', '下一步：',
+    '  1. 处理上面的待确认项 —— 章节序错了，之后所有跨章规则都会稳定地报错',
+    '  2. 给要长期管理的人名建角色卡（bible/characters/），其余杂名加进 lexicon.allowlist',
+    '  3. 补 bible/world 的地点与规则条目；地名候选没有可靠抽取器，需人工列',
+    '  4. 每章填 summary（前情摘要靠它），然后 node scripts/nw-validate.mjs 与 nw-continuity.mjs 各跑一遍');
+  return out.join('\n');
 }
 
 /** 目录树哈希：path 排序 + 内容哈希，用于幂等判断与 sync 的 baseTreeHash。 */
@@ -87,6 +120,104 @@ switch (sub) {
     upsertProject(root, { slug, id, title, path: slug });
     emit(json, { created: true, slug, id, dir }, `已创建 ${dir}`);
     process.exit(EXIT.OK);
+    break;
+  }
+
+  /**
+   * adopt —— 把已有的散稿目录纳入管理。
+   *
+   * 三条硬规矩：
+   * 1. 草稿只读。本命令一个源文件都不改，写出去的全在新书目录里，随时可整目录删掉重来。
+   * 2. 判不出来的不猜。编号/标题拿不准就进 issues，并用退出码 6 逼人来处理 ——
+   *    建档是入口，入口排错了章节序，后面所有跨章规则都会稳定地报出错误结论。
+   * 3. 人名候选用 R9 同一个识别器（NWRules.entityCandidates），
+   *    不会出现「建档时看得见、检查时看不见」。
+   */
+  case 'adopt': {
+    const srcDir = positional[0] ? path.resolve(positional[0]) : fail('adopt 需要草稿目录：nw-io.mjs adopt <目录> --title 书名');
+    if (!fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) fail(`不是目录：${srcDir}`);
+    if (!flags.title) fail('adopt 需要 --title（书名用于目录与 slug）');
+
+    const drafts = [];
+    const alreadyStructured = [];
+    (function walk(d) {
+      for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (e.name.startsWith('.') || e.name === PROJECT_DIR) continue;
+        const abs = path.join(d, e.name);
+        if (e.isDirectory()) { walk(abs); continue; }
+        if (!/\.(md|txt|markdown)$/i.test(e.name)) continue;
+        const text = fs.readFileSync(abs, 'utf8');
+        // 已经是 NovelWeave 稿子的不重复建档
+        if (/^---\r?\n[\s\S]{0,600}?^id:\s*ch-\d+/m.test(text)) { alreadyStructured.push(path.relative(srcDir, abs)); continue; }
+        drafts.push({ name: path.basename(e.name), rel: path.relative(srcDir, abs), text });
+      }
+    })(srcDir);
+    if (!drafts.length) fail(`${srcDir} 里没有可建档的 .md/.txt 草稿${alreadyStructured.length ? `（${alreadyStructured.length} 个文件已是 NovelWeave 格式）` : ''}`);
+
+    const plan = NWDraft.planAdopt(drafts);
+    // id 取自章号，让 id / 文件名 / 章号三者一致；否则会出现 id ch-001 对应 number 0
+    // 这种错位，引用断链检查指向错误的章。
+    const chId = (n) => `ch-${String(n).padStart(3, '0')}`;
+    const candidates = NWRules.entityCandidates(
+      { chapters: plan.chapters.map((c) => ({ id: chId(c.number), body: c.body })), characters: [], world: [], lexicon: null },
+      { minCount: 2, minChapters: 1, limit: 40, exclude: false },
+    );
+    const report = {
+      schemaVersion: SCHEMA_VERSION,
+      adoptedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+      source: srcDir,
+      stats: { ...plan.stats, skippedStructured: alreadyStructured.length, nameCandidates: candidates.length },
+      issues: plan.issues,
+      unresolved: plan.unresolved,
+      nameCandidates: candidates.map((c) => ({ name: c.name, n: c.n, chapters: c.chapters.length })),
+      // 地名候选没有可靠抽取器：常见后缀（门/城/山）与普通名词高度重叠，
+      // 宁可让作者自己列，也不塞一份看着像、实则噪声占多数，会教人学会忽略它。
+      note: '人名候选只是线索，不等于角色；未登记地名需自行补进 bible/world。',
+    };
+
+    // 本文件的参数解析保留连字符：是 flags['dry-run']，写成 flags.dryRun 会静默失效
+    if (flags['dry-run']) {
+      emit(json, { dryRun: true, ...report }, () => humanAdopt(report, null));
+      process.exit(report.issues.length ? EXIT.PENDING : EXIT.OK);
+    }
+    if (report.unresolved.length) {
+      emit(json, { adopted: false, reason: 'unresolved', ...report },
+        () => `${report.unresolved.length} 个文件判不出章号，未建档：${report.unresolved.join('、')}\n`
+          + '请给它们改出章号（文件名或正文首行写「第N章」）再跑；不猜章序，因为排错序会让后面每条跨章规则都稳定地报错。');
+      process.exit(EXIT.USAGE);
+    }
+    // 章号现在就是 id：重号等于两章抢同一个 id，会静默覆盖。所以从"警告"升级成"拒建"。
+    const dup = plan.issues.find((i) => i.kind === 'duplicate-number');
+    if (dup) {
+      emit(json, { adopted: false, reason: 'duplicate-number', ...report },
+        () => `第${dup.number}章重号：${dup.files.join('、')}。章号会直接变成 id，重号等于覆盖，未建档。请先改掉重号再跑。`);
+      process.exit(EXIT.USAGE);
+    }
+
+    const root = path.join(baseDir, PROJECT_DIR);
+    const slug = flags.slug || NWText.slugify(flags.title);
+    const existing = readJson(path.join(root, PROJECT_FILE), null);
+    if (existing?.books?.some((b) => b.slug === slug)) {
+      emit(json, { adopted: false, slug, reason: 'exists' }, `书 ${slug} 已存在，未做任何修改（adopt 幂等；要重来请先删该目录）`);
+      process.exit(EXIT.PENDING);
+    }
+    fs.mkdirSync(root, { recursive: true });
+    const dir = scaffoldBook(root, { slug, id: flags.id || `novel_${crypto.randomUUID().slice(0, 8)}`, title: flags.title, genre: flags.genre || '玄幻', description: flags.description || '' });
+    upsertProject(root, { slug, id: JSON.parse(fs.readFileSync(path.join(dir, 'book.json'), 'utf8')).id, title: flags.title, path: slug });
+
+    plan.chapters.forEach((c, i) => {
+      const id = chId(c.number);
+      const meta = NWBible.newChapter({
+        id, number: c.number, slug: NWText.slugify(c.title) || `c${i + 1}`, title: c.title,
+        status: 'draft', summary: '', 'x-words': c.words,
+      });
+      meta.schemaVersion = SCHEMA_VERSION;
+      saveChapter(dir, meta, c.body);
+    });
+    writeJsonAtomic(path.join(dir, 'meta', 'adopt-report.json'), report);
+    recountBook(dir);
+    emit(json, { adopted: true, dir, ...report }, () => humanAdopt(report, dir));
+    process.exit(report.issues.length ? EXIT.PENDING : EXIT.OK);
     break;
   }
 

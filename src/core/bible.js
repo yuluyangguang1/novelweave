@@ -140,6 +140,16 @@
     return `ch-${n}-${chapter.slug || 'x'}.md`;
   }
 
+  /**
+   * 章节的统一标签。number 0 是前置章（楔子/序），写成「第0章」会被模型读成
+   * 编号出错，也会让作者以为是哪一步排错了序 —— 直接用它自己的名字。
+   */
+  function chapterLabel(chapter) {
+    if (!chapter) return '';
+    const title = chapter.title || '无题';
+    return Number(chapter.number) === 0 ? title : `第${chapter.number}章《${title}》`;
+  }
+
   function newChapter(opts) {
     return Object.assign({
       schemaVersion: SCHEMA_VERSION,
@@ -340,7 +350,7 @@
     CHAPTER_FLAGS, STATE_DIMS, ROLE_MAP,
     MAX_STATE_BYTES_PER_CHAPTER, MAX_CONTEXT_BYTES,
     parseFrontmatter, serializeFrontmatter, emitScalar, coerce,
-    chapterFileName, newChapter, isDerivedKey, authorFields,
+    chapterFileName, chapterLabel, newChapter, isDerivedKey, authorFields,
     parseChapterFile, serializeChapterFile,
     defaultCharacter, defaultWorldEntry, defaultBook,
     emptyPromises, emptyStates, emptyTimeline, emptyLexicon,

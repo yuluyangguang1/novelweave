@@ -61,7 +61,7 @@ conflicts/                        # 仅在有冲突时生成；Web 与 agent 都
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `id` | ✓ | `ch-NNN` 或迁移过来的 `ch_<老主键>` |
-| `number` | ✓ | 正整数，全书唯一且连续 |
+| `number` | ✓ | 整数 ≥0，全书唯一。`0` = 前置章（楔子/序）—— 让散稿建档不必把作者已有的章号整体平移 |
 | `title` | ✓ | |
 | `status` | ✓ | `outline` / `draft` / `revised` / `final` / `complete` |
 | `slug` | | kebab-case，用于文件名 |

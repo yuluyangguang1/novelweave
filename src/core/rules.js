@@ -80,6 +80,56 @@
     return T.uniq(forms.filter((s) => typeof s === 'string' && s.trim().length >= 2));
   }
 
+  /**
+   * 人名候选抽取：只出候选，不断定谁是角色。
+   * R9（未登记实体）与 `nw-io adopt`（散稿建档）共用这一套识别器 ——
+   * 分成两份迟早会出现「建档时看得见、检查时看不见」的自相矛盾。
+   * @param opts { minCount, minChapters, limit, exclude }
+   *   exclude=false 给新书用：那时本来什么都没登记，排除集是空的。
+   */
+  function entityCandidates(ctx, opts = {}) {
+    const { minCount = 2, minChapters = 2, limit = 15, exclude = true } = opts;
+    const known = new Set();
+    if (exclude) {
+      Object.keys(ctx.lexicon?.names || {}).forEach((n) => known.add(n));
+      (ctx.lexicon?.allowlist || []).forEach((n) => known.add(n));
+      for (const c of ctx.characters || []) nameForms(c).forEach((f) => known.add(f));
+      for (const w of ctx.world || []) { known.add(w.name); (w.keys || []).forEach((k) => known.add(k)); }
+    }
+
+    const surnames = Array.isArray(ctx.lexicon?.surnames)
+      ? ctx.lexicon.surnames.join('') : String(ctx.lexicon?.surnames || DEFAULT_SURNAMES);
+    const surnameClass = surnames.replace(/[\\\]^-]/g, '\\$&');
+    const surnameRe = new RegExp(`[${surnameClass}][\\u4e00-\\u9fff]{1,2}`, 'g');
+    const suffixRe = /[\u4e00-\u9fff]{2,4}(?:长老|宗主|掌门|仙子|公子|大人|前辈|师兄|师姐|宗师|真人|夫人|少爷|小姐|郡主|国师|阁主|门主|家主|城主|老祖|老怪|道人|散人)/g;
+
+    // 「路他已」「经看了」这类是误报：姓字后面接的其实是普通词。
+    // 只过滤姓氏式匹配；称谓式本身就带信息（林夫人 / 张道人 都含「人」，不能被虚词规则误杀）。
+    const STOP = /[的他她它这那了的是有在不和事与或和被给很都也就要能会对将从但如若因所之其者更最太什么怎谁吗呢啊吧]/;
+
+    const counts = new Map();
+    for (const ch of ctx.chapters || []) {
+      const body = ch.body || '';
+      const seen = new Set();
+      let m;
+      surnameRe.lastIndex = 0;
+      while ((m = surnameRe.exec(body))) if (!STOP.test(m[0])) seen.add(m[0]);
+      suffixRe.lastIndex = 0;
+      while ((m = suffixRe.exec(body))) seen.add(m[0]);
+      for (const cand of seen) {
+        const cur = counts.get(cand) || { name: cand, n: 0, chapters: [] };
+        cur.n += occurrences(body, cand).length;
+        cur.chapters.push(ch.id);
+        counts.set(cand, cur);
+      }
+    }
+    return [...counts.values()]
+      .filter((s) => s.n >= minCount && s.chapters.length >= minChapters && !known.has(s.name))
+      // 平次时按码位排，别依赖 Map 插入顺序或 ICU locale —— 指纹要稳定
+      .sort((a, b) => (b.n - a.n) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      .slice(0, limit);
+  }
+
   function chapterNumberMap(ctx) {
     const m = new Map();
     for (const ch of ctx.chapters) m.set(ch.id, ch.number);
@@ -429,44 +479,14 @@
         '再排除 lexicon.names、角色本名与别名、世界条目名与关键词、allowlist。' +
         '聚合成一条诊断列出 top 15，不刷屏。自动登记的伏笔类条目 weight 记 candidate。',
       run(ctx) {
-        const known = new Set(Object.keys(ctx.lexicon?.names || {}));
-        ctx.lexicon?.allowlist?.forEach((n) => known.add(n));
-        for (const c of ctx.characters) { nameForms(c).forEach((f) => known.add(f)); }
-        for (const w of ctx.world) { known.add(w.name); (w.keys || []).forEach((k) => known.add(k)); }
-
-        const surnames = Array.isArray(ctx.lexicon?.surnames) ? ctx.lexicon.surnames.join('') : String(ctx.lexicon?.surnames || DEFAULT_SURNAMES);
-        const surnameClass = surnames.replace(/[\\\]^-]/g, '\\$&');
-        const surnameRe = new RegExp(`[${surnameClass}][\\u4e00-\\u9fff]{1,2}`, 'g');
-        const counts = new Map();
-        for (const ch of ctx.chapters) {
-          const body = ch.body || '';
-          const seenHere = new Set();
-          let m;
-          surnameRe.lastIndex = 0;
-          while ((m = surnameRe.exec(body))) {
-            const cand = m[0];
-            if (cand.length >= 2) seenHere.add(cand);
-          }
-          const suffixRe = /[\u4e00-\u9fff]{2,4}(?:长老|宗主|掌门|仙子|公子|大人|前辈|师兄|师姐|宗师|真人|夫人|少爷|小姐|郡主|国师|阁主|门主|家主|城主|老祖|老怪|道人|散人)/g;
-          while ((m = suffixRe.exec(body))) seenHere.add(m[0]);
-          for (const cand of seenHere) {
-            const cur = counts.get(cand) || { n: 0, chs: new Set() };
-            cur.n += occurrences(body, cand).length;
-            cur.chs.add(ch.id);
-            counts.set(cand, cur);
-          }
-        }
-        const suspects = [...counts.entries()]
-          .filter(([name, v]) => v.n >= 2 && v.chs.size >= 2 && !known.has(name))
-          .sort((a, b) => b[1].n - a[1].n)
-          .slice(0, 15);
+        const suspects = entityCandidates(ctx);
         if (!suspects.length) return [];
         return [diag('unregistered-entity', {
           severity: 'info',
           confidence: 0.5,
-          entity: suspects[0][0],
-          evidence: { basis: suspects.map(([n, v]) => `${n}:${v.n}次/${v.chs.size}章`) },
-          message: `${suspects.length} 个反复出现的人名没有建档：${suspects.map(([n, v]) => `${n}(${v.n})`).join('、')}。`,
+          entity: suspects[0].name,
+          evidence: { basis: suspects.map((s) => `${s.name}:${s.n}次/${s.chapters.length}章`) },
+          message: `${suspects.length} 个反复出现的人名没有建档：${suspects.map((s) => `${s.name}(${s.n})`).join('、')}。`,
           suggestion: '若是有名字无档案的杂名，加进 lexicon.allowlist；若该建档，请补角色卡。',
         })];
       },
@@ -484,10 +504,10 @@
         const byId = new Map();
         const bySlug = new Map();
         for (const ch of ctx.chapters) {
-          if (!Number.isInteger(ch.number) || ch.number < 1) {
+          if (!Number.isInteger(ch.number) || ch.number < 0) {
             out.push(diag('structure-invalid', {
               chapter: ch.id,
-              message: `${ch.id} 的 number 是 ${JSON.stringify(ch.number)}，必须是 ≥1 的整数。`,
+              message: `${ch.id} 的 number 是 ${JSON.stringify(ch.number)}，必须是 ≥0 的整数（0 = 楔子/序）。`,
               evidence: { basis: ['number 非法'] },
               suggestion: '修正 frontmatter 的 number。',
             }));
@@ -751,5 +771,6 @@
     diag,
     occurrences,
     nameForms,
+    entityCandidates,
   };
 });

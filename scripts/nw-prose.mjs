@@ -257,7 +257,7 @@ if (sub === 'packet') {
       network: engine.network, usable: engine.usable, why: engine.why || '' } : null,
     boundary: BOUNDARY,
   }, () => [
-    `文体检查交接包 · 第${chapter.number}章《${chapter.title}》（${words} 字）`, '',
+    `文体检查交接包 · ${NWBible.chapterLabel(chapter)}（${words} 字）`, '',
     engine ? `交给：${engine.id}（${engine.kind}）${engine.usable ? '' : ` — 不可用：${engine.why}`}\n  ${engine.how}`
       : '本机没有可用引擎 —— 见 nw-prose probe 的候选与原因',
     engine?.files?.length ? `  清单：${engine.files.join('\n        ')}` : null,
@@ -295,7 +295,7 @@ if (sub === 'record') {
   ledger.byChapter[chapter.id] = rec;
   writeJsonAtomic(path.join(bookDir, ...LEDGER_REL), ledger);
   emit(!!flags.json, { chapter: chapter.id, ...rec },
-    () => `已记录：第${chapter.number}章《${chapter.title}》文体=${result}${findings !== null ? `（${findings} 处）` : ''} · 引擎 ${engineId}`);
+    () => `已记录：${NWBible.chapterLabel(chapter)}文体=${result}${findings !== null ? `（${findings} 处）` : ''} · 引擎 ${engineId}`);
   process.exit(EXIT.OK);
 }
 
@@ -307,7 +307,7 @@ if (sub === 'record') {
     const icon = { unchecked: '·', stale: '⚠️', clean: '✅', issues: '❌', skipped: '🚫' };
     return [
       `《${s.book}》文体检查台账 · ${s.total} 章有正文`, '',
-      ...s.rows.map((r) => `${icon[r.state] || '?'} 第${r.number}章《${r.title}》 ${r.words}字 — ${zhState(r.state)}`
+      ...s.rows.map((r) => `${icon[r.state] || '?'} ${NWBible.chapterLabel(r)} ${r.words}字 — ${zhState(r.state)}`
         + (r.engine ? `（${r.engine}${r.findings !== null ? `，${r.findings} 处` : ''}）` : '')
         + (r.note ? `｜${r.note}` : '')),
       '',

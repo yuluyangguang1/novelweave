@@ -49,9 +49,13 @@
 
 ### R9 `unregistered-entity`（info，confidence 0.5）
 候选抽取：「常见姓 + 1~2 字」与「2~4 字 + 称谓后缀（长老/宗主/仙子/公子/前辈…）」两式。
+**误报控制**：姓氏式要过一道虚词闸 —— 候选里含「他/们/了/的/是/在…即弃」，因为「路他已」「经看了」
+这类是普通词恰好从姓字开始；称谓式**不过滤**，那本身就带信息（林夫人、张道人都含「人」）。
 三重闸之后才报：出现 ≥2 次、跨 ≥2 章、且不在 `lexicon.names`、角色本名与别名、
 世界条目名与 `keys`、`allowlist` 之中。**聚合成一条**列出 top 15。
 它的作用是养 lexicon，不是骂作者，所以永远是 info。
+抽取器 `NWRules.entityCandidates` 与 `nw-io.mjs adopt` 共用一份 —— 建档时看得见的名字
+和检查时报出来的名字必须是同一批。
 
 ### R6 `timeline-regression`（error；`implied` 只出 info）
 按章序遍历带 `day` 的锚点，为每条 `thread` 维护至今的最大时间戳（`day + 时辰折算`），
@@ -67,7 +71,7 @@
 第 2 章写当天清晨」这种真回退会被漏掉。
 
 ### R14 `structure-invalid`（error，slug 重复与缺号为 warn）
-章号非正整数、重复、id 重复、slug 冲突、status 非枚举、章号有洞。
+章号非 ≥0 整数（`0` = 前置章，楔子/序）、重复、id 重复、slug 冲突、status 非枚举、章号有洞。
 优先级最高：章序一乱，所有依赖 `number` 比较的规则都会产出假诊断。
 
 ### R15 `dangling-reference`（error）

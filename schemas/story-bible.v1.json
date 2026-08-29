@@ -20,7 +20,7 @@
       "properties": {
         "schemaVersion": { "type": "string" },
         "id": { "$ref": "#/$defs/chapterId" },
-        "number": { "type": "integer", "minimum": 1 },
+        "number": { "type": "integer", "minimum": 0 },
         "slug": { "$ref": "#/$defs/slug" },
         "title": { "type": "string", "minLength": 1, "maxLength": 200 },
         "status": { "enum": ["outline", "draft", "revised", "final", "complete"] },

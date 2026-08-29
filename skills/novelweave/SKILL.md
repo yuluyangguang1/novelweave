@@ -40,7 +40,9 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 - 不发明第二套状态文件格式（只认 `.novelweave/`，见 `references/schema-v1.md`）。
 - 不在作者确认前改写任何既定事实（见 Hard Constraints 第 5 条）。
 
-散稿要用的话，先建档：`node scripts/nw-io.mjs init --title <书名>`，再把正文放进 `manuscript/chapters/`。
+已有散稿要纳管，用建档而不是手搬：`node scripts/nw-io.mjs adopt <草稿目录> --title <书名> --dry-run`
+先看出结论（章号识别、重号/跳号/判不出章号、人名候选），确认无误再去掉 `--dry-run` 落盘。
+草稿只读，源文件不会被改；判不出的章号它会拒绝而不是猜。细则见 `references/io.md`。
 
 ## When to Use
 
@@ -51,6 +53,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 | "这章有没有矛盾 / 查一下人设有没有崩" | 转 `novelweave-continuity` |
 | "林烟火这章受了重伤，记一下状态" | `nw-changes.mjs stage` 提案，等作者 apply |
 | "这条伏笔回收了" | 同上（`promise.payoff`） |
+| "我已经有三十章稿子，想管起来" | `nw-io.mjs adopt <目录> --title X --dry-run`，看报告再落盘 |
 | "这章读着像 AI 写的" | `nw-prose.mjs probe` + `packet`，按引擎清单交接（见 `references/prose-handoff.md`） |
 | "把这本书导出给织文网页 / 从网页备份导入" | `references/io.md` |
 | "这是什么格式？字段什么意思" | 读 `references/schema-v1.md` |
@@ -174,6 +177,7 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 |---|---|---|
 | `nw-io.mjs locate` | 每次开头，确认在哪本书上工作 | 0 找到 / 2 没找到 |
 | `nw-io.mjs init` / `import` / `export` / `recount` / `migrate` | 建档、交接、重算派生字段 | 0 / 4 需迁移 / 6 已存在 |
+| `nw-io.mjs adopt <草稿目录> --title X [--dry-run]` | 已有散稿要纳管 | 0 干净 / 2 拒建（判不出章号或重号）/ 6 有待确认项 |
 | `nw-validate.mjs` | 任何写入之前 | 0 / 1 有 error / 3 schema 挂 |
 | `nw-continuity.mjs` | 每章写完、修订后、以及用户质疑时 | 0 / 1 达阈值 |
 | `nw-continuity.mjs explain --rule R1` | 需要向用户解释某条规则 | 0 |
