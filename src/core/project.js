@@ -233,7 +233,8 @@
           status: data.status, summary: data.summary || '', flags: data.flags || [],
           characters: data.characters || [], mentions: data.mentions || [], locations: data.locations || [],
           pov: data.pov ?? null, time_anchor: data.time_anchor ?? null,
-          word_count: data['x-words'] ?? null };
+          // 派生值一律重算：agent 改正文时通常不会同步 x-words，而 Web 端没有 recount 命令可修
+          word_count: T.countWords(body) };
       });
 
     const readDir = (sub) => Object.entries(files)

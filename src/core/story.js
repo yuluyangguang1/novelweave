@@ -60,7 +60,7 @@
   function fromAnchor(a) {
     return {
       id: a.id, chapter: a.chapter ?? null, label: a.label || '',
-      day: a.at?.day ?? null, clock: a.at?.clock ?? '',
+      day: a.at?.day ?? null, clock: a.at?.clock ?? '', thread: a.thread || '',
       entities: a.entities || [], confidence: a.confidence || 'author',
       created_at: null,
     };
@@ -151,7 +151,8 @@
       schemaVersion: Bible.SCHEMA_VERSION, unit: 'day',
       anchors: rows.map((r) => ({
         id: r.id, chapter: r.chapter || null, label: r.label || '',
-        at: { day: r.day, clock: r.clock || null }, kind: 'story',
+        thread: r.thread || null,
+        at: { day: r.day ?? null, clock: r.clock || null }, kind: 'story',
         entities: r.entities || [], confidence: r.confidence || 'author',
       })),
       backstory: [],

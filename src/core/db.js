@@ -101,15 +101,24 @@ function stableSort(list, { byOrder = false } = {}) {
 
 // ═══════════ 派生统计 ═══════════
 
-/** 全量重算一本书的字数与章数。所有写操作之后调它，别做增量加减。 */
+/**
+ * 全量重算一本书的字数与章数。所有写操作之后调它，别做增量加减。
+ * 同时修每章自己存的 word_count —— 只修总数的话，某章字数一旦漂移
+ * （例如导入绕过 updateChapter 直接落行）就会永久留着：列表显示错数字，
+ * 连续性面板的 R16 也会长期误报。
+ */
 async function recountNovelStats(novelId) {
   const novel = await get('novels', novelId);
   if (!novel) return null;
   const chapters = await getByIndex('chapters', 'novel_id', novelId);
-  const word_count = chapters.reduce((sum, c) => sum + words(c.content), 0);
-  const stats = { word_count, chapter_count: chapters.length };
+  let word_count = 0;
+  for (const c of chapters) {
+    const w = words(c.content);
+    word_count += w;
+    if (c.word_count !== w) await put('chapters', { ...c, word_count: w });
+  }
   const changed = novel.word_count !== word_count || novel.chapter_count !== chapters.length;
-  if (changed) return put('novels', { ...novel, ...stats });
+  if (changed) return put('novels', { ...novel, word_count, chapter_count: chapters.length });
   return novel;
 }
 
@@ -309,7 +318,8 @@ async function saveAnchor(novelId, data) {
     id: data.id || newId('ev'), novel_id: novelId,
     chapter: data.chapter || null, label: data.label || '',
     day: Number.isFinite(+data.day) ? +data.day : null,
-    clock: data.clock || '', entities: Array.isArray(data.entities) ? data.entities : [],
+    clock: data.clock || '', thread: data.thread || '',
+    entities: Array.isArray(data.entities) ? data.entities : [],
     confidence: ['explicit', 'implied', 'author'].includes(data.confidence) ? data.confidence : 'author',
     created_at: data.created_at || Date.now(),
   };

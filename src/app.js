@@ -39,6 +39,7 @@ const TABS = [
   { id: 'characters', icon: '👥', label: '角色',     hasAdd: true,  addTitle: '添加角色' },
   { id: 'world',      icon: '🌍', label: '世界设定', hasAdd: true,  addTitle: '添加设定' },
   { id: 'promises',   icon: '🧵', label: '伏笔',     hasAdd: true,  addTitle: '登记伏笔' },
+  { id: 'timeline',   icon: '🕐', label: '时间线',   hasAdd: true,  addTitle: '添加时间锚点' },
   { id: 'continuity', icon: '🔍', label: '连续性',   hasAdd: false, addTitle: '' },
   { id: 'notes',      icon: '📒', label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
   { id: 'settings',   icon: '⚙️', label: 'AI 设置',  hasAdd: false, addTitle: '' },
@@ -86,6 +87,7 @@ const ACTIONS = {
   'edit-world':    (id) => editWorldbuilding(id),
   'edit-note':     (id) => editNote(id),
   'save-chapter':  () => saveChapter(),
+  'edit-cast':     () => showCastPanel(),
   'run-ai':        (id, el) => runAIPanel(el.dataset.tool || id),
   'close-ai':      () => closeAIPanel(),
   'switch-tab':    (id, el) => switchTab(el.dataset.tab),
@@ -316,12 +318,14 @@ const ADD_ACTIONS = {
   'nav-add-characters': () => showCreateCharacter(),
   'nav-add-world': () => showCreateWorldbuilding(),
   'nav-add-promises': () => showCreatePromise(),
+  'nav-add-timeline': () => showCreateAnchor(),
   'nav-add-notes': () => showCreateNote(),
 };
 Object.assign(ACTIONS, ADD_ACTIONS);
 Object.assign(ACTIONS, {
   'edit-promise':    (id) => editPromise(id),
   'del-promise':     (id) => removePromise(id),
+  'edit-anchor':     (id) => editAnchor(id),
   'jump-diag':       (id, el) => jumpToEvidence(el.dataset.chapter, el.dataset.start, el.dataset.len),
   'suppress-diag':   (id, el) => suppressDiagnostic(el.dataset.fp, el),
   'rerun-continuity': () => renderSidebarPanel(),
@@ -333,6 +337,7 @@ const SIDEBAR_VIEWS = {
   characters: showCharacterList,
   world: showWorldList,
   promises: showPromiseList,
+  timeline: showTimelineList,
   continuity: showContinuity,
   notes: showNotesList,
   settings: renderWorkspaceSettings,
@@ -430,6 +435,7 @@ async function openChapter(chapter) {
       <span class="word-count" id="wc-label">${formatWordCount(fresh.word_count)}</span>
       ${AI_TOOLS.filter((t) => t.id !== 'outline').map((t) => `
         <button data-action="run-ai" data-tool="${attr(t.id)}" title="${attr(t.label)}">${t.icon}</button>`).join('')}
+      <button data-action="edit-cast" title="声明本章出场角色">🎭</button>
       <button data-action="save-chapter" title="保存 (Ctrl+S)">💾</button>
     </div>`;
 
@@ -838,6 +844,143 @@ async function showPromiseList(host) {
   </div>`;
 }
 
+// ═══════════════════ 时间线 ═══════════════════
+
+const CLOCKS = ['黎明', '晨', '午', '暮', '夜', '三更'];
+const CONFIDENCE_ZH = { explicit: '正文明说', implied: '叙述推断', author: '作者设定' };
+
+function anchorFields(prefix, a = {}) {
+  return `
+    <div class="settings-field"><label class="settings-label">发生了什么</label>
+      <input class="settings-input" id="${prefix}-t-label" value="${attr(a.label || '')}" placeholder="例：山门夜火"></div>
+    <div class="settings-field"><label class="settings-label">发生在第几章</label>${chapterSelect(`${prefix}-t-chapter`, a.chapter)}</div>
+    <div class="settings-field"><label class="settings-label">故事内第几天</label>
+      <input class="settings-input" id="${prefix}-t-day" type="number" step="1" value="${attr(a.day ?? '')}" placeholder="0 = 开篇之日"></div>
+    <div class="settings-field"><label class="settings-label">时辰</label>
+      <select class="settings-select" id="${prefix}-t-clock">
+        <option value="">（未定）</option>
+        ${CLOCKS.map((c) => `<option value="${attr(c)}" ${a.clock === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><label class="settings-label">所属叙事线</label>
+      <input class="settings-input" id="${prefix}-t-thread" value="${attr(a.thread || '')}" placeholder="留空表示主线">
+      <div class="settings-hint">并行展开的多条线各填不同名字，它们之间永远不会被比较时间先后。</div></div>
+    <div class="settings-field"><label class="settings-label">这条时间怎么来的</label>
+      <select class="settings-select" id="${prefix}-t-conf">
+        ${Object.entries(CONFIDENCE_ZH).map(([v, label]) => `<option value="${attr(v)}" ${(a.confidence || 'author') === v ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+      </select>
+      <div class="settings-hint">「叙述推断」出来的时间只会提示、不会报错。</div></div>`;
+}
+
+function readAnchorForm(prefix) {
+  return {
+    label: val(`${prefix}-t-label`),
+    chapter: val(`${prefix}-t-chapter`),
+    day: val(`${prefix}-t-day`),
+    clock: val(`${prefix}-t-clock`),
+    thread: val(`${prefix}-t-thread`),
+    confidence: val(`${prefix}-t-conf`),
+  };
+}
+
+function showCreateAnchor() {
+  showModal('添加时间锚点', anchorFields('m'), async () => {
+    const data = readAnchorForm('m');
+    if (!data.label) { showToast('请写清发生了什么'); return; }
+    await NovelDB.timeline.save(APP.novel.id, data);
+    closeModal();
+    showToast('已添加');
+    await switchTab('timeline');
+  });
+  setTimeout(() => document.getElementById('m-t-label')?.focus(), 60);
+}
+
+async function editAnchor(id) {
+  const a = await NovelDB.timeline.get(id);
+  if (!a) { showToast('锚点不存在'); return; }
+  showModal(`时间锚点 · ${a.label}`, anchorFields('e', a), async () => {
+    await NovelDB.timeline.save(APP.novel.id, { ...readAnchorForm('e'), id: a.id });
+    closeModal();
+    showToast('已更新');
+    await switchTab('timeline');
+  }, async () => {
+    if (!confirm('删除这个时间锚点？')) return;
+    await NovelDB.timeline.delete(id);
+    closeModal();
+    showToast('已删除');
+    await switchTab('timeline');
+  });
+}
+
+async function showTimelineList(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const rows = await NovelDB.timeline.list(APP.novel.id);
+  if (!rows.length) {
+    host.innerHTML = emptyHint('点击 + 记录第一件事发生在第几天，之后就能查出时间倒流');
+    return;
+  }
+  const byChapter = new Map((APP.chaptersCache || []).map((c) => [c.id, c]));
+  const sorted = [...rows].sort((a, b) => (byChapter.get(a.chapter)?.order ?? 0) - (byChapter.get(b.chapter)?.order ?? 0) || (a.day ?? 0) - (b.day ?? 0));
+  host.innerHTML = `<div class="char-list" style="max-height:calc(100vh - 200px);overflow-y:auto;">
+    ${sorted.map((a) => `
+      <div class="char-card" data-action="edit-anchor" data-id="${attr(a.id)}">
+        <div class="char-card-name">第${a.day ?? '?'}天${a.clock ? '·' + esc(a.clock) : ''} ${esc(a.label)}</div>
+        <div class="char-card-role">${esc((byChapter.get(a.chapter)?.title) || '未定章')}${a.thread ? ' · ' + esc(a.thread) + '线' : ''} · ${esc(CONFIDENCE_ZH[a.confidence] || a.confidence || '')}</div>
+      </div>`).join('')}
+  </div>`;
+}
+
+// ═══════════════════ 章节出场声明 ═══════════════════
+
+/**
+ * 作者显式声明「谁在本章出场并行动 / 只是被提到 / 涉及哪些地点」。
+ * 这决定 R1 用最强的章级信号还是退化成动作词邻近扫描 —— 之前只能由 agent 写，
+ * 作者自己反而声明不了。
+ */
+async function showCastPanel() {
+  if (!APP.chapter) { showToast('请先打开一章'); return; }
+  const [characters, world] = await Promise.all([
+    NovelDB.characters.list(APP.novel.id), NovelDB.worldbuilding.list(APP.novel.id),
+  ]);
+  if (!characters.length && !world.length) { showToast('先在角色和世界设定里登记一些条目'); return; }
+  const body = editorText();
+  const cast = {
+    characters: APP.chapter.characters || [],
+    mentions: (APP.chapter.declaredMentions && APP.chapter.declaredMentions.length)
+      ? APP.chapter.declaredMentions
+      : characters.filter((c) => body.includes(c.name)).map((c) => c.id),
+    locations: APP.chapter.locations || [],
+  };
+  const row = (kind, id, label, checked, extra = '') => `
+    <label class="cast-row">
+      <input type="checkbox" data-cast="${kind}" value="${attr(id)}" ${checked ? 'checked' : ''}>
+      <span>${esc(label)}</span>${extra ? `<em>${esc(extra)}</em>` : ''}
+    </label>`;
+  const group = (title, kind, list, nameOf, hint) => list.length ? `
+    <div class="cast-group"><div class="cast-title">${esc(title)}</div>${hint ? `<div class="settings-hint">${esc(hint)}</div>` : ''}
+      ${list.map((x) => row(kind, x.id, nameOf(x), cast[kind].includes(x.id), x.status === 'deceased' ? '已死亡' : '')).join('')}
+    </div>` : '';
+
+  showModal(`本章出场 · ${APP.chapter.title}`,
+    group('实际出场并有行动', 'characters', characters, (c) => c.name, '标为已死亡的角色若勾在这里，会被直接判为矛盾')
+    + group('仅被提及（不出场）', 'mentions', characters, (c) => c.name)
+    + group('涉及地点', 'locations', world, (w) => w.name),
+    async () => {
+      const picked = (kind) => [...document.querySelectorAll(`input[data-cast="${kind}"]:checked`)].map((i) => i.value);
+      const characters2 = picked('characters');
+      await NovelDB.chapters.update(APP.chapter.id, {
+        characters: characters2,
+        // 出场即视为被提到；剩下的勾选项才是纯提及
+        mentions: [...new Set([...characters2, ...picked('mentions')])],
+        locations: picked('locations'),
+      });
+      APP.chapter = await NovelDB.chapters.get(APP.chapter.id);
+      closeModal();
+      showToast('已记录本章出场名单');
+      await renderSidebarPanel();
+    });
+}
+
 // ═══════════════════ 连续性面板 ═══════════════════
 
 /** 读全库装配 ctx。与 CLI 唯一的差别是不跑 schema 校验（浏览器里没有那份 JSON）。 */
@@ -871,7 +1014,7 @@ async function showContinuity(host) {
   const visible = diags.filter((d) => !d.suppressedBy);
   if (!visible.length) {
     body.innerHTML = `<div style="color:var(--success);font-size:13px;">✅ 没有发现矛盾（${ctx.chapters.length} 章）</div>
-      <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 10 条规则，不判断文笔与情节好坏。伏笔、角色状态、外貌区间填得越全，检查越准。</div>`;
+      <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 ${Object.keys(NWRules.RULES).length} 条规则，不判断文笔与情节好坏。伏笔、时间线、角色状态、外貌区间填得越全，检查越准。</div>`;
     return;
   }
   body.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">${counts}</div>`

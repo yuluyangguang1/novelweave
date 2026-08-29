@@ -168,6 +168,71 @@ test('R16 派生字段被手改要报出来', () => {
   assert.equal(of(NWRules.runRules(c), 'derived-field-touched').length, 1);
 });
 
+test('R6 时间线倒流：同日更早的时辰排在后面要抓到', () => {
+  const c = ctx({
+    chapters: [ch(1), ch(2)],
+    timeline: { anchors: [
+      { id: 'ev-001', chapter: 'ch-001', label: '山门夜火', at: { day: 1, clock: '夜' }, confidence: 'author' },
+      { id: 'ev-002', chapter: 'ch-002', label: '次日清晨', at: { day: 1, clock: '晨' }, confidence: 'author' },
+    ], backstory: [] },
+  });
+  const d = of(NWRules.runRules(c), 'timeline-regression');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'error');
+  assert.ok(d[0].message.includes('第1天·夜'), '应引用两个锚点的时间，便于作者核对');
+});
+
+test('R6 正常推进不报', () => {
+  const run = (anchors) => of(NWRules.runRules(ctx({ chapters: [ch(1), ch(2)], timeline: { anchors, backstory: [] } })), 'timeline-regression');
+  assert.deepEqual(run([
+    { id: 'a', chapter: 'ch-001', label: 'x', at: { day: 1 }, confidence: 'author' },
+    { id: 'b', chapter: 'ch-002', label: 'y', at: { day: 2 }, confidence: 'author' },
+  ]), [], '跨天前进不该报');
+  assert.deepEqual(run([
+    { id: 'a', chapter: 'ch-001', label: 'x', at: { day: 3, clock: '晨' }, confidence: 'author' },
+    { id: 'b', chapter: 'ch-002', label: 'y', at: { day: 3, clock: '夜' }, confidence: 'author' },
+  ]), [], '同日里 晨→夜 是前进，不该报');
+});
+
+test('R6 不同 thread 永不互比（多线并行是合法叙事）', () => {
+  const c = ctx({
+    chapters: [ch(1), ch(2)],
+    timeline: { anchors: [
+      { id: 'a', chapter: 'ch-001', label: '甲线', at: { day: 9 }, thread: '甲', confidence: 'author' },
+      { id: 'b', chapter: 'ch-002', label: '乙线', at: { day: 2 }, thread: '乙', confidence: 'author' },
+    ], backstory: [] },
+  });
+  assert.deepEqual(of(NWRules.runRules(c), 'timeline-regression'), []);
+});
+
+test('R6 误报控制：implied 只出 info，闪回章直接跳过', () => {
+  const anchors = [
+    { id: 'a', chapter: 'ch-001', label: 'x', at: { day: 5, clock: '夜' }, confidence: 'author' },
+    { id: 'b', chapter: 'ch-002', label: 'y', at: { day: 5, clock: '晨' }, confidence: 'implied' },
+  ];
+  const implied = of(NWRules.runRules(ctx({ chapters: [ch(1), ch(2)], timeline: { anchors, backstory: [] } })), 'timeline-regression');
+  assert.equal(implied[0].severity, 'info', '推断出的时间不该阻断写作');
+
+  const fb = of(NWRules.runRules(ctx({
+    chapters: [ch(1), ch(2, { flags: ['flashback'] })], timeline: { anchors, backstory: [] },
+  })), 'timeline-regression');
+  assert.deepEqual(fb, []);
+});
+
+test('R6 一处回退不该引发后续连锁误报', () => {
+  const c = ctx({
+    chapters: [ch(1), ch(2), ch(3)],
+    timeline: { anchors: [
+      { id: 'a', chapter: 'ch-001', label: '第一天', at: { day: 5 }, confidence: 'author' },
+      { id: 'b', chapter: 'ch-002', label: '填错了', at: { day: 2 }, confidence: 'author' },
+      { id: 'c', chapter: 'ch-003', label: '第六天', at: { day: 6 }, confidence: 'author' },
+    ], backstory: [] },
+  });
+  const d = of(NWRules.runRules(c), 'timeline-regression');
+  assert.equal(d.length, 1, '只该报那个填错的锚点');
+  assert.equal(d[0].entity, 'b');
+});
+
 test('suppressions 命中 fingerprint 后标记 suppressedBy（作者豁免要留痕，不能当没发生）', () => {
   const base = {
     chapters: [ch(1), ch(2, { body: '明长老推门进来。' })],

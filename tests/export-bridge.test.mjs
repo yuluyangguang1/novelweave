@@ -36,7 +36,7 @@ function rowsFixture() {
             { id: 'wb_rule', name: '灵气九境', type: 'rule', description: '不可逾越。' }],
     promises: [{ id: 'p_001', type: 'promise', title: '半枚铜印', status: 'planted', weight: 'major',
       setup: { chapter: 'ch_a1', evidence: '师父塞给我' }, payoff: { chapter: null, due: 'ch_a1' } }],
-    timeline: [{ id: 'ev_001', chapter: 'ch_a1', label: '山门夜火', day: 1, clock: '夜', confidence: 'author' }],
+    timeline: [{ id: 'ev_001', chapter: 'ch_a1', label: '山门夜火', day: 1, clock: '夜', thread: '甲线', confidence: 'author' }],
     suppressions: [{ id: 'sup_1', fingerprint: 'appearance-token-violation:ch_a2:char_ming', reason: '闪回', at: 1 }],
   };
 }
@@ -170,6 +170,30 @@ test('sync.json 给每一类记录都留了基线哈希，否则导入时无从�
     ['character', 'char_lin'], ['world', 'wb_qing'], ['promise', 'p_001'], ['anchor', 'ev_001']]) {
     assert.ok(base[`${kind}:${id}`]?.hash, `sync.json 缺 ${kind}:${id} 的基线哈希`);
   }
+});
+
+test('导入按正文重算字数，不照抄文件里过期的 x-words', () => {
+  const tree = {
+    'project.json': JSON.stringify({ schemaVersion: '1', books: [{ slug: 'x', id: 'novel_x', path: 'x' }] }),
+    'x/book.json': JSON.stringify({ schemaVersion: '1', id: 'novel_x', slug: 'x', title: '测试', genre: '玄幻' }),
+    'x/manuscript/chapters/ch-001-a.md': '---\nid: ch_1\nnumber: 1\nslug: a\ntitle: 甲\nstatus: draft\nx-words: 999\n---\n她推开门，看见雪。',
+  };
+  const parsed = NWProject.parseFileMap(tree);
+  assert.equal(parsed.chapters[0].word_count, NWText.countWords('她推开门，看见雪。'),
+    '导入应重算字数；照抄 999 会让章节列表永久显示错数字');
+});
+
+test('thread 必须在导出往返中存活（R6 靠它区分并行叙事线）', async () => {
+  const ctx = NWStory.buildCtx(rowsFixture());
+  const tree = await NWProject.buildProjectTree(ctx);
+  const tl = JSON.parse(tree['桥接测试/bible/timeline.json']);
+  assert.equal(tl.anchors[0].thread, '甲线', '导出的 timeline.json 丢了 thread');
+  const parsed = NWProject.parseFileMap(tree);
+  assert.equal(parsed.timeline[0].thread, '甲线', '解析回库行时丢了 thread');
+  // 再导出一次仍然要在（往返幂等）
+  const ctx2 = NWStory.buildCtx({ ...rowsFixture(), timeline: parsed.timeline });
+  const tree2 = await NWProject.buildProjectTree(ctx2);
+  assert.equal(JSON.parse(tree2['桥接测试/bible/timeline.json']).anchors[0].thread, '甲线');
 });
 
 test('导出不把脚本推导的 mentions 写成作者声明（否则谁都没碰的章节会幻影冲突）', async () => {

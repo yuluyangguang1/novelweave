@@ -37,6 +37,24 @@
   /** 常见姓，用于「未登记实体」的候选抽取。可通过 ctx.lexicon.surnames 覆盖。 */
   const DEFAULT_SURNAMES =
     '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵季贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚程嵇邢';
+  /**
+   * 日内时段次序。时辰必须参与比较，否则「第 1 章夜里发生、
+   * 第 2 章写当天清晨」这种真回退会被漏掉。
+   */
+  const CLOCK_ORDER = ['黎明', '晨', '午', '暮', '夜', '三更'];
+  const CLOCK_FRACTION = { 黎明: 0.05, 晨: 0.15, 午: 0.45, 暮: 0.7, 夜: 0.85, 三更: 0.95 };
+
+  /** day + 时辰 → 可比较的连续时间戳；day 非数字则不可比较。 */
+  function stamp(at) {
+    const day = Number(at?.day);
+    if (!Number.isFinite(day)) return null;
+    return { ts: day + (CLOCK_FRACTION[at.clock] ?? 0) };
+  }
+
+  function describe(at) {
+    return `第${at?.day}天${at?.clock ? '·' + at.clock : ''}`;
+  }
+
   // ═══════════════════ 工具 ═══════════════════
 
   function occurrences(hay, needle) {
@@ -292,6 +310,59 @@
               suggestion: '补 setup.chapter，否则连续性检查无法追踪它。',
             }));
           }
+        }
+        return out;
+      },
+    },
+
+    'timeline-regression': {
+      code: 'R6',
+      defaultSeverity: 'error',
+      scope: 'chapter',
+      summary: '同一叙事线上，故事时间倒着走。',
+      detail:
+        '按章序遍历带 `day` 的锚点，维护每条 thread 至今的最大时间戳（day + 时辰折算），' +
+        '后来的锚点时间戳更小即判回退。**不同 thread 永不互比** —— 多线并行是合法叙事。' +
+        '锚点所在章带 flashback/dream/quoted/offscreen 标记时跳过该锚点。' +
+        '只有 confidence 为 explicit/author 才出 error，`implied`（从"三天后"这类叙述推出来的）' +
+        '一律降为 info：推断出的时间本来就不可靠，让它报错只会逼作者关掉检查器。' +
+        '判出回退后不回写最大值，避免一个坏锚点引发连锁误报。',
+      run(ctx) {
+        const anchors = (ctx.timeline?.anchors || []).filter((a) => a.chapter && stamp(a.at));
+        if (anchors.length < 2) return [];
+        const rows = anchors
+          .map((a) => ({ a, n: ctx.chapterNumbers.get(a.chapter), s: stamp(a.at) }))
+          .filter((x) => x.n != null)
+          .sort((x, y) => x.n - y.n || CLOCK_ORDER.indexOf(x.a.at.clock) - CLOCK_ORDER.indexOf(y.a.at.clock));
+
+        const flagsOf = new Map(ctx.chapters.map((c) => [c.id, c.flags || []]));
+        const maxByThread = new Map();
+        const out = [];
+        for (const { a, n, s } of rows) {
+          if ((flagsOf.get(a.chapter) || []).some((f) => EXEMPT_FLAGS.has(f))) continue;
+          const thread = a.thread || '_';
+          const prev = maxByThread.get(thread);
+          if (prev && s.ts < prev.s.ts) {
+            const implied = a.confidence === 'implied';
+            out.push(diag('timeline-regression', {
+              chapter: a.chapter,
+              entity: a.id,
+              severity: implied ? 'info' : 'error',
+              confidence: implied ? 0.5 : 1,
+              evidence: {
+                basis: [
+                  `${a.id} @第${n}章 ${describe(a.at)}`,
+                  `其后的 ${prev.a.id} @第${prev.n}章 ${describe(prev.a.at)}`,
+                  `thread=${thread}`,
+                  `confidence=${a.confidence || '未设'}`,
+                ],
+              },
+              message: `「${a.label || a.id}」标为 ${describe(a.at)}，却排在「${prev.a.label || prev.a.id}」（${describe(prev.a.at)}）之后。`,
+              suggestion: '核对 day 与时辰；若这两条本属并行展开的不同线，请给锚点填 thread；若该章是闪回，加 flags:[flashback]。',
+            }));
+            continue;
+          }
+          if (!prev || s.ts > prev.s.ts) maxByThread.set(thread, { a, n, s });
         }
         return out;
       },

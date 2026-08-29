@@ -20,7 +20,8 @@ import {
 
 const ALIAS = {
   R1: 'dead-character-on-stage', R2: 'status-declared-contradiction', R3: 'promise-unpaid',
-  R3b: 'promise-overdue', R4: 'payoff-before-setup', R7: 'appearance-token-violation',
+  R3b: 'promise-overdue', R4: 'payoff-before-setup', R6: 'timeline-regression',
+  R7: 'appearance-token-violation',
   R9: 'unregistered-entity', R14: 'structure-invalid', R15: 'dangling-reference',
   R16: 'derived-field-touched',
 };

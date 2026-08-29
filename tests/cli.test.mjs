@@ -125,6 +125,28 @@ test('continuity 退出码非零当且仅当存在 machine error（--fail-on nev
   assert.equal(JSON.parse(clean.stdout).summary.error, 0);
 });
 
+test('R6 走完整文件路径：CLI 读 timeline.json 能查出时间倒流，填了 thread 就不报', () => {
+  const tlPath = path.join(bookDir, 'bible', 'timeline.json');
+  const write = (anchors) => writeJsonAtomic(tlPath, { schemaVersion: '1', unit: 'day', anchors, backstory: [] });
+
+  write([
+    { id: 'ev-001', chapter: 'ch-001', label: '夜火', at: { day: 1, clock: '夜' }, confidence: 'author' },
+    { id: 'ev-002', chapter: 'ch-002', label: '清晨', at: { day: 1, clock: '晨' }, confidence: 'author' },
+  ]);
+  const hit = JSON.parse(run('nw-continuity.mjs', [bookDir, '--rules', 'R6', '--json'], 1).stdout);
+  assert.equal(hit.diagnostics.length, 1, 'CLI 应通过文件路径查出时间倒流');
+  assert.equal(hit.diagnostics[0].rule, 'timeline-regression');
+
+  write([
+    { id: 'ev-001', chapter: 'ch-001', label: '夜火', at: { day: 1, clock: '夜' }, thread: '甲', confidence: 'author' },
+    { id: 'ev-002', chapter: 'ch-002', label: '清晨', at: { day: 1, clock: '晨' }, thread: '乙', confidence: 'author' },
+  ]);
+  const parallel = JSON.parse(run('nw-continuity.mjs', [bookDir, '--rules', 'R6', '--json'], 0).stdout);
+  assert.deepEqual(parallel.diagnostics, [], '并行叙事线之间不该互相比时间');
+
+  fs.rmSync(tlPath, { force: true });
+});
+
 test('--from / --to 只扫指定范围', () => {
   const onlyCh1 = JSON.parse(run('nw-continuity.mjs', [bookDir, '--from', 'ch-001', '--to', 'ch-001', '--json'], 1).stdout);
   assert.ok(onlyCh1.diagnostics.length, '范围内应有诊断');

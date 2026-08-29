@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import vm from 'node:vm';
 import { repoPath, repoRoot } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
@@ -38,6 +39,25 @@ test('模型输出只能以文本形式落地，不得当 HTML 注入', () => {
 
 test('旧的 escapeHtml 已被 NWText.esc 取代（它不转义引号）', () => {
   assert.equal(read('src/app.js').includes('escapeHtml'), false);
+});
+
+test('index.html 加载的每个脚本必须能通过语法解析', () => {
+  // 起因：app.js 里多写一个右括号 → 整页函数全部消失，而 110 项测试全绿，
+  // 因为没有任何测试会把 app.js 当脚本解析。这类错误必须静态拦住。
+  const html = read('index.html');
+  const scripts = [...html.matchAll(/src="([^"]+\.js)"/g)].map((m) => m[1]);
+  assert.ok(scripts.length >= 6, '没抓到脚本清单');
+  const bad = [];
+  for (const rel of scripts) {
+    try { new vm.Script(read(rel), { filename: rel }); }
+    catch (e) { bad.push(`${rel}: ${e.message.split('\n')[0]}`); }
+  }
+  assert.deepEqual(bad, [], `浏览器脚本语法错误：\n${bad.join('\n')}`);
+});
+
+test('sw.js 自身也要能解析', () => {
+  if (!existsSync(repoPath('sw.js'))) return;
+  new vm.Script(read('sw.js'), { filename: 'sw.js' });
 });
 
 test('PWA 一旦存在就必须自洽：清单覆盖页面加载的每个文件', () => {
