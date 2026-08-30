@@ -45,10 +45,11 @@
     }).join('\n');
   }
 
-  /** 出场角色：优先用作者声明，没声明时按名字命中兜底。 */
+  /** 出场角色：优先用作者声明，没声明时按名字命中兜底。
+   *  扫描面含本章摘要 —— 空章节（待生成）还没正文，拍点摘要就是它的人物声明。 */
   function activeCharacters(ctx, current, prev) {
     const declared = new Set([...(current?.characters || []), ...(prev?.characters || [])]);
-    const scan = [prev?.body, current?.body].filter(Boolean).join('\n');
+    const scan = [prev?.body, current?.body, current?.summary].filter(Boolean).join('\n');
     return ctx.characters.filter((c) => {
       if (c.enabled === false) return false;
       if (declared.has(c.id)) return true;
@@ -106,6 +107,55 @@
     const older = rest.length - mid.length;
     if (older > 0) lines.unshift(`（更早 ${older} 章，需要时回读原章）`);
     return lines.join('\n');
+  }
+
+  // ═══════════════ 相关旧章：按出场分量召回滚动窗口之外的历史章节 ═══════════════
+  // 章名锚点解决"忘了吗"，这里解决"要写重逢，第 5 章他们怎么认识的"——
+  // 本章出场角色在各旧章正文中被提及的次数就是相关度，纯词频、无模型、无索引。
+  // 只召回细摘要窗口之外的章（窗口内的已在"前情摘要"里）；短篇全量注入，不走这里。
+
+  const RELATED_CAP = 3;
+  const RELATED_SNIPPET = 60;
+
+  function nameHits(body, forms) {
+    let n = 0;
+    for (const f of forms) {
+      if (!f || f.length < 2) continue;
+      n += body.split(f).length - 1;
+    }
+    return n;
+  }
+
+  function relatedPastChapters(ctx, current, prev, cast) {
+    if (!cast.length) return [];
+    const chapters = ctx.chapters || [];
+    const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
+    const older = chapters.slice(0, Math.max(0, upto - RECAP_ITEMS)) // 细摘要窗口内的不算"旧"
+      .filter((c) => c.id !== prev?.id && (c.body || '').length > 50);
+    const scored = older.map((c) => {
+      let score = 0;
+      const who = [];
+      for (const ch of cast) {
+        const forms = [ch.name, ...(ch.aliases || []).map((a) => (typeof a === 'string' ? a : a.text))]
+          .filter((f) => (f || '').length >= 2);
+        const hits = nameHits(c.body || '', forms);
+        if (hits > 0) { score += hits; who.push(ch.name); }
+      }
+      return { chapter: c, score, who };
+    }).filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, RELATED_CAP);
+    return scored.map(({ chapter, score, who }) => {
+      const summary = (chapter.summary || '').replace(/\s+/g, ' ');
+      const snippet = summary.length > RELATED_SNIPPET ? summary.slice(0, RELATED_SNIPPET) + '…' : summary;
+      return { id: chapter.id, label: Bible.chapterLabel(chapter), score, who, snippet };
+    });
+  }
+
+  function relatedBlock(related) {
+    if (!related.length) return null;
+    return '【与本章人物相关的旧章 —— 涉及同一角色的往事，避免写重或写矛盾】\n'
+      + related.map((r) => `- ${r.label}（与${r.who.join('、')}相关）：${r.snippet || '（该章摘要未填）'}`).join('\n');
   }
 
   function stateBlock(states, prev, characters = []) {
@@ -191,6 +241,7 @@
     const lore = Story.loreTrigger(scanText, ctx.world, { loreBytes: b.loreBytes });
     // 短篇换挡：体量小（几千至三万字），前情摘要全量列出，不做滚动窗口
     const isShort = ctx.book?.format === 'short';
+    const related = isShort ? [] : relatedPastChapters(ctx, current, prev, chars);
 
     const hasBody = !!(current?.body || '').trim();
     const tail = (text, n) => '…' + String(text).slice(-n);
@@ -217,6 +268,7 @@
       { name: '分章状态快照', text: stateBlock(ctx.states, prev, ctx.characters) },
       { name: '未结线索', text: promiseBlock(ctx.promises) },
       { name: '前情摘要', text: recapBlock(chapters, current, isShort ? Infinity : RECAP_ITEMS) },
+      ...(related.length ? [{ name: '相关旧章', text: relatedBlock(related) }] : []),
       { name: '相关世界设定', text: lore.entries.length
         ? lore.entries.map((e) => `- ${e.name}：${e.content}`).join('\n') : '（未触发任何世界条目）' },
     ];
@@ -263,6 +315,7 @@
           bytes: T.bytesOf(`## ${s.name}\n${s.text}`),
           ...(s.name === '相关世界设定' ? { included: lore.entries.map((e) => e.name) } : {}),
           ...(s.name === '风格样例' ? { included: exemplars.map((e) => e.label) } : {}),
+          ...(s.name === '相关旧章' ? { included: related.map((r) => r.label) } : {}),
         })),
         loreIncluded: lore.entries.map((e) => e.name),
         loreDropped: lore.dropped,
@@ -285,5 +338,5 @@
     return sections.map((s) => s.block).join('\n\n') + (extra ? `\n\n${extra}` : '');
   }
 
-  return { buildSections, renderDocument, renderPrompt, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters, hardBanBlock, pickStyleExemplars, styleBlock };
+  return { buildSections, renderDocument, renderPrompt, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters, hardBanBlock, pickStyleExemplars, styleBlock, relatedPastChapters, relatedBlock };
 });

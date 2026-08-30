@@ -242,6 +242,62 @@ test('R17 短篇：提示语知道自己是短篇', () => {
   assert.ok(hit.suggestion.includes('屏末'), '短篇的钩子话术应该是"屏末"');
 });
 
+// ═══════════════ 相关旧章检索 ═══════════════
+
+test('相关旧章：按出场分量召回窗口外旧章，苏晚的高光章被带回来', () => {
+  const many = [];
+  for (let i = 1; i <= 40; i++) {
+    many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `事件${i}`, content: '正文。', summary: `核心事件：第${i}件事` });
+  }
+  // 第 5 章和第 20 章是"苏晚的往事高光章"（苏晚反复出现），在细摘要窗口(29-40)之外
+  many[4] = { id: 'ch-005', order: 5, title: '药庐初见', content: ('苏晚教林烟火认药。').repeat(6), summary: '核心事件：苏晚与林烟火初见' };
+  many[19] = { id: 'ch-020', order: 20, title: '并肩', content: ('苏晚替林烟火挡了一箭。').repeat(8), summary: '核心事件：苏晚为林烟火挡箭' };
+  many.push({ id: 'ch-041', order: 41, title: '重逢', content: '', characters: [], summary: '核心事件：苏晚与林烟火重逢' });
+
+  const ctx = NWStory.buildCtx(rows({
+    chapters: many,
+    characters: [
+      { id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' },
+      { id: 'c_su', name: '苏晚', role: '配角', status: 'alive' },
+    ],
+  }));
+  const built = NWContext.buildSections(ctx, { chapterId: 'ch-041' });
+  const names = built.sections.map((s) => s.name);
+  assert.ok(names.includes('相关旧章'), '相关旧章节要出现');
+
+  const rel = built.sections.find((s) => s.name === '相关旧章');
+  assert.match(rel.text, /第5章《药庐初见》/, '高光旧章要被召回');
+  assert.match(rel.text, /与林烟火、苏晚相关/, '相关人物要标注');
+  const usage = built.usage.sections.find((s) => s.name === '相关旧章');
+  assert.ok(usage.present && usage.included.includes('第20章《并肩》'), 'usage 要如实列出召回了哪些');
+});
+
+test('相关旧章：细摘要窗口内与上一章不重复召回；短篇不启用', () => {
+  const many = [];
+  for (let i = 1; i <= 40; i++) {
+    many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `事件${i}`, content: ('林烟火与苏晚同行。').repeat(4), summary: `核心事件：第${i}件事` });
+  }
+  many.push({ id: 'ch-041', order: 41, title: '重逢', content: '', summary: '' });
+  const base = {
+    chapters: many,
+    characters: [
+      { id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' },
+      { id: 'c_su', name: '苏晚', role: '配角', status: 'alive' },
+    ],
+  };
+  // 长篇：召回的只能是窗口外(≤28)的章
+  const longBuilt = NWContext.buildSections(NWStory.buildCtx(rows(base)), { chapterId: 'ch-041' });
+  const rel = longBuilt.sections.find((s) => s.name === '相关旧章');
+  if (rel) assert.ok(!/第3[0-9]章|第4[0-1]章/.test(rel.text), '窗口内的章不进相关旧章');
+  // 短篇：全量前情已覆盖，不启用相关旧章
+  const shortBuilt = NWContext.buildSections(NWStory.buildCtx(rows({
+    novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: 'short' },
+    chapters: many,
+    characters: base.characters,
+  })), { chapterId: 'ch-041' });
+  assert.ok(!shortBuilt.sections.some((s) => s.name === '相关旧章'), '短篇不启用相关旧章');
+});
+
 // ═══════════════ AI 起书（短篇从零向导） ═══════════════
 
 test('AI 起书 prompt：带想法 / 流派 / 篇幅档，并强制只输出 JSON', () => {
