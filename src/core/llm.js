@@ -148,6 +148,54 @@ ${chText}
 若已有章节，从已有章节之后接着排。格式简洁即可。`;
   }
 
+  // ═══════════════════ AI 起书（短篇从零向导） ═══════════════════
+  // 从零管道的第一块试验田：想法 → 结构化梗概（可改）→ 建档落盘。
+  // 正文仍由作者逐章「续写」产出 —— 向导建的是骨架，不是成品。
+
+  /** 结构流派与篇幅档的口径与 skills/novelweave/assets/templates/short-presets.json 一致。 */
+  const SHORT_STRUCTURES = ['反转流', '情感流', '脑洞设定流'];
+  const SHORT_TIERS = ['微型（3k-6k 字，1-2 章）', '标准（8k-15k 字，3-6 章）', '大短篇（20k-30k 字，6-10 章）'];
+
+  function buildShortConceptPrompt({ idea, genre, structure, tier }) {
+    return `你是资深短篇网文编辑。根据作者的一句话想法，生成一篇短篇的完整梗概。
+
+【题材】${genre || '不限'}
+【结构流派】${structure || '反转流'}（反转流=层层反转；情感流=双时间线交错；脑洞设定流=设定推演到底）
+【篇幅档】${tier || '标准（8k-15k 字，3-6 章）'}
+【作者的想法】${idea}
+
+要求：
+- 反转要有公平性（前面留过线索），结尾必须有二次反转或情绪爆点
+- 人物 2-4 个，每人一句话性格
+- 章数按篇幅档；每章给出标题与拍点（该章发生什么 + 章末钩子）
+
+只输出一个 JSON 对象，不要任何解释、不要代码块标记，格式：
+{"title":"书名","logline":"一句话梗概","characters":[{"name":"名字","role":"主角","personality":"一句话性格"}],"chapters":[{"title":"章标题","beat":"该章拍点与章末钩子"}]}`;
+  }
+
+  /** 从模型输出里稳健地抠出梗概 JSON（容忍代码块围栏与前后废话）。 */
+  function parseConceptJSON(text) {
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('模型没有返回可解析的梗概 JSON');
+    const j = JSON.parse(m[0]);
+    if (!j.title || !Array.isArray(j.chapters) || !j.chapters.length) {
+      throw new Error('梗概缺少书名或章节，请重试或换个说法');
+    }
+    return {
+      title: String(j.title).slice(0, 50),
+      logline: String(j.logline || '').slice(0, 200),
+      characters: j.characters.slice(0, 6).map((c) => ({
+        name: String(c.name || '').slice(0, 20),
+        role: String(c.role || '配角').slice(0, 10),
+        personality: String(c.personality || '').slice(0, 60),
+      })).filter((c) => c.name),
+      chapters: j.chapters.slice(0, 10).map((c) => ({
+        title: String(c.title || '').slice(0, 40),
+        beat: String(c.beat || '').slice(0, 300),
+      })).filter((c) => c.title),
+    };
+  }
+
   // ═══════════════════ 传输 ═══════════════════
 
   function endpoint(cfg) {
@@ -243,6 +291,7 @@ ${chText}
     
     buildContinuePrompt, buildContinueContext, buildConsistencyCheckPrompt, buildSummarizePrompt,
     buildPolishPrompt, buildOutlinePrompt,
+    buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS,
     streamChat, requestChat, testConnection,
   };
 });

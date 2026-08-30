@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWContext, NWRules, NWSelfCheck, NWStory } from './_load.mjs';
+import { NWContext, NWRules, NWSelfCheck, NWStory, NovelLLM } from './_load.mjs';
 
 // ═══════════════ 夹具 ═══════════════
 
@@ -222,4 +222,27 @@ test('R17 短篇：提示语知道自己是短篇', () => {
   const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['chapter-end-hook'] });
   const hit = diags.find((d) => d.rule === 'chapter-end-hook');
   assert.ok(hit.suggestion.includes('屏末'), '短篇的钩子话术应该是"屏末"');
+});
+
+// ═══════════════ AI 起书（短篇从零向导） ═══════════════
+
+test('AI 起书 prompt：带想法 / 流派 / 篇幅档，并强制只输出 JSON', () => {
+  const p = NovelLLM.buildShortConceptPrompt({ idea: '外卖员的第 43 单', genre: '悬疑', structure: '反转流', tier: '标准（8k-15k 字，3-6 章）' });
+  assert.match(p, /外卖员的第 43 单/);
+  assert.match(p, /反转流/);
+  assert.match(p, /8k-15k/);
+  assert.match(p, /只输出一个 JSON/);
+});
+
+test('parseConceptJSON：容忍代码块围栏与前后废话', () => {
+  const raw = '好的，这是梗概：\n```json\n{"title":"第43单","logline":"一单回乡","characters":[{"name":"陈皮","role":"主角","personality":"闷"}],"chapters":[{"title":"43单","beat":"地址是老家"}]}\n```\n希望有帮助';
+  const c = NovelLLM.parseConceptJSON(raw);
+  assert.equal(c.title, '第43单');
+  assert.equal(c.chapters.length, 1);
+  assert.equal(c.characters[0].name, '陈皮');
+});
+
+test('parseConceptJSON：缺书名或缺章节必须拒绝，不能带病建档', () => {
+  assert.throws(() => NovelLLM.parseConceptJSON('{"title":"只有书名"}'), /章节/);
+  assert.throws(() => NovelLLM.parseConceptJSON('我觉得这个故事不错'), /JSON/);
 });

@@ -123,6 +123,7 @@ const ACTIONS = {
   'open-novel':    (id) => router.go('workspace', { novelId: id }),
   'del-novel':     (id) => confirmDeleteNovel(id),
   'create-novel':  () => showCreateNovel(),
+  'ai-short-book': () => showAIShortWizard(),
   'load-demo':     () => loadDemoBook(),
   'open-chapter':  (id) => openChapterById(id),
   'del-chapter':   (id) => deleteCh(id),
@@ -297,6 +298,104 @@ function showCreateNovel() {
     router.go('workspace', { novelId: novel.id });
   });
   setTimeout(() => document.getElementById('inp-novel-title')?.focus(), 60);
+}
+
+// ═══════════════════ AI 起书（短篇从零向导） ═══════════════════
+// 想法 → 结构化梗概（每项可直接改）→ 建档落盘。建的是骨架不是成品：
+// 正文由作者逐章「续写」产出（自带硬禁令 / 风格样例 / 机检自检）。
+// 结构流派与篇幅档口径同 short-presets.json 模板。
+
+function showAIShortWizard() {
+  if (!NovelLLM.hasConfig()) {
+    showToast('AI 起书要先配 API Key（状态管理与连续性检查不需要）');
+    router.go('settings');
+    return;
+  }
+  const structures = NovelLLM.SHORT_STRUCTURES;
+  const tiers = NovelLLM.SHORT_TIERS;
+  const genres = ['不限','玄幻','都市','仙侠','科幻','悬疑','言情','脑洞','现实','历史'];
+  showModal('AI 起书 · 短篇', `
+    <div class="settings-field"><label class="settings-label">一句话想法 *</label>
+      <textarea class="settings-input" id="inp-ai-idea" rows="3" placeholder="例：外卖员发现自己送的第 43 单，收货地址是二十年前自己家。"></textarea></div>
+    <div class="settings-field"><label class="settings-label">结构流派</label>
+      <select class="settings-select" id="inp-ai-structure">
+        ${structures.map((s) => `<option value="${attr(s)}">${esc(s)}</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><label class="settings-label">篇幅档</label>
+      <select class="settings-select" id="inp-ai-tier">
+        ${tiers.map((t) => `<option value="${attr(t)}">${esc(t)}</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><label class="settings-label">题材</label>
+      <select class="settings-select" id="inp-ai-genre">
+        ${genres.map((g) => `<option value="${attr(g)}">${esc(g)}</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><button class="btn btn-primary" id="ai-gen-btn" style="width:100%">生成梗概（约 10 秒）</button></div>
+  `, null);
+  document.getElementById('modal-cancel').textContent = '关闭';
+  document.getElementById('ai-gen-btn').onclick = async function () {
+    const idea = document.getElementById('inp-ai-idea').value.trim();
+    if (!idea) { showToast('先写一句话想法'); return; }
+    this.disabled = true;
+    this.textContent = '生成中…';
+    const res = await NovelLLM.requestChat([
+      { role: 'system', content: '你是资深短篇网文编辑，只输出 JSON。' },
+      { role: 'user', content: NovelLLM.buildShortConceptPrompt({
+          idea,
+          genre: document.getElementById('inp-ai-genre').value,
+          structure: document.getElementById('inp-ai-structure').value,
+          tier: document.getElementById('inp-ai-tier').value,
+        }) },
+    ], { maxTokens: 3000 });
+    this.disabled = false;
+    this.textContent = '生成梗概（约 10 秒）';
+    if (res.error) { showToast('生成失败：' + res.error); return; }
+    let concept;
+    try { concept = NovelLLM.parseConceptJSON(res.content); }
+    catch (e) { showToast('解析失败：' + e.message); return; }
+    closeModal();
+    showConceptConfirm(concept, document.getElementById('inp-ai-genre').value);
+  };
+  setTimeout(() => document.getElementById('inp-ai-idea')?.focus(), 60);
+}
+
+/** 梗概确认：书名 / 一句话 / 章节（标题|拍点，一行一章）/ 人物（名字|角色|性格），全部可直接改。 */
+function showConceptConfirm(concept, genre) {
+  const chText = concept.chapters.map((c) => `${c.title}|${c.beat}`).join('\n') || '开篇|第一屏就立住钩子';
+  const peText = concept.characters.map((c) => `${c.name}|${c.role}|${c.personality}`).join('\n');
+  showModal('确认梗概 —— 每一项都可以改', `
+    <div class="settings-field"><label class="settings-label">书名</label>
+      <input class="settings-input" id="inp-c-title" value="${attr(concept.title)}" maxlength="50"></div>
+    <div class="settings-field"><label class="settings-label">一句话梗概</label>
+      <textarea class="settings-input" id="inp-c-logline" rows="2">${esc(concept.logline)}</textarea></div>
+    <div class="settings-field"><label class="settings-label">章节（一行一章：标题|拍点与章末钩子）</label>
+      <textarea class="settings-input" id="inp-c-chapters" rows="8">${esc(chText)}</textarea></div>
+    <div class="settings-field"><label class="settings-label">人物（一行一个：名字|角色|性格）</label>
+      <textarea class="settings-input" id="inp-c-chars" rows="4">${esc(peText)}</textarea></div>
+    <p class="usage-bar" style="margin-top:8px;">保存即建档：书 + 角色 + 空章节。正文由你逐章「续写」产出，生成完自动过机检。</p>
+  `, async () => {
+    const title = val('inp-c-title');
+    if (!title) { showToast('书名不能为空'); return; }
+    const chapters = document.getElementById('inp-c-chapters').value.split('\n')
+      .map((l) => l.trim()).filter(Boolean)
+      .map((l, i) => { const [t, b] = l.split('|'); return { title: (t || `第${i + 1}章`).trim(), beat: (b || '').trim() }; });
+    if (!chapters.length) { showToast('至少要有一章'); return; }
+    const chars = document.getElementById('inp-c-chars').value.split('\n')
+      .map((l) => l.trim()).filter(Boolean)
+      .map((l) => { const [name, role, personality] = l.split('|'); return { name: (name || '').trim(), role: (role || '配角').trim(), personality: (personality || '').trim() }; })
+      .filter((c) => c.name);
+    const novel = await NovelDB.novels.create({
+      title, genre: genre === '不限' ? '短篇' : genre,
+      description: document.getElementById('inp-c-logline').value.trim(), format: 'short',
+    });
+    for (const c of chars) await NovelDB.characters.create(novel.id, c);
+    for (let i = 0; i < chapters.length; i++) {
+      await NovelDB.chapters.create(novel.id, { title: chapters[i].title, summary: chapters[i].beat, order: i + 1 });
+    }
+    closeModal();
+    showToast(`梗概已建档：${chapters.length} 章。进第一章点「续写」即可成稿。`);
+    await renderHomePage();
+    router.go('workspace', { novelId: novel.id });
+  });
 }
 
 async function confirmDeleteNovel(id) {

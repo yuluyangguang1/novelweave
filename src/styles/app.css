@@ -706,3 +706,6 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 .onboard-step b { font-family: var(--serif); font-size: .98rem; display: block; margin-bottom: 2px; }
 .onboard-step p { margin: 0; font-size: .84rem; opacity: .68; line-height: 1.7; }
 .onboard-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+
+/* ═══ 上下文用量 / 机检提示条（自检与向导共用） ═══ */
+.usage-bar { font-family: var(--mono); font-size: .68rem; letter-spacing: .04em; color: var(--dim); background: rgb(var(--mid-base) / .04); border: 1px solid var(--border); border-radius: 2px; padding: 8px 10px; line-height: 1.7; }
