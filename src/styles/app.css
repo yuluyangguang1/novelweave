@@ -685,3 +685,24 @@ select.settings-select { cursor: pointer; }
 /* 摘要长度计：与 schema 的 maxLength 同口径，超了只变色不拦（作者说了算） */
 .sum-count { float: right; letter-spacing: .04em; color: var(--dim); }
 .sum-count.over { color: var(--warn); }
+
+/* ═══ 顶栏双品牌：yu.ai 徽记回官网首页，织文回介绍页 ═══ */
+.header-home { display: inline-flex; align-items: center; color: var(--dim); opacity: .8; transition: color .2s var(--ease), opacity .2s var(--ease); }
+.header-home:hover { color: var(--accent); opacity: 1; }
+.header-home svg { display: block; height: 15px; width: auto; }
+.header-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+a.header-title { color: var(--mid); text-decoration: none; }
+a.header-title:hover .logo-mark { color: var(--accent); }
+
+/* ═══ 首启引导覆盖层 ═══ */
+.onboard-mask { position: fixed; inset: 0; z-index: 900; background: rgb(var(--bg-base) / .86); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.onboard-card { max-width: 560px; width: 100%; border: 1px solid var(--border-strong); background: var(--bg); padding: 28px; }
+.onboard-kicker { font-family: var(--mono); font-size: .62rem; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); opacity: .7; }
+.onboard-title { font-family: var(--serif); font-size: 1.5rem; font-weight: 700; margin: 10px 0 4px; }
+.onboard-sub { font-size: .88rem; opacity: .65; line-height: 1.75; margin: 0 0 18px; }
+.onboard-steps { display: flex; flex-direction: column; }
+.onboard-step { display: flex; gap: 14px; padding: 12px 0; border-top: 1px solid var(--border); }
+.onboard-num { font-family: var(--serif); font-size: 1.2rem; font-weight: 700; color: var(--accent); min-width: 1.4em; line-height: 1.3; }
+.onboard-step b { font-family: var(--serif); font-size: .98rem; display: block; margin-bottom: 2px; }
+.onboard-step p { margin: 0; font-size: .84rem; opacity: .68; line-height: 1.7; }
+.onboard-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }

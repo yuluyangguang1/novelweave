@@ -66,10 +66,45 @@ async function initApp() {
 
   if (!NovelLLM.hasConfig()) {
     showToast('这本书可以先写；续写 / 润色要先配 API Key');
-    // 只从首页进来时才把人带去设置页：刷新自己那一章、或打开分享的深链接，
-    // 不该被弹走（旧做法会让 hash 写着章节、页面却是设置页）。
-    if (enteredOn === '' || enteredOn === '/' || enteredOn === '/home') router.go('settings');
   }
+
+  // 首启引导：只出现一次，且不再把人硬带去设置页 —— 没有 Key 也有一本
+  // 示例书和全部本地能力，先让人看到产品最值钱的部分再谈 Key。
+  try {
+    if (!localStorage.getItem('nw_onboarded')) {
+      localStorage.setItem('nw_onboarded', '1');
+      if (enteredOn === '' || enteredOn === '/' || enteredOn === '/home') showOnboarding();
+    }
+  } catch (_) {}
+}
+
+/** 首启引导：三步讲清织文是什么、没 Key 能玩什么、Key 从哪来。 */
+function showOnboarding() {
+  if (document.getElementById('onboard-mask')) return;
+  const mask = document.createElement('div');
+  mask.id = 'onboard-mask';
+  mask.className = 'onboard-mask';
+  mask.innerHTML = `
+    <div class="onboard-card">
+      <div class="onboard-kicker">yu.ai · novelweave</div>
+      <div class="onboard-title">先把设定织成网，再谈写作</div>
+      <p class="onboard-sub">织文不替你写书 —— 它把角色、伏笔、时间线落成可校验的状态，让长篇写到几十章也不自相矛盾。</p>
+      <div class="onboard-steps">
+        <div class="onboard-step"><span class="onboard-num">壹</span><div><b>载入示例书</b><p>没有 Key 也能玩：状态矩阵、伏笔表、连续性检查全部本地跑，还能看到机检如何抓出人设矛盾。</p></div></div>
+        <div class="onboard-step"><span class="onboard-num">贰</span><div><b>写作与自检</b><p>续写自动带上硬禁令与你自己的文风样例；生成后先过机器规则自检一轮，再交到你手里。</p></div></div>
+        <div class="onboard-step"><span class="onboard-num">叁</span><div><b>配一个 Key</b><p>只有续写 / 润色需要。yu.ai 收录了各家免费额度，智谱 GLM-Flash、火山豆包日更额度都是零成本。</p></div></div>
+      </div>
+      <div class="onboard-actions">
+        <button class="btn btn-primary" id="onboard-demo">先逛示例书</button>
+        <button class="btn btn-secondary" id="onboard-key">去配置 Key</button>
+        <button class="btn btn-secondary" id="onboard-skip">直接开始</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector('#onboard-demo').onclick = () => { close(); loadDemoBook(); };
+  mask.querySelector('#onboard-key').onclick = () => { close(); router.go('settings'); };
+  mask.querySelector('#onboard-skip').onclick = close;
 }
 
 async function onPageEntered(page, params) {

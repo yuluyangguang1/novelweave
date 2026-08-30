@@ -16,9 +16,13 @@
   const NW_LLM_CONFIG_KEY = 'nw_llm_config';
 
 const NW_LLM_PRESETS = {
-    openrouter: { label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'deepseek/deepseek-chat-v3.1', note: '多模型可切换' },
-    deepseek: { label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', note: '便宜，长上下文好' },
-    siliconflow: { label: 'SiliconFlow', baseURL: 'https://api.siliconflow.cn/v1', defaultModel: 'Qwen/Qwen2.5-72B-Instruct', note: '国内直连' },
+    // 2026-08 更新：对齐 yu.ai/key.html 收录的免费额度，免费优先
+    zhipu: { label: '智谱 GLM', baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4.7-flash', note: 'Flash 免费 · 国内直连' },
+    deepseek: { label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', note: 'V3.1 · 便宜 · 长上下文好' },
+    siliconflow: { label: '硅基流动', baseURL: 'https://api.siliconflow.cn/v1', defaultModel: 'Qwen/Qwen2.5-7B-Instruct', note: '免费档 16+ 模型 · 国内直连' },
+    moonshot: { label: 'Kimi 月之暗面', baseURL: 'https://api.moonshot.cn/v1', defaultModel: 'kimi-k2-0905-preview', note: '256K 超长上下文' },
+    openrouter: { label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'deepseek/deepseek-chat-v3.1', note: '一个 Key 多家模型 · 有 :free 款' },
+    gemini: { label: 'Google Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/', defaultModel: 'gemini-2.5-flash', note: '免费层 · 多模态 · 1M ctx' },
     openai: { label: 'OpenAI', baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o', note: '最稳，贵' },
     custom: { label: '自定义', baseURL: '', defaultModel: '', note: '任何兼容接口' },
   };
