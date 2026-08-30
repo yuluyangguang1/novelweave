@@ -88,6 +88,7 @@ const ACTIONS = {
   'open-novel':    (id) => router.go('workspace', { novelId: id }),
   'del-novel':     (id) => confirmDeleteNovel(id),
   'create-novel':  () => showCreateNovel(),
+  'load-demo':     () => loadDemoBook(),
   'open-chapter':  (id) => openChapterById(id),
   'del-chapter':   (id) => deleteCh(id),
   'add-chapter':   () => addChapter(),
@@ -204,10 +205,12 @@ async function renderHomePage() {
   // static HTML 骨架，所有动态值经 esc
   listEl.innerHTML = novels.map((n) => {
     const d = n.updated_at ? new Date(n.updated_at).toLocaleDateString('zh-CN') : '';
+    const isDemo = typeof NWDemo !== 'undefined' && NWDemo.isDemo(n.id);
     return `<div class="novel-card" data-action="open-novel" data-id="${attr(n.id)}">
       <div class="novel-card-actions">
         <button class="del-btn" data-action="del-novel" data-id="${attr(n.id)}" title="删除作品">${icon('trash')}</button>
       </div>
+      ${isDemo ? '<span class="novel-card-badge">示例</span>' : ''}
       <div class="novel-card-title">${esc(n.title)}</div>
       <div class="novel-card-meta">
         <span>${esc(n.genre)}</span>
@@ -217,6 +220,15 @@ async function renderHomePage() {
       </div>
     </div>`;
   }).join('');
+}
+
+async function loadDemoBook() {
+  try {
+    const id = await NWDemo.seed();
+    router.go('workspace', { novelId: id });
+  } catch (e) {
+    showToast('载入示例失败：' + e.message);
+  }
 }
 
 function showCreateNovel() {
@@ -312,7 +324,9 @@ async function renderSidebar() {
   document.getElementById('sidebar-nav').innerHTML = `
     <div style="padding:12px; border-bottom:1px solid var(--border);">
       <button class="sidebar-back" data-action="go-home">${icon('back')}<span>返回</span></button>
-      <div style="margin-top:6px; font-size:14px; color:var(--text-primary); font-family:Georgia,serif; font-weight:600;">${esc(novel.title)}</div>
+      <div style="margin-top:6px; display:flex; align-items:center; gap:8px; font-size:14px; color:var(--text-primary); font-family:Georgia,serif; font-weight:600;">
+        <svg class="logo-mark" style="color:var(--accent); width:16px; height:16px;" aria-hidden="true"><use href="#i-logo"/></svg>${esc(novel.title)}
+      </div>
       <div style="margin-top:2px; font-size:12px; color:var(--text-secondary);">${counts.chapters} 章 · ${formatWordCount(novel.word_count)}</div>
     </div>
     <div style="padding:8px;">

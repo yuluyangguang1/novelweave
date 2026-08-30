@@ -26,6 +26,7 @@ const PRECACHE = [
   'src/core/context.js',
   'src/core/project.js',
   'src/core/db.js',
+  'src/demo.js',
   'src/core/llm.js',
   'src/router.js',
   'src/app.js',

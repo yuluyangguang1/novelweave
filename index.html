@@ -54,6 +54,9 @@
   <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3.5V15"/><path d="M8 11l4 4 4-4"/><path d="M4.5 14v5.5a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V14"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 12h.01"/></symbol>
+  <!-- 品牌织纹：与 favicon 同一套经纬交织算法，3×3 粗化版以便小尺寸可辨。
+       实心填充，不走 .icon 的描线规则，用 .logo-mark 上色。 -->
+  <symbol id="i-logo" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M4.14 3h3.72v18h-3.72zM10.14 3h3.72v18h-3.72zM16.14 3h3.72v18h-3.72zM7.86 4.14h8.28v3.72h-8.28zM3 10.14h7.14v3.72h-7.14zM13.86 10.14h7.14v3.72h-7.14zM7.86 16.14h8.28v3.72h-8.28z"/></symbol>
 </svg>
 <div id="app">
 
@@ -62,14 +65,25 @@
 <!-- ═══════════════════════════════════════════ -->
 <div id="page-home" class="page active">
   <div class="header">
-    <div class="header-title">织文</div>
+    <div class="header-title"><svg class="logo-mark" aria-hidden="true"><use href="#i-logo"/></svg>织文</div>
     <button class="header-btn" data-action="go-settings" title="设置" aria-label="设置"><svg class="icon"><use href="#i-settings"/></svg></button>
   </div>
   <div class="home-body">
     <div class="home-empty" id="home-empty">
-      <div class="empty-icon">织</div>
-      <div class="empty-text">还没有作品</div>
-      <button class="btn btn-primary" data-action="create-novel">创建第一篇小说</button>
+      <svg class="logo-mark logo-hero" aria-hidden="true"><use href="#i-logo"/></svg>
+      <div class="empty-title">把设定织成一张不会自相矛盾的网</div>
+      <div class="empty-text">长篇写到几十章，前后矛盾不是没注意，是记不住。织文把角色、伏笔、时间线落成可校验的状态，写的时候只喂有预算的上下文。</div>
+      <ul class="empty-points">
+        <li>11 条机器规则查前后矛盾，带引证、可跳转</li>
+        <li>角色 / 世界 / 伏笔 / 状态矩阵，结构化不落空</li>
+        <li>纯前端 · 数据只在你浏览器里</li>
+      </ul>
+      <div class="empty-cta">
+        <button class="btn btn-primary" data-action="create-novel">创建第一篇小说</button>
+        <button class="btn btn-secondary" data-action="load-demo">载入示例书看看</button>
+      </div>
+      <p class="empty-key">没有 API Key？续写 / 润色才需要它；不配也能用状态管理与连续性检查。
+        <a href="https://yuai-r.cn/key.html" target="_blank" rel="noopener">yu.ai 收录了各家大模型的免费额度，注册即用</a></p>
     </div>
     <div id="novel-list" class="novel-list"></div>
     <button class="btn btn-float" data-action="create-novel" title="新建小说" aria-label="新建小说"><svg class="icon icon-lg"><use href="#i-plus"/></svg></button>
@@ -137,6 +151,7 @@
 <script src="src/core/context.js"></script>
 <script src="src/core/project.js"></script>
 <script src="src/core/db.js"></script>
+<script src="src/demo.js"></script>
 <script src="src/core/llm.js"></script>
 <script src="src/router.js"></script>
 <script src="src/app.js"></script>
