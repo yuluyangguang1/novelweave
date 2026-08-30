@@ -20,6 +20,10 @@
 
   /** 回忆语境标记：命中则把「死人出场」从 error 降到 info，而不是直接闭嘴。 */
   const RECALL_RE = /当年|那时|生前|记忆里|记忆中|恍惚|幻影|识海|梦中|梦里|回忆|依稀|仿佛又|像从前|脑海里/;
+
+  // R17 章末钩子：结尾窗口内的悬念标记（问号 / 突转 / 留白）。刻意保守——
+  // 查不到信号只说明"机器看不出钩子"，不是"没有钩子"，所以本规则恒为 info。
+  const HOOK_RE = /[？?]|突然|没想到|只见|下一瞬|下一刻|话音未落|猛地|凭空|异变|还没等|未完待续|欲知后事/;
   const SOFTEN_RE = /想起|仿佛|好像|像从前|似乎|宛如/;
 
   /** 动作邻近式：名字出现在这里还不够，得确实在「做事」才算出场。 */
@@ -642,6 +646,40 @@
               suggestion: '跑 `node scripts/nw-io.mjs recount` 重算全书统计。',
             }));
           }
+        }
+        return out;
+      },
+    },
+
+    'chapter-end-hook': {
+      code: 'R17',
+      defaultSeverity: 'info',
+      scope: 'chapter',
+      summary: '章节结尾没有钩子信号（本章未新埋伏笔，结尾 300 字也无悬念标记）。',
+      detail:
+        '机器只能查结构信号：本章是否新埋了 promise（setup 指向本章），或结尾 300 字内' +
+        '是否出现问号 / 突转 / 留白类标记。两者皆无时给 info。钩子的质量无法机器判定，' +
+        '本条恒为 info，永不计入退出码；带 flashback 等豁免标记的章节跳过。',
+      run(ctx) {
+        const out = [];
+        const items = ctx.promises?.items || [];
+        for (const ch of ctx.chapters) {
+          if (isExempt(ch)) continue;
+          const body = (ch.body || '').trim();
+          if (body.length < 800) continue; // 短章与空章不评钩子
+          const plants = items.some(
+            (i) => i.type === 'promise' && i.setup?.chapter === ch.id && i.status !== 'cancelled',
+          );
+          if (plants) continue; // 本章新埋了伏笔，本身就是钩子
+          if (HOOK_RE.test(body.slice(-300))) continue;
+          out.push(diag('chapter-end-hook', {
+            chapter: ch.id,
+            severity: 'info',
+            confidence: 0.5,
+            evidence: { basis: ['本章无新埋伏笔', '结尾 300 字无悬念标记'] },
+            message: `${ch.id} 结尾未检测到钩子信号。`,
+            suggestion: '网文一章的收尾最好留一个未决动作、问句或突转。若本章确为收束章，忽略即可。',
+          }));
         }
         return out;
       },

@@ -1436,6 +1436,7 @@ async function runAITool(toolId, target) {
   ]);
   let messages = [];
   APP.lastAIUsage = null;
+  let continueCtx = null; // 续写后自检用：机检要读到同一份装配 ctx
 
   if (toolId === 'continue') {
     // 走统一的 Story-Bible 装配：这样状态快照与未回收伏笔才会真的进 prompt
@@ -1445,7 +1446,8 @@ async function runAITool(toolId, target) {
       const live = storyCtx.chapters.find((c) => c.id === APP.chapter.id);
       // 编辑器里未保存的正文必须覆盖进去，否则 AI 看到的是上次自动保存的旧内容
       if (live) live.body = content;
-      built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: APP.chapter.id });
+      continueCtx = storyCtx;
+      built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: APP.chapter.id, style: true });
     } catch (e) {
       renderAIError(target, toolId, '组装上下文失败：' + e.message);
       return;
@@ -1503,6 +1505,37 @@ async function runAITool(toolId, target) {
     return;
   }
   APP.lastAIResult = full;
+
+  // 生成后自检：草稿先在内存里过一遍机器规则。有 error/warn 就把诊断转成
+  // 修订指令，让模型自修一轮，然后把「修订稿 + 机检发现」一起交给作者。
+  // 自检失败绝不吞掉草稿 —— 兜底永远是原始全文 + 一次连续性检查的建议。
+  if (toolId === 'continue' && continueCtx && !aborted) {
+    try {
+      const sc = NWSelfCheck.runSelfCheck(continueCtx, { chapterId: APP.chapter.id, draft: full });
+      if (sc.actionable.length) {
+        const head = document.createElement('div');
+        head.className = 'usage-bar';
+        head.style.cssText = 'margin-top:10px;';
+        head.textContent = `机检发现 ${sc.actionable.length} 处连续性问题，正在自修…`;
+        target.appendChild(head);
+        APP.aiAbort = new AbortController();
+        const revised = await NovelLLM.requestChat([
+          { role: 'system', content: '你是中文小说编辑，只消除连续性矛盾，不改其他内容。' },
+          { role: 'user', content: NWSelfCheck.buildRevisePrompt(full, sc.actionable) },
+        ], { maxTokens: spec.maxTokens, signal: APP.aiAbort.signal, temperature });
+        APP.aiAbort = null;
+        if (revised && revised.content && revised.content.trim()) {
+          APP.lastAIResult = revised.content;
+          renderAIResult(target, revised.content, { toolId, aborted: false, selfCheck: sc });
+          return;
+        }
+        // 自修没产出就交原始稿，但机检发现必须如实跟着走
+        renderAIResult(target, full, { toolId, aborted, selfCheck: sc });
+        return;
+      }
+    } catch (_) { /* 自检通路任何异常都不影响草稿交付 */ }
+  }
+
   renderAIResult(target, full, { toolId, aborted });
 }
 
@@ -1529,6 +1562,18 @@ function renderAIError(el, toolId, message) {
 function renderAIResult(el, text, meta = {}) {
   el.textContent = text;
   renderUsageBar(el, APP.lastAIUsage);
+
+  // 自检报告必须跟着稿件走：修过什么、还剩什么问题，作者有权一眼看到
+  if (meta.selfCheck) {
+    const sc = meta.selfCheck;
+    const note = document.createElement('div');
+    note.className = 'usage-bar';
+    note.style.cssText = 'margin-top:8px;white-space:pre-wrap;';
+    note.textContent = '[机检] 发现 ' + sc.actionable.length + ' 处连续性问题，已让模型自修一轮'
+      + '（建议再跑一次「一致性检查」复核）：\n'
+      + sc.actionable.map((d) => `· [${d.rule}] ${d.message}`).join('\n');
+    el.appendChild(note);
+  }
 
   const bar = document.createElement('div');
   bar.className = 'ai-result-actions';

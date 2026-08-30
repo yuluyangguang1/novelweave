@@ -64,13 +64,16 @@ const NW_LLM_PRESETS = {
 
   /**
    * 续写上下文。拼装本身在 src/core/context.js —— 那是 Web 与 CLI 共用的唯一实现。
-   * 之前这里自己拼了 5 节，比 CLI 少注入「分章状态快照」与「未结线索」，
+   * 之前这里自己拼了 5 节，比 CLI 少注入了「状态快照」与「未结线索」，
    * 于是作者录进状态矩阵和伏笔表的事实在浏览器里根本没进 prompt。
    *
-   * @param opts { ctx: Story-Bible 形状, chapterId: 'ch-003'|'next', budget, extraInstructions }
+   * @param opts { ctx, chapterId: 'ch-003'|'next', budget, extraInstructions, style?: boolean }
+   *   style: 开启「风格样例」节 —— 从作者已定稿章节取节选注入，模仿作者自己的笔法
    */
   function buildContinueContext(opts = {}) {
-    const built = NWContext.buildSections(opts.ctx, { chapterId: opts.chapterId, budget: opts.budget });
+    const built = NWContext.buildSections(opts.ctx, {
+      chapterId: opts.chapterId, budget: opts.budget, style: opts.style,
+    });
     const rules = WRITING_RULES(opts.ctx?.book?.genre)
       + (opts.extraInstructions ? `\n- ${opts.extraInstructions}` : '');
     return { prompt: NWContext.renderPrompt(built, rules), usage: built.usage, sections: built.sections };

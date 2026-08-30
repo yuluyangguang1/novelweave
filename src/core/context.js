@@ -22,6 +22,7 @@
     loreBytes: 4096,
     prevTailChars: 1200,
     currentTailChars: 1500,
+    styleBytes: 1600,      // 风格样例的软预算；opts.style 开启后才参与
   };
 
   const STATUS_ZH = { deceased: '已死亡', missing: '下落不明', unknown: '状态未知' };
@@ -101,6 +102,58 @@
     }).join('\n');
   }
 
+  // ═══════════════ 硬禁令：违反即为连续性事故的事实，生成前钉在最前 ═══════════════
+  // 与「出场角色」「未结线索」不同，这一节不是给模型参考的资料，而是约束。
+  // 所以它排在第一节，预算再紧也先保它 —— 事后机检能抓到越界，但那一轮改写的
+  // 成本比一开始就别说错要高得多。
+
+  function hardBanBlock(ctx, chapters, targetN) {
+    const lines = [];
+    const dead = (ctx.characters || []).filter((c) => c.status === 'deceased' && c.enabled !== false);
+    if (dead.length) {
+      lines.push('- 已死亡角色，本章不得让其行动或开口，只可作为回忆/提及：'
+        + dead.map((c) => `${c.name}${c['died-in'] ? `（卒于 ${c['died-in']}）` : ''}`).join('、'));
+    }
+    const items = ctx.promises?.items || [];
+    const due = items.filter((i) => {
+      if (i.type !== 'promise' || i.status !== 'planted' || !i.payoff?.due) return false;
+      const dueCh = chapters.find((c) => c.id === i.payoff.due);
+      return dueCh && targetN != null && (dueCh.number ?? dueCh.order) <= targetN;
+    });
+    if (due.length) {
+      lines.push('- 以下伏笔已到回收期限，本章应收束或明确写出推迟理由：'
+        + due.map((i) => `${i.title}（埋于 ${i.setup?.chapter || '?'}，期限 ${i.payoff.due}）`).join('、'));
+    }
+    return lines.length ? lines.join('\n') : null;
+  }
+
+  // ═══════════════ 风格样例：模仿作者自己的笔法，而不是模板文 ═══════════════
+  // 从目标章之前、正文足量的最近章节取中段节选 —— 中段是叙述稳定区，
+  // 开头常带承接、结尾常带钩子，都不代表作者的日常笔触。
+  // 只在 opts.style 开启时参与；预算再紧也只裁它自己，不动其他节。
+
+  const STYLE_MIN_BODY = 600;
+  const STYLE_EXCERPT = 400;
+
+  function pickStyleExemplars(chapters, current) {
+    const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
+    const pool = chapters.slice(0, Math.max(0, upto))
+      .filter((c) => (c.body || '').trim().length >= STYLE_MIN_BODY);
+    return pool.slice(-2).map((c) => {
+      const body = c.body.trim();
+      const start = Math.floor(body.length * 0.3);
+      let excerpt = body.slice(start, start + STYLE_EXCERPT);
+      if (start + STYLE_EXCERPT < body.length) excerpt += '…';
+      return { id: c.id, label: Bible.chapterLabel(c), excerpt };
+    });
+  }
+
+  function styleBlock(exemplars) {
+    if (!exemplars.length) return null;
+    return '【模仿以下段落的句长、叙述节奏与用词密度——只学笔法，不得复述其中情节】\n'
+      + exemplars.map((e) => `（${e.label}）${e.excerpt}`).join('\n———\n');
+  }
+
   /**
    * @param ctx  Story-Bible 形状（NWStory.buildCtx 或 CLI loadBook 的产物）
    * @param opts { chapterId: 'ch-003' | 'next', budget }
@@ -123,6 +176,16 @@
 
     const hasBody = !!(current?.body || '').trim();
     const tail = (text, n) => '…' + String(text).slice(-n);
+
+    // 硬禁令的"到期"以目标章为准：续写下一章时，期限 ≤ 最后一章即视为已到期
+    const targetN = current
+      ? (current.number ?? current.order)
+      : (chapters.length ? (chapters[chapters.length - 1].number ?? chapters[chapters.length - 1].order) : null);
+    const banText = hardBanBlock(ctx, chapters, targetN);
+
+    const useStyle = !!opts.style;
+    const exemplars = useStyle ? pickStyleExemplars(chapters, current) : [];
+    const styleText = styleBlock(exemplars);
 
     const core = [
       { name: '书目', text: [
@@ -148,7 +211,14 @@
       : [prev ? { name: '上章尾部', text: `【上一章《${prev.title}》结尾】\n${tail(prev.body, b.prevTailChars)}` } : null,
          { name: '本章', text: `本章《${current?.title || opts.nextTitle || '下一章'}》尚未开始，请接着上一章写。` }];
 
-    const ordered = [...core, ...tails.filter(Boolean)];
+    // 硬禁令排第一节：它是约束不是资料，预算再紧也最后才轮到它被裁。
+    // 风格样例是软上下文，排最末 —— 预算一紧第一个被裁的应该是它。
+    const ordered = [
+      ...(banText ? [{ name: '硬禁令', text: banText }] : []),
+      ...core,
+      ...tails.filter(Boolean),
+      ...(styleText ? [{ name: '风格样例', text: styleText }] : []),
+    ];
 
     // 按字节预算裁切，且如实记录被裁掉的节
     const kept = [], dropped = [];
@@ -174,6 +244,7 @@
           present: kept.some((k) => k.name === s.name),
           bytes: T.bytesOf(`## ${s.name}\n${s.text}`),
           ...(s.name === '相关世界设定' ? { included: lore.entries.map((e) => e.name) } : {}),
+          ...(s.name === '风格样例' ? { included: exemplars.map((e) => e.label) } : {}),
         })),
         loreIncluded: lore.entries.map((e) => e.name),
         loreDropped: lore.dropped,
@@ -196,5 +267,5 @@
     return sections.map((s) => s.block).join('\n\n') + (extra ? `\n\n${extra}` : '');
   }
 
-  return { buildSections, renderDocument, renderPrompt, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters };
+  return { buildSections, renderDocument, renderPrompt, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters, hardBanBlock, pickStyleExemplars, styleBlock };
 });

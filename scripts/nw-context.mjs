@@ -4,7 +4,7 @@
  *
  * 用法：
  *   node scripts/nw-context.mjs [bookDir] --chapter ch-013 [--budget 12288] [--write] [--json]
- *   node scripts/nw-context.mjs [bookDir] --chapter next [--json]
+ *   node scripts/nw-context.mjs [bookDir] --chapter next [--json] [--style]
  *   node scripts/nw-context.mjs [bookDir] --lore --text "要扫描的正文"
  *
  * 拼装本身在 src/core/context.js —— 与浏览器「续写」共用同一份实现。
@@ -48,7 +48,8 @@ if (chapterId !== 'next' && !ctx.chapters.some((c) => c.id === chapterId)) {
   process.exit(EXIT.USAGE);
 }
 
-const built = NWContext.buildSections(ctx, { chapterId, budget: { contextBytes: budgetBytes } });
+// --style：注入「风格样例」节（与浏览器续写的 style:true 同一条通路）
+const built = NWContext.buildSections(ctx, { chapterId, budget: { contextBytes: budgetBytes }, style: !!flags.style });
 const document = NWContext.renderDocument(built);
 const out = { bookDir, chapter: built.current?.id || null, prev: built.prev?.id || null, ...built.usage, document };
 
