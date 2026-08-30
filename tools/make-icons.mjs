@@ -59,11 +59,13 @@ function encodePng(size, rgba) {
 }
 
 // ── 图案 ──
+// 配色取站点设计令牌。原先的 #edff45 是界面改版时被淘汰的荧光黄，
+// 图标是唯一漏掉的地方 —— 浏览器标签里一直和整页对不上。
 const PALETTE = {
-  bg: [0x17, 0x0d, 0x02],        // 墨棕
-  threadA: [0xed, 0xff, 0x45],   // 荧光黄
-  threadB: [0xf5, 0xf5, 0xf5],   // 暖白
-  shadow: [0x2a, 0x1b, 0x08],
+  bg: [0x15, 0x0e, 0x07],        // 纸墨黑
+  threadA: [0xf2, 0x63, 0x4e],   // 朱砂（经线）
+  threadB: [0xf3, 0xed, 0xe2],   // 宣纸白（纬线）
+  shadow: [0x2a, 0x1c, 0x12],    // 经纬叠压处：比底略亮的墨
 };
 
 function px(buf, size, x, y, [r, g, b], a = 255) {
