@@ -49,6 +49,7 @@
         "language": { "type": "string" },
         "description": { "type": "string" },
         "audience": { "type": "string" },
+        "format": { "type": "string", "enum": ["long", "short"], "default": "long", "description": "织物规格：long 长篇连载（默认）；short 短篇（几千至三万字），上下文与规则阈值自动换挡" },
         "target": { "type": "object", "additionalProperties": false, "properties": { "chapters": { "type": "integer" }, "wordsPerChapter": { "type": "integer" } } },
         "voice": { "type": "object", "additionalProperties": false, "properties": { "person": { "type": "string" }, "tense": { "type": "string" }, "povDefault": { "type": "string", "nullable": true }, "notes": { "type": "string" } } },
         "created": { "type": "string", "nullable": true },

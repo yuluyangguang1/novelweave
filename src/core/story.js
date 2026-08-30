@@ -297,7 +297,9 @@
     }
     return {
       book: { id: rows.novel.id, slug: T.slugify(rows.novel.title), title: rows.novel.title,
-        genre: rows.novel.genre, description: rows.novel.description, _derived: { words: rows.novel.word_count, chapters: rows.novel.chapter_count } },
+        genre: rows.novel.genre, description: rows.novel.description,
+        format: rows.novel.format === 'short' ? 'short' : 'long',
+        _derived: { words: rows.novel.word_count, chapters: rows.novel.chapter_count } },
       chapters, characters,
       world: (rows.world || []).map(toWorld),
       promises: { schemaVersion: Bible.SCHEMA_VERSION, items: (rows.promises || []).map(toPromise) },

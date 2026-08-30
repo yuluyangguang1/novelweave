@@ -68,7 +68,7 @@
     ].join('\n');
   }
 
-  const RECAP_ITEMS = 12;
+  const RECAP_ITEMS = 12;   // 长篇的滚动窗口；短篇（format:short）不封顶，见 recapBlock
   const RECAP_CHARS = 80;
 
   /** 摘要若是 buildSummarizePrompt 的四行结构，只取「核心事件」：位置/伤势/持有物
@@ -80,12 +80,14 @@
     return text.length > RECAP_CHARS ? text.slice(0, RECAP_CHARS) + '…' : text;
   }
 
-  /** 前情摘要：目标章之前、最近 12 章的 summary。更早的章由摘要本身承载。 */
-  function recapBlock(chapters, current) {
+  /** 前情摘要：目标章之前的 summary。长篇只看最近 12 章（更早的靠"卷摘要"规划）；
+   *  短篇体量小，全部列出 —— 短篇模式连"回读"这个动作都省了。 */
+  function recapBlock(chapters, current, cap = RECAP_ITEMS) {
     const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
     const withSummary = chapters.slice(0, Math.max(0, upto)).filter((c) => (c.summary || '').trim());
     if (!withSummary.length) return '（各章摘要尚未填写 —— 长篇里它替代"回读全文"）';
-    const shown = withSummary.slice(-RECAP_ITEMS);
+    const limit = cap === Infinity ? withSummary.length : Math.min(cap, withSummary.length);
+    const shown = withSummary.slice(-limit);
     const lines = shown.map((c) => `- ${Bible.chapterLabel(c)}：${recapLine(c.summary)}`);
     const folded = withSummary.length - shown.length;
     if (folded > 0) lines.unshift(`（更早 ${folded} 章的摘要未列出，需要时回读原章）`);
@@ -173,6 +175,8 @@
     const chars = activeCharacters(ctx, current, prev);
     const scanText = [prev?.body, current?.body].filter(Boolean).join('\n');
     const lore = Story.loreTrigger(scanText, ctx.world, { loreBytes: b.loreBytes });
+    // 短篇换挡：体量小（几千至三万字），前情摘要全量列出，不做滚动窗口
+    const isShort = ctx.book?.format === 'short';
 
     const hasBody = !!(current?.body || '').trim();
     const tail = (text, n) => '…' + String(text).slice(-n);
@@ -198,7 +202,7 @@
       { name: '出场角色', text: characterBlock(chars) },
       { name: '分章状态快照', text: stateBlock(ctx.states, prev, ctx.characters) },
       { name: '未结线索', text: promiseBlock(ctx.promises) },
-      { name: '前情摘要', text: recapBlock(chapters, current) },
+      { name: '前情摘要', text: recapBlock(chapters, current, isShort ? Infinity : RECAP_ITEMS) },
       { name: '相关世界设定', text: lore.entries.length
         ? lore.entries.map((e) => `- ${e.name}：${e.content}`).join('\n') : '（未触发任何世界条目）' },
     ];

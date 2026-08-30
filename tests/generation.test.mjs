@@ -165,3 +165,61 @@ test('buildRevisePrompt：诊断要变成带编号的修订指令，且携带原
   assert.match(prompt, /最小改动/);
   assert.match(prompt, /林烟火走进大堂/, '草稿原文必须整段携带');
 });
+
+// ═══════════════ 短篇模式（format: short） ═══════════════
+
+test('短篇：buildCtx 把 format 带进 ctx.book，默认长篇', () => {
+  const short = NWStory.buildCtx(rows({ novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: 'short' } }));
+  const long = NWStory.buildCtx(rows());
+  assert.equal(short.book.format, 'short');
+  assert.equal(long.book.format, 'long');
+});
+
+test('短篇：前情摘要不封顶 —— 14 章全列出，长篇则滚动收起', () => {
+  const many = [];
+  for (let i = 1; i <= 14; i++) {
+    many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `第${i}章`, content: '正文。', summary: `核心事件：第${i}章的事` });
+  }
+  many.push({ id: 'ch-015', order: 15, title: '现在', content: '' });
+
+  const shortCtx = NWStory.buildCtx(rows({
+    novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: 'short' },
+    chapters: many,
+  }));
+  const longCtx = NWStory.buildCtx(rows({ chapters: many }));
+
+  const shortRecap = NWContext.buildSections(shortCtx, { chapterId: 'ch-015' })
+    .sections.find((s) => s.name === '前情摘要').text;
+  const longRecap = NWContext.buildSections(longCtx, { chapterId: 'ch-015' })
+    .sections.find((s) => s.name === '前情摘要').text;
+
+  assert.ok(!shortRecap.includes('更早'), '短篇摘要全量列出，没有"更早 N 章"');
+  assert.ok(shortRecap.includes('第1章的事'), '第 1 章也在');
+  assert.match(longRecap, /更早 2 章/, '长篇 12 章窗口，收起 2 章');
+});
+
+test('R17 短篇阈值：400 字章节长篇不评、短篇评', () => {
+  const body = '平淡叙事。'.repeat(66) + '灯灭了。'; // ~330 字 + 钩子词被去掉
+  const noHook = (fmt) => {
+    const r = rows({
+      novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: fmt },
+      chapters: [{ id: 'ch-001', order: 1, title: '一', content: body }],
+      promises: [],
+    });
+    return NWRules.runRules(NWStory.buildCtx(r), { only: ['chapter-end-hook'] });
+  };
+  assert.ok(!noHook('long').some((d) => d.rule === 'chapter-end-hook'), '长篇 800 字门槛，不评');
+  assert.ok(noHook('short').some((d) => d.rule === 'chapter-end-hook' && d.severity === 'info'), '短篇 300 字门槛，评出 info');
+});
+
+test('R17 短篇：提示语知道自己是短篇', () => {
+  const body = '平淡叙事。'.repeat(66);
+  const r = rows({
+    novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: 'short' },
+    chapters: [{ id: 'ch-001', order: 1, title: '一', content: body }],
+    promises: [],
+  });
+  const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['chapter-end-hook'] });
+  const hit = diags.find((d) => d.rule === 'chapter-end-hook');
+  assert.ok(hit.suggestion.includes('屏末'), '短篇的钩子话术应该是"屏末"');
+});

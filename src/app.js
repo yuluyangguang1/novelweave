@@ -271,6 +271,11 @@ function showCreateNovel() {
   showModal('创建新作品', `
     <div class="settings-field"><label class="settings-label">作品名称</label>
       <input class="settings-input" id="inp-novel-title" placeholder="输入小说名字" maxlength="50"></div>
+    <div class="settings-field"><label class="settings-label">织物规格</label>
+      <select class="settings-select" id="inp-novel-format">
+        <option value="long">长篇连载 —— 卷 / 时间线 / 状态矩阵 / 滚动前情</option>
+        <option value="short">短篇 —— 几千至三万字，上下文全量注入，机检更密</option>
+      </select></div>
     <div class="settings-field"><label class="settings-label">类型</label>
       <select class="settings-select" id="inp-novel-genre">
         ${genres.map((g) => `<option value="${attr(g)}">${esc(g)}</option>`).join('')}
@@ -284,6 +289,7 @@ function showCreateNovel() {
       title,
       genre: val('inp-novel-genre') || '玄幻',
       description: val('inp-novel-desc'),
+      format: val('inp-novel-format'),
     });
     closeModal();
     showToast(`「${title}」已创建`);
@@ -365,7 +371,11 @@ async function renderSidebar() {
       <div style="margin-top:2px; font-size:12px; color:var(--text-secondary);">${counts.chapters} 章 · ${formatWordCount(novel.word_count)}</div>
     </div>
     <div style="padding:8px;">
-      ${TABS.map((t) => `
+      ${(novel.format === 'short'
+        ? // 短篇收敛：时间线/状态矩阵是长篇的重型机械，短篇面板里折叠掉（数据仍在，导出照带）
+          TABS.filter((t) => t.id !== 'timeline' && t.id !== 'states')
+        : TABS
+      ).map((t) => `
         <div class="sidebar-nav-item ${APP.activeTab === t.id ? 'active' : ''}" data-action="switch-tab" data-tab="${attr(t.id)}">
           <span class="sidebar-nav-icon">${icon(t.icon)}</span><span class="sidebar-nav-label">${esc(t.label)}</span>
           ${counts[t.id] != null ? `<span class="sidebar-nav-count">${counts[t.id]}</span>` : ''}

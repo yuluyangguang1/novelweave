@@ -663,10 +663,13 @@
       run(ctx) {
         const out = [];
         const items = ctx.promises?.items || [];
+        // 短篇换挡：短篇一章往往只有几百字（一章≈一屏到三屏），800 字门槛会漏掉大半
+        const isShort = ctx.book?.format === 'short';
+        const minBody = isShort ? 300 : 800;
         for (const ch of ctx.chapters) {
           if (isExempt(ch)) continue;
           const body = (ch.body || '').trim();
-          if (body.length < 800) continue; // 短章与空章不评钩子
+          if (body.length < minBody) continue; // 短章与空章不评钩子
           const plants = items.some(
             (i) => i.type === 'promise' && i.setup?.chapter === ch.id && i.status !== 'cancelled',
           );
@@ -678,7 +681,9 @@
             confidence: 0.5,
             evidence: { basis: ['本章无新埋伏笔', '结尾 300 字无悬念标记'] },
             message: `${ch.id} 结尾未检测到钩子信号。`,
-            suggestion: '网文一章的收尾最好留一个未决动作、问句或突转。若本章确为收束章，忽略即可。',
+            suggestion: isShort
+              ? '短篇的每个收束点都是屏末，最好留一个反转或未决动作。若本章确为收束章，忽略即可。'
+              : '网文一章的收尾最好留一个未决动作、问句或突转。若本章确为收束章，忽略即可。',
           }));
         }
         return out;
