@@ -56,15 +56,15 @@ test('指定了书里不存在的章节要说清楚，而不是在 current.id �
     /章节「ch_不存在」不在本书中/);
 });
 
-test('超过 12 章时如实报出没列出的章数，而不是静默丢掉更早的前情', () => {
+test('超出 12 章的前情降级为章名行，而不是静默丢掉', () => {
   const many = Array.from({ length: 16 }, (_, i) => ({
     id: 'ch_' + i, order: i + 1, title: '第' + (i + 1) + '章', content: '正文', summary: `事件${i + 1}`,
   }));
   many[15].content = '';
   const { text } = recapOf('ch_15', { chapters: many });
-  assert.match(text, /更早 3 章的摘要未列出/);
+  assert.match(text, /更早 3 章：第1章《第1章》/, '窗口外的章降级为章名锚点，不再未列出');
   assert.ok(text.includes('- 第15章《第15章》：事件15'), '最近一章必须在');
-  assert.ok(!text.includes('- 第3章《第3章》：事件3'), '窗口外更早的章不该列出');
+  assert.ok(!text.includes('：事件3'), '章名层不带细摘要');
   assert.ok(text.includes('- 第4章《第4章》：事件4'), '窗口应含最近 12 章');
 });
 

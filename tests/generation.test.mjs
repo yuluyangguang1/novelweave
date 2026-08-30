@@ -175,7 +175,7 @@ test('短篇：buildCtx 把 format 带进 ctx.book，默认长篇', () => {
   assert.equal(long.book.format, 'long');
 });
 
-test('短篇：前情摘要不封顶 —— 14 章全列出，长篇则滚动收起', () => {
+test('短篇：前情摘要不封顶 —— 14 章全列出，长篇三级衰减不丢锚点', () => {
   const many = [];
   for (let i = 1; i <= 14; i++) {
     many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `第${i}章`, content: '正文。', summary: `核心事件：第${i}章的事` });
@@ -195,7 +195,25 @@ test('短篇：前情摘要不封顶 —— 14 章全列出，长篇则滚动收
 
   assert.ok(!shortRecap.includes('更早'), '短篇摘要全量列出，没有"更早 N 章"');
   assert.ok(shortRecap.includes('第1章的事'), '第 1 章也在');
-  assert.match(longRecap, /更早 2 章/, '长篇 12 章窗口，收起 2 章');
+  assert.match(longRecap, /更早 2 章：/, '长篇超出窗口的章节降级为章名行，不再"未列出"');
+  assert.match(longRecap, /第1章《第1章》/, '章名锚点必须可见');
+});
+
+test('前情摘要三级衰减：12 细 / 24 章名 / 更早只报数量', () => {
+  const many = [];
+  for (let i = 1; i <= 40; i++) {
+    many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `事件${i}`, content: '正文。', summary: `核心事件：第${i}件事` });
+  }
+  many.push({ id: 'ch-041', order: 41, title: '现在', content: '' });
+  const ctx = NWStory.buildCtx(rows({ chapters: many }));
+  const recap = NWContext.buildSections(ctx, { chapterId: 'ch-041' })
+    .sections.find((s) => s.name === '前情摘要').text;
+
+  const fullCount = (recap.match(/- 第\d+章《事件\d+》：/g) || []).length;
+  assert.equal(fullCount, 12, '细摘要恰好 12 行');
+  assert.ok(recap.includes('更早 24 章：第5章《事件5》'), '中间层 24 章名一行列出（第5章起）');
+  assert.ok(recap.includes('第28章《事件28》）'), '中间层到第 28 章止');
+  assert.ok(recap.includes('更早 4 章，需要时回读原章'), '最老 4 章只报数量');
 });
 
 test('R17 短篇阈值：400 字章节长篇不评、短篇评', () => {

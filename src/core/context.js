@@ -68,7 +68,8 @@
     ].join('\n');
   }
 
-  const RECAP_ITEMS = 12;   // 长篇的滚动窗口；短篇（format:short）不封顶，见 recapBlock
+  const RECAP_ITEMS = 12;   // 长篇的细摘要窗口；短篇（format:short）不封顶，见 recapBlock
+  const RECAP_MID = 24;     // 细摘要之外再往前的"章名层"数量
   const RECAP_CHARS = 80;
 
   /** 摘要若是 buildSummarizePrompt 的四行结构，只取「核心事件」：位置/伤势/持有物
@@ -80,17 +81,30 @@
     return text.length > RECAP_CHARS ? text.slice(0, RECAP_CHARS) + '…' : text;
   }
 
-  /** 前情摘要：目标章之前的 summary。长篇只看最近 12 章（更早的靠"卷摘要"规划）；
-   *  短篇体量小，全部列出 —— 短篇模式连"回读"这个动作都省了。 */
+  /** 前情摘要：目标章之前的 summary，长篇做三级衰减，不再硬切"更早 N 章未列出"：
+   *  - 最近 12 章：核心事件行（80 字）
+   *  - 再往前 24 章：章名一行列出（网文章名通常自带事件，成本极低）
+   *  - 更早：只报数量（章节名列表超长时也折叠）
+   *  短篇（cap=Infinity）体量小，全量细摘要 —— 连"回读"都省了。
+   *  语义检索上线前的过渡方案：把"完全召回不了"变成"至少锚点可见"。 */
   function recapBlock(chapters, current, cap = RECAP_ITEMS) {
     const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
     const withSummary = chapters.slice(0, Math.max(0, upto)).filter((c) => (c.summary || '').trim());
     if (!withSummary.length) return '（各章摘要尚未填写 —— 长篇里它替代"回读全文"）';
-    const limit = cap === Infinity ? withSummary.length : Math.min(cap, withSummary.length);
-    const shown = withSummary.slice(-limit);
-    const lines = shown.map((c) => `- ${Bible.chapterLabel(c)}：${recapLine(c.summary)}`);
-    const folded = withSummary.length - shown.length;
-    if (folded > 0) lines.unshift(`（更早 ${folded} 章的摘要未列出，需要时回读原章）`);
+    const fullLine = (c) => `- ${Bible.chapterLabel(c)}：${recapLine(c.summary)}`;
+    if (cap === Infinity) return withSummary.map(fullLine).join('\n');
+
+    const recent = withSummary.slice(-cap);
+    const rest = withSummary.slice(0, withSummary.length - recent.length);
+    const lines = recent.map(fullLine);
+    const mid = rest.slice(-RECAP_MID);
+    if (mid.length) {
+      let titles = mid.map((c) => Bible.chapterLabel(c)).join('、');
+      if (titles.length > 420) titles = titles.slice(0, 420) + '…';
+      lines.unshift(`（更早 ${mid.length} 章：${titles}）`);
+    }
+    const older = rest.length - mid.length;
+    if (older > 0) lines.unshift(`（更早 ${older} 章，需要时回读原章）`);
     return lines.join('\n');
   }
 

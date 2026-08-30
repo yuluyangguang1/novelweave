@@ -20,16 +20,23 @@
   'use strict';
 
   const DEMO_ID = 'novel_demo';
+  const DEMO_VERSION = 2; // 内容升级时 +1：旧版本示例书会被整本重置（级联删除后重种）
   const isDemo = (id) => id === DEMO_ID;
 
   async function seed() {
     const DB = root.NovelDB;
-    if (await DB.novels.get(DEMO_ID)) return DEMO_ID;
+    const existing = await DB.novels.get(DEMO_ID);
+    if (existing) {
+      // 老版本示例书（没有版本号或版本更旧）自动重灌 —— 否则内容升级永远到不了老用户手里
+      if (existing.demo_version === DEMO_VERSION) return DEMO_ID;
+      await DB.novels.delete(DEMO_ID);
+    }
     const now = Date.now();
 
     await DB.putRow('novels', {
       id: DEMO_ID, title: '烟火纪（示例）', genre: '仙侠',
       description: '少年带着半枚铜印下山，查一场烧到师门的夜火。',
+      format: 'long', demo_version: DEMO_VERSION,
       word_count: 0, chapter_count: 0, created_at: now, updated_at: now,
     });
 
