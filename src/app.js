@@ -300,7 +300,7 @@ async function renderHomeStats() {
     host.innerHTML = `<span>今日 <b>${todayWords}</b> 字</span>`
       + `<span>连续更文 <b>${streak}</b> 天</span>`
       + `<span>共 <b>${totalChapters}</b> 章 · ${formatWordCount(totalWords)}</span>`;
-    host.hidden = totalWords === 0 && totalChapters === 0;
+    host.classList.toggle('is-empty', totalWords === 0 && totalChapters === 0);
     return { todayWords, streak };
   } catch (_) { return { todayWords: 0, streak: 0 }; }
 }

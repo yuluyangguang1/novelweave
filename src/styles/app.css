@@ -735,6 +735,7 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 .logo-img { width: 22px; height: 22px; display: block; }
 
 /* ═══ 首页每日统计条 ═══ */
+.home-stats[hidden], .home-stats.is-empty { display: none; }
 .home-stats { display: flex; flex-wrap: wrap; gap: 18px; padding: 0 4px 14px; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; color: var(--dim); }
 .home-stats b { color: var(--accent); font-weight: 700; }
 
@@ -744,7 +745,11 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 .home-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* 书卡两栏网格(评审 #一.2) */
-.novel-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+.novel-list { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+/* 卡片化:与列表 row 线体系告别,避免两栏+行线交错出的割裂感 */
+.novel-list .novel-card { border: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.novel-list .novel-card:hover { border-color: var(--border-strong); background: var(--hover); }
+.novel-list .novel-card:first-child { border-top: 1px solid var(--border); }
 @media (max-width: 720px) { .novel-list { grid-template-columns: 1fr; } }
 
 /* 升级提示从按钮改为一枚可点标签(评审 #一.2) */
