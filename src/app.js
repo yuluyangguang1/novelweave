@@ -683,7 +683,7 @@ async function renderSidebar() {
     <div style="padding:12px; border-bottom:1px solid var(--border);">
       <button class="sidebar-back" data-action="go-home">${icon('back')}<span>返回</span></button>
       <div style="margin-top:6px; display:flex; align-items:center; gap:8px; font-size:14px; color:var(--text-primary); font-family:Georgia,serif; font-weight:600;">
-        <svg class="logo-mark" style="color:var(--accent); width:16px; height:16px;" aria-hidden="true"><use href="#i-logo"/></svg>${esc(novel.title)}
+        <img src="icons/icon-192.png" style="width:16px;height:16px;display:block" alt="">${esc(novel.title)}
       </div>
       <div style="margin-top:2px; font-size:12px; color:var(--text-secondary);">${counts.chapters} 章 · ${formatWordCount(novel.word_count)}</div>
     </div>

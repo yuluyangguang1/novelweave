@@ -730,3 +730,6 @@ a.header-title:hover .logo-mark { color: var(--accent); }
   max-height: 46px; overflow: hidden;
 }
 .novel-card-cover.short { border-left-color: var(--warn); }
+
+/* ═══ 品牌统一:顶栏/侧栏用织纹图标本体(与介绍页 hero 同一资产) ═══ */
+.logo-img { width: 22px; height: 22px; display: block; }
