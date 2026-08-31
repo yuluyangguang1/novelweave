@@ -171,6 +171,8 @@ async function listNovels() {
   });
   return sorted.map((n) => ({
     id: n.id, title: n.title, genre: n.genre, description: n.description,
+    // format / demo_version 首页书封与示例书升级提示要用，投影漏掉会让那两处 UI 静默失效
+    format: n.format === 'short' ? 'short' : 'long', demo_version: n.demo_version,
     word_count: n.word_count || 0, chapter_count: n.chapter_count || 0, updated_at: n.updated_at,
   }));
 }

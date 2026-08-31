@@ -183,9 +183,10 @@ README 只写已经能用的一切；这个文件写还没做的。
 - **ZCode**：本机 `~/.zcode` 下没有用户级 skills 目录，技能只出现在
   `~/.zcode/cli/plugins/cache/<publisher>/<plugin>/<version>/skills/<skill>/` 这种插件路径里。
   伪造 publisher/version 目录属于猜测，所以安装脚本对它**只打印手动指引、不写文件**。
-- 还有四条机器规则未实现（跨章瞬移、关系矛盾、物品失而复得、称谓越界），
+- 还有三条机器规则未实现（跨章瞬移、关系矛盾、称谓越界），
   以及时间线单调性检查因锚点密度不足而暂缓 —— 清单见
   `skills/novelweave-continuity/references/rules.md` 末尾「尚未实现的机器规则」。
+  物品失而复得已由 R18 覆盖，但它只在状态矩阵记了的前提下生效，且恒为 info 不进退出码。
   别把这些当成"检查过了没问题"。
 - 语义级矛盾（动机漂移、对白口吻跳人）只能靠 LLM，标 `source:"llm"` 且不进 CI 门禁。
 - 世界书的 `recursive_scanning`（触发出的内容再触发别的内容）未实现，当前只做单层扫描。
