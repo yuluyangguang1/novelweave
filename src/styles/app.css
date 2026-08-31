@@ -737,3 +737,31 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 /* ═══ 首页每日统计条 ═══ */
 .home-stats { display: flex; flex-wrap: wrap; gap: 18px; padding: 0 4px 14px; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; color: var(--dim); }
 .home-stats b { color: var(--accent); font-weight: 700; }
+
+/* ═══ 首页工具栏:统计与起书按钮同一条(评审 #一.1) ═══ */
+.home-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 0 4px 14px; }
+.home-toolbar .home-stats { padding: 0; }
+.home-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* 书卡两栏网格(评审 #一.2) */
+.novel-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+@media (max-width: 720px) { .novel-list { grid-template-columns: 1fr; } }
+
+/* 升级提示从按钮改为一枚可点标签(评审 #一.2) */
+.novel-card-upgrade { font-family: var(--mono); font-size: .6rem; letter-spacing: .08em; color: var(--warn); border: 1px solid rgb(var(--warn-base) / .5); padding: 2px 6px; cursor: pointer; }
+.novel-card-upgrade:hover { background: rgb(var(--warn-base) / .1); }
+
+/* 窄屏起书按钮纵向堆叠(评审 #四.2) */
+@media (max-width: 522px) { .home-actions { flex-direction: column; align-items: stretch; } }
+
+/* ═══ 编辑器顶栏:面包屑 / 分组分隔线 / 已保存微提示(评审 #二.1/#二.2/#二.4) ═══ */
+.editor-crumb { font-family: var(--serif); font-size: .82rem; color: var(--dim); opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12em; flex-shrink: 1; }
+.crumb-sep { margin: 0 6px; opacity: .5; }
+.toolbar-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; margin: 0 2px; }
+.saved-hint { font-family: var(--mono); font-size: .62rem; letter-spacing: .1em; color: var(--accent); opacity: .85; transition: opacity .4s var(--ease); }
+
+/* 统计口径悬浮说明(评审 #四.1) */
+.word-count { cursor: help; }
+
+/* ═══ SW 更新横幅(评审 #四.3) ═══ */
+.sw-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 950; display: flex; align-items: center; justify-content: center; padding: 8px 16px; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; color: var(--bg); background: var(--accent); }

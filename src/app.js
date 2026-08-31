@@ -57,6 +57,25 @@ async function initApp() {
   renderAIPanelTools();
   bindEditorShortcuts();
 
+  // SW 横幅刷新按钮
+  const swBtn = document.getElementById('sw-reload');
+  if (swBtn) swBtn.onclick = () => location.reload();
+
+  // Esc 可达性:连续生成进度层停止 → AI 面板关闭 → 普通弹层关闭(评审 #四.5)
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const batchMask = document.getElementById('batch-mask');
+    if (batchMask) {
+      if (APP.batchAbort) APP.batchAbort.abort();
+      batchMask.remove();
+      return;
+    }
+    const panel = document.getElementById('ai-panel');
+    if (panel && !panel.classList.contains('hidden')) { closeAIPanel(); return; }
+    const dlg = document.querySelector('.modal-overlay');
+    if (dlg) dlg.remove();
+  });
+
   // 旧版增量记账已经把历史作品的字数弄错了（单改一次标题就扣掉一整章），启动时校正一次。
   try { await NovelDB.recountAll(); } catch (e) { console.warn('统计校正失败', e); }
 
@@ -336,8 +355,8 @@ async function renderHomePage() {
         <button class="del-btn" data-action="del-novel" data-id="${attr(n.id)}" title="删除作品">${icon('trash')}</button>
       </div>
       ${isDemo ? '<span class="novel-card-badge">示例</span>' : ''}
-      ${(typeof NWDemo !== 'undefined' && isDemo && (n.demo_version || 0) < ((window.NWDemo && NWDemo.DEMO_VERSION) || 3))
-        ? '<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;margin-top:6px;" data-action="load-demo">内容已升级 · 点此更新示例书</button>'
+      ${(typeof NWDemo !== 'undefined' && isDemo && (n.demo_version || 0) < ((window.NWDemo && NWDemo.DEMO_VERSION) || 4))
+        ? '<span class="novel-card-upgrade" data-action="load-demo" title="载入最新版示例书">内容已升级 · 点击更新</span>'
         : ''}
       <div class="novel-card-title">${esc(n.title)}</div>
       <div class="novel-card-meta">
@@ -907,15 +926,20 @@ async function openChapter(chapter) {
   const hdr = document.getElementById('editor-header');
   const area = document.getElementById('editor-area');
   hdr.innerHTML = `
+    <div class="editor-crumb">${esc(APP.novel?.title || '')}<span class="crumb-sep" aria-hidden="true">·</span></div>
     <input class="editor-title" id="edt-title" value="${attr(fresh.title)}" data-chapter-id="${attr(fresh.id)}">
     <div class="editor-toolbar">
       <button data-action="toggle-sidebar" title="展开/收起侧栏">${icon('menu')}</button>
-      <span class="word-count" id="wc-label">${formatWordCount(fresh.word_count)}</span>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <span class="word-count" id="wc-label" title="按汉字计，不含标点">${formatWordCount(fresh.word_count)}</span>
+      <span class="saved-hint" id="saved-hint" hidden>已保存</span>
+      <span class="toolbar-sep" aria-hidden="true"></span>
       ${AI_TOOLS.filter((t) => t.id !== 'outline').map((t) => `
         <button data-action="run-ai" data-tool="${attr(t.id)}" title="${attr(t.label)}">${icon(t.icon)}</button>`).join('')}
-      <button data-action="edit-cast" title="声明本章出场角色">${icon('cast')}</button>
       <button data-action="edit-summary" class="${(fresh.summary || '').trim() ? 'filled' : ''}"
         title="${(fresh.summary || '').trim() ? '本章摘要（已填）' : '本章摘要（未填 —— 续写时前情会缺这一章）'}">${icon('scroll')}</button>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <button data-action="edit-cast" title="声明本章出场角色">${icon('cast')}</button>
       <button data-action="show-revisions" title="正文历史版本">${icon('revisions')}</button>
       <button data-action="save-chapter" title="保存 (Ctrl+S)">${icon('save')}</button>
     </div>`;
@@ -966,6 +990,16 @@ async function flushPendingSave() {
   await saveChapter(APP.chapter.id, true);
 }
 
+/** 保存成功后字数旁闪 2 秒「已保存」(静默自动保存也有感知)。 */
+function flashSavedHint() {
+  const el = document.getElementById('saved-hint');
+  if (!el) return;
+  el.hidden = false;
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = '0'; el.hidden = true; }, 2000);
+}
+
 async function saveChapter(idOrSkip, silent) {
   const ta = document.getElementById('edt-content');
   const titleEl = document.getElementById('edt-title');
@@ -985,6 +1019,7 @@ async function saveChapter(idOrSkip, silent) {
     APP.dirty = false;
     const wc = document.getElementById('wc-label');
     if (wc) wc.textContent = formatWordCount(saved.word_count);
+    flashSavedHint();
     await renderSidebar();
     await renderChapterList();
     if (!silent) showToast('已保存');

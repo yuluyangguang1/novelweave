@@ -51,6 +51,8 @@ self.addEventListener('activate', (e) => {
       if (key.startsWith('nw-') && key !== CACHE) await caches.delete(key);
     }
     await self.clients.claim();
+    const cl = await self.clients.matchAll({ type: "window" });
+    for (const c of cl) c.postMessage({ type: "sw-updated" });
   })());
 });
 
