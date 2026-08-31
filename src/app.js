@@ -58,7 +58,14 @@ async function initApp() {
   bindEditorShortcuts();
 
   // SW 横幅刷新按钮
+  // SW 横幅:刷新按钮 + 关闭(会话内不再弹,clients.claim 会反复发消息)
+  const swBanner = document.getElementById('sw-banner');
+  const swClose = document.getElementById('sw-close');
   const swBtn = document.getElementById('sw-reload');
+  if (swClose) swClose.onclick = () => {
+    try { sessionStorage.setItem('nw_sw_dismissed', '1'); } catch (_) {}
+    swBanner.hidden = true;
+  };
   if (swBtn) swBtn.onclick = () => location.reload();
 
   // Esc 可达性:连续生成进度层停止 → AI 面板关闭 → 普通弹层关闭(评审 #四.5)

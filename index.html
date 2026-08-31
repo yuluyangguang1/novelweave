@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>NovelWeave · 织文</title>
-  <link rel="stylesheet" href="src/styles/app.css?v=4">
+  <link rel="stylesheet" href="src/styles/app.css?v=6">
   <!-- PWA -->
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -59,7 +59,8 @@
   <symbol id="i-logo" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M4.14 3h3.72v18h-3.72zM10.14 3h3.72v18h-3.72zM16.14 3h3.72v18h-3.72zM7.86 4.14h8.28v3.72h-8.28zM3 10.14h7.14v3.72h-7.14zM13.86 10.14h7.14v3.72h-7.14zM7.86 16.14h8.28v3.72h-8.28z"/></symbol>
 </svg>
 <div id="app">
-<div id="sw-banner" class="sw-banner" hidden>发现新版本，内容已更新。<button class="btn btn-secondary" style="font-size:11px;padding:3px 10px;margin-left:10px;" id="sw-reload">刷新</button></div>
+<div id="sw-banner" class="sw-banner" hidden>发现新版本，内容已更新。<button class="btn btn-secondary" style="font-size:11px;padding:3px 10px;margin-left:10px;" id="sw-reload">刷新</button>
+  <button class="sw-close" id="sw-close" aria-label="关闭" title="关闭">×</button></div>
 
 <!-- ═══════════════════════════════════════════ -->
 <!-- 01 首页（小说列表）                         -->
@@ -169,10 +170,11 @@
 <script src="src/app.js"></script>
 <script>
   document.addEventListener('DOMContentLoaded', initApp);
-  // SW 更新横幅:新 SW 激活时由 sw.js postMessage 触发
+  // SW 更新横幅:新 SW 激活时由 sw.js postMessage 触发。
+  // 会话内已关闭过就不再弹 —— 同一次会话里 clients.claim 可能反复触发消息。
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', (e) => {
-      if (e.data && e.data.type === 'sw-updated') {
+      if (e.data && e.data.type === 'sw-updated' && !sessionStorage.getItem('nw_sw_dismissed')) {
         const b = document.getElementById('sw-banner');
         if (b) b.hidden = false;
       }

@@ -769,4 +769,9 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 .word-count { cursor: help; }
 
 /* ═══ SW 更新横幅(评审 #四.3) ═══ */
+.sw-banner[hidden] { display: none; }
 .sw-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 950; display: flex; align-items: center; justify-content: center; padding: 8px 16px; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; color: var(--bg); background: var(--accent); }
+
+/* SW 横幅关闭钮 */
+.sw-close { background: none; border: none; color: var(--bg); font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 6px; margin-left: 4px; opacity: .8; }
+.sw-close:hover { opacity: 1; }

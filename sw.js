@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v2';
+const VERSION = 'nw-v3'; // v3: activate 时向页面广播 sw-updated(横幅)
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 
