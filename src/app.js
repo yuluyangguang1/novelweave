@@ -125,6 +125,7 @@ const ACTIONS = {
   'create-novel':  () => showCreateNovel(),
   'ai-short-book': () => showAIShortWizard(),
   'ai-long-book': () => showAILongWizard(),
+  'batch-generate': () => batchGenerateBook(),
   'load-demo':     () => loadDemoBook(),
   'open-chapter':  (id) => openChapterById(id),
   'del-chapter':   (id) => deleteCh(id),
@@ -406,6 +407,10 @@ function showConceptConfirm(concept, genre) {
     showToast(`梗概已建档：${chapters.length} 章。进第一章点「续写」即可成稿。`);
     await renderHomePage();
     router.go('workspace', { novelId: novel.id });
+    // 向导的收尾一步：建档即问要不要连续生成（可停，不是无确认直出）
+    if (confirm(`梗概已建档。\n\n立即连续生成全部 ${chapters.length} 章正文？\n每章自动过机检并自修一轮，过程中可随时停止，已完成的章节不受影响。`)) {
+      await batchGenerateBook(novel.id);
+    }
   });
 }
 
@@ -512,8 +517,103 @@ function showLongConceptConfirm(concept, genre) {
     showToast(`长篇骨架已建档：${chapters.length} 章。逐章「续写」即可成稿。`);
     await renderHomePage();
     router.go('workspace', { novelId: novel.id });
-    if (confirm(`立即连续生成已建档的 ${chapters.length} 章正文？每章自动过机检，可随时停止。`)) await batchGenerateBook();
+    if (confirm(`立即连续生成已建档的 ${chapters.length} 章正文？每章自动过机检，可随时停止。`)) await batchGenerateBook(novel.id);
   });
+}
+
+// ═══════════════════ 连续生成（短/长篇 · 逐章自动续写 + 机检自检） ═══════════════════
+// 梗概建档后的收尾一步：一键逐章成稿。每一章都是完整的续写管道
+// （硬禁令 + 上下文 → 生成 → 机检自检 → 修订），可随时停止 —— 停在哪一章，
+// 哪一章都合法；只生成空章节，已有正文的一律不碰。
+
+async function batchGenerateBook(novelId) {
+  if (!NovelLLM.hasConfig()) { showToast('连续生成要先配 API Key'); router.go('settings'); return; }
+  // 向导建档后立刻调用时,enterWorkspace 可能还没跑完 —— 等工作区真正切到这本书再动手,
+  // 否则 loadStoryCtx 读到的会是上一本书,新章节会被生成到错误的上下文里。
+  const targetId = novelId || APP.novelId;
+  let waited = 0;
+  while (APP.novelId !== targetId && waited < 2000) {
+    await new Promise((r) => setTimeout(r, 100));
+    waited += 100;
+  }
+  if (APP.novelId !== targetId) { showToast('工作区未就绪，请稍后在书内点「连续生成正文」'); return; }
+  const all = APP.chaptersCache && APP.chaptersCache.length ? APP.chaptersCache : (await NovelDB.chapters.list(APP.novelId));
+  const pending = all.filter((c) => !(c.body || '').trim());
+  if (!pending.length) { showToast('没有待生成的空章节'); return; }
+  if (!confirm(`将按顺序逐章生成 ${pending.length} 章正文。\n每章自动过机检并自修一轮；过程中可随时点「停止」，已完成的章节不受影响，已有正文的章节一律不碰。\n\n继续？`)) return;
+
+  APP.batchAbort = new AbortController();
+  const mask = document.createElement('div');
+  mask.id = 'batch-mask';
+  mask.className = 'onboard-mask';
+  const card = document.createElement('div');
+  card.className = 'onboard-card';
+  card.innerHTML = `<div class="onboard-kicker">batch · 连续生成</div>
+    <div class="onboard-title">逐章成稿中</div>
+    <div class="onboard-steps" id="batch-list"></div>
+    <div class="onboard-actions"><button class="btn btn-danger" id="batch-stop">停止</button></div>`;
+  mask.appendChild(card);
+  document.body.appendChild(mask);
+  const list = card.querySelector('#batch-list');
+  const row = (ch, state, note) => {
+    let el = list.querySelector(`[data-batch="${ch.id}"]`);
+    if (!el) { el = document.createElement('div'); el.className = 'onboard-step'; el.dataset.batch = ch.id; list.appendChild(el); }
+    el.innerHTML = `<span class="onboard-num">${ch.order ?? ''}</span><div><b>${esc(ch.title)}</b><p>${esc(state)}${note ? ' · ' + esc(note) : ''}</p></div>`;
+  };
+  card.querySelector('#batch-stop').onclick = () => APP.batchAbort.abort();
+
+  let done = 0, fixed = 0;
+  for (const ch of pending) {
+    if (APP.batchAbort.signal.aborted) { row(ch, '已停止'); break; }
+    try {
+      row(ch, '生成中…');
+      const storyCtx = await loadStoryCtx();
+      const built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: ch.id, style: true });
+      let full = '';
+      for await (const msg of NovelLLM.streamChat([
+          { role: 'system', content: '你是一名经验丰富的中文网文作家，负责在既有设定与前文之下续写。' },
+          { role: 'user', content: built.prompt },
+        ], { maxTokens: 8000, signal: APP.batchAbort.signal })) {
+        if (msg.type === 'chunk') full += msg.content;
+        else if (msg.type === 'error') throw new Error(msg.content);
+        else if (msg.type === 'aborted') break;
+      }
+      if (!full.trim()) { row(ch, '模型没有返回内容，已停止'); break; }
+
+      // 机检自检一轮：只修草稿新引入的问题（基线外），info 不触发
+      let reviseRounds = 0;
+      const sc = NWSelfCheck.runSelfCheck(storyCtx, { chapterId: ch.id, draft: full });
+      if (sc.actionable.length) {
+        row(ch, `机检发现 ${sc.actionable.length} 处问题，自修中…`);
+        const revised = await NovelLLM.requestChat([
+          { role: 'system', content: '你是中文小说编辑，只消除连续性矛盾，不改其他内容。' },
+          { role: 'user', content: NWSelfCheck.buildRevisePrompt(full, sc.actionable) },
+        ], { maxTokens: 8000, signal: APP.batchAbort.signal });
+        if (revised && revised.content && revised.content.trim()) { full = revised.content.trim(); reviseRounds = 1; }
+      }
+      if (APP.batchAbort.signal.aborted) { row(ch, '已停止（本章未保存）'); break; }
+      await NovelDB.chapters.update(ch.id, { content: full });
+      APP.chaptersCache = null; // 让下一章的 loadStoryCtx 读到刚落盘的正文
+      done++; if (reviseRounds) fixed++;
+      row(ch, `完成 ${countWords(full)} 字`, reviseRounds ? '自修 1 轮' : '');
+    } catch (e) {
+      if (APP.batchAbort.signal.aborted) { row(ch, '已停止'); break; }
+      row(ch, '失败：' + (e.message || '未知错误') + '（已停止，不烧额度）');
+      break;
+    }
+  }
+  APP.batchAbort = null;
+  const footer = document.createElement('div');
+  footer.className = 'onboard-actions';
+  footer.innerHTML = `<button class="btn btn-primary" id="batch-done">完成（${done}/${pending.length} 章${fixed ? `，${fixed} 章自修` : ''}）</button>`;
+  card.querySelector('.onboard-actions').replaceWith(footer);
+  footer.querySelector('#batch-done').onclick = async () => {
+    mask.remove();
+    try { await NovelDB.recountNovelStats(APP.novelId); } catch (_) {}
+    await renderSidebar();
+    const firstEmpty = (await NovelDB.chapters.list(APP.novelId)).find((c) => !(c.body || '').trim());
+    if (firstEmpty) await openChapterById(firstEmpty.id);
+  };
 }
 
 async function confirmDeleteNovel(id) {
@@ -598,6 +698,10 @@ async function renderSidebar() {
           ${counts[t.id] != null ? `<span class="sidebar-nav-count">${counts[t.id]}</span>` : ''}
           ${t.hasAdd ? `<span class="sidebar-nav-add" data-action="${attr('nav-add-' + t.id)}" title="${attr(t.addTitle)}">${icon('plus')}</span>` : ''}
         </div>`).join('')}
+      ${novel.format === 'short' ? `
+      <div style="padding:10px 4px 2px;">
+        <button class="btn btn-secondary" style="width:100%;font-size:12px;" data-action="batch-generate">连续生成正文</button>
+      </div>` : ''}
     </div>`;
 }
 
