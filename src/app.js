@@ -227,6 +227,85 @@ function emptyHint(text) {
 
 // ═══════════════════ 首页 ═══════════════════
 
+// ═══════════════════ 每日问候与码字统计 ═══════════════════
+// 「每日字数」口径:每章按天取当日最后一版快照的字数,与前一天比较,
+// 增量记到当天 —— 快照只在覆盖式写入时产生,所以这是净增字数,不是击键数。
+
+function dayKey(ts) {
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+async function computeDailyStats() {
+  const daily = new Map(); // 'YYYY-MM-DD' → 当日净增字数
+  let totalWords = 0, totalChapters = 0;
+  const novels = await NovelDB.novels.list();
+  for (const n of novels) {
+    totalWords += n.word_count || 0;
+    totalChapters += n.chapter_count || 0;
+    const chapters = await NovelDB.chapters.list(n.id);
+    for (const ch of chapters) {
+      const revs = (await NovelDB.revisions.list(ch.id)).slice().reverse(); // 旧 → 新
+      const dayWords = new Map();
+      for (const r of revs) dayWords.set(dayKey(r.at), r.word_count ?? countWords(r.content));
+      dayWords.set(dayKey(Date.now()), countWords(ch.content)); // 今天以编辑器当前内容为准
+      let prev = 0;
+      for (const day of [...dayWords.keys()].sort()) {
+        const w = dayWords.get(day) || 0;
+        daily.set(day, (daily.get(day) || 0) + Math.max(0, w - prev));
+        prev = w;
+      }
+    }
+  }
+  return { daily, totalWords, totalChapters };
+}
+
+function streakFrom(daily) {
+  let streak = 0;
+  const d = new Date();
+  if (!daily.has(dayKey(d.getTime()))) d.setDate(d.getDate() - 1); // 今天没写也不断更
+  for (;;) {
+    if ((daily.get(dayKey(d.getTime())) || 0) > 0) { streak++; d.setDate(d.getDate() - 1); }
+    else break;
+  }
+  return streak;
+}
+
+async function renderHomeStats() {
+  const host = document.getElementById('home-stats');
+  if (!host) return { todayWords: 0, streak: 0 };
+  try {
+    const { daily, totalWords, totalChapters } = await computeDailyStats();
+    const todayWords = daily.get(dayKey(Date.now())) || 0;
+    const streak = streakFrom(daily);
+    host.innerHTML = `<span>今日 <b>${todayWords}</b> 字</span>`
+      + `<span>连续更文 <b>${streak}</b> 天</span>`
+      + `<span>共 <b>${totalChapters}</b> 章 · ${formatWordCount(totalWords)}</span>`;
+    host.hidden = totalWords === 0 && totalChapters === 0;
+    return { todayWords, streak };
+  } catch (_) { return { todayWords: 0, streak: 0 }; }
+}
+
+const GREETINGS = [
+  ['早上好', ['雾还没散，正好写字。', '三千阶，也是一步一步上去的。', '把昨天的那一段，先改顺。']],
+  ['下午好', ['写不动的时候，就去改一段旧文。', '灯比星子密的日子，还在后头。', '今天的目标，可以先是一段。']],
+  ['晚上好', ['夜深了，正好织字。', '今天的账，落笔就算数。', '写完这一段，就睡。']],
+];
+
+/** 每日问候:一天一次,带当日码字数。 */
+function maybeDailyGreeting(todayWords, streak) {
+  try {
+    const today = dayKey(Date.now());
+    if (localStorage.getItem('nw_greet') === today) return;
+    localStorage.setItem('nw_greet', today);
+    const h = new Date().getHours();
+    const [label, lines] = h < 11 ? GREETINGS[0] : h < 18 ? GREETINGS[1] : GREETINGS[2];
+    const line = lines[Math.floor(Math.random() * lines.length)];
+    const stat = todayWords > 0 ? `今日已写 ${todayWords} 字${streak > 1 ? `，连续 ${streak} 天` : ''}。` : '';
+    showToast(`${label}。${line}${stat ? ' ' + stat : ''}`);
+  } catch (_) {}
+}
+
 async function renderHomePage() {
   const novels = await NovelDB.novels.list();
   const listEl = document.getElementById('novel-list');
@@ -239,6 +318,9 @@ async function renderHomePage() {
     return;
   }
   if (emptyEl) emptyEl.style.display = 'none';
+
+  // 每日统计条 + 一天一次的问候(带今日码字数)
+  renderHomeStats().then((st) => maybeDailyGreeting(st.todayWords, st.streak));
 
   // static HTML 骨架，所有动态值经 esc
   listEl.innerHTML = novels.map((n) => {

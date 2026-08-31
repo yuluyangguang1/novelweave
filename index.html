@@ -69,8 +69,10 @@
     <button class="header-btn" data-action="go-settings" title="设置" aria-label="设置"><svg class="icon"><use href="#i-settings"/></svg></button>
   </div>
   <div class="home-body">
+    <div id="home-stats" class="home-stats" hidden></div>
     <div style="display:flex;justify-content:flex-end;padding:0 4px 10px;">
       <button class="btn btn-secondary" data-action="ai-short-book" style="font-size:12px;padding:6px 12px;">AI 起书（短篇）</button>
+      <button class="btn btn-secondary" data-action="ai-long-book" style="font-size:12px;padding:6px 12px;margin-left:8px;">AI 起书（长篇）</button>
     </div>
     <div class="home-empty" id="home-empty">
       <img class="logo-hero" src="icons/icon-512.png" alt="织文织纹 logo" width="76" height="76">
@@ -85,6 +87,7 @@
         <button class="btn btn-primary" data-action="create-novel">创建第一篇小说</button>
         <button class="btn btn-secondary" data-action="load-demo">载入示例书看看</button>
         <button class="btn btn-secondary" data-action="ai-short-book">AI 起书（短篇）</button>
+        <button class="btn btn-secondary" data-action="ai-long-book">AI 起书（长篇）</button>
       </div>
       <p class="empty-key">没有 API Key？续写 / 润色才需要它；不配也能用状态管理与连续性检查。
         <a href="https://yuai-r.cn/key.html" target="_blank" rel="noopener">yu.ai 收录了各家大模型的免费额度，注册即用</a></p>
