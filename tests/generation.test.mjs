@@ -242,6 +242,61 @@ test('R17 短篇：提示语知道自己是短篇', () => {
   assert.ok(hit.suggestion.includes('屏末'), '短篇的钩子话术应该是"屏末"');
 });
 
+// ═══════════════ R18 物品失而复得 ═══════════════
+
+test('R18：物品连续缺席后重现 → info 提示', () => {
+  const many = [];
+  for (let i = 1; i <= 5; i++) {
+    many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `第${i}章`, content: '正文。', summary: '' });
+  }
+  const st = (ch, items) => ({ id: `ch-${String(ch).padStart(3, '0')}|c_lin`, chapter: `ch-${String(ch).padStart(3, '0')}`, entity: 'c_lin', loc: '', alive: 'alive', injury: [], items, knows: [], goal: '' });
+  const r = rows({
+    chapters: many,
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }],
+    states: [st(1, ['铜印']), st(2, ['铜印']), st(3, []), st(4, []), st(5, ['铜印'])],
+  });
+  const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['item-reappear'] });
+  const hit = diags.find((d) => d.rule === 'item-reappear');
+  assert.ok(hit, '缺席后重现要提示');
+  assert.equal(hit.severity, 'info', '矩阵没记不等于物品不存在，恒为 info');
+  assert.match(hit.message, /铜印/);
+});
+
+test('R18：物品一直在持有 → 不提示', () => {
+  const many = [];
+  for (let i = 1; i <= 5; i++) {
+    many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `第${i}章`, content: '正文。', summary: '' });
+  }
+  const st = (ch, items) => ({ id: `ch-${String(ch).padStart(3, '0')}|c_lin`, chapter: `ch-${String(ch).padStart(3, '0')}`, entity: 'c_lin', loc: '', alive: 'alive', injury: [], items, knows: [], goal: '' });
+  const r = rows({
+    chapters: many,
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }],
+    states: [st(1, ['铜印']), st(2, ['铜印']), st(3, ['铜印']), st(4, ['铜印']), st(5, ['铜印'])],
+  });
+  const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['item-reappear'] });
+  assert.equal(diags.filter((d) => d.rule === 'item-reappear').length, 0);
+});
+
+// ═══════════════ AI 起书（长篇从零向导） ═══════════════
+
+test('AI 长篇起书 prompt：带想法 / 卷数 / 世界与卷纲要求', () => {
+  const p = NovelLLM.buildLongConceptPrompt({ idea: '扫地少年与无面石像', genre: '玄幻', volumes: 3 });
+  assert.match(p, /扫地少年与无面石像/);
+  assert.match(p, /约 3 卷/);
+  assert.match(p, /卷纲 3 卷/);
+  assert.match(p, /世界设定 2-4 条/);
+  assert.match(p, /只输出一个 JSON/);
+});
+
+test('parseConceptJSON：world 与 volumes 一并解析（长篇骨架）', () => {
+  const raw = '```json\n{"title":"长篇","logline":"x","characters":[],"world":[{"name":"青雾山","content":"大雾"}],"volumes":[{"title":"卷一","summary":"出山"}],"chapters":[{"title":"第一章","beat":"出场"}]}\n```';
+  const c = NovelLLM.parseConceptJSON(raw);
+  assert.equal(c.world.length, 1);
+  assert.equal(c.world[0].name, '青雾山');
+  assert.equal(c.volumes.length, 1);
+  assert.equal(c.volumes[0].title, '卷一');
+});
+
 // ═══════════════ 相关旧章检索 ═══════════════
 
 test('相关旧章：按出场分量召回窗口外旧章，苏晚的高光章被带回来', () => {

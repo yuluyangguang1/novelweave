@@ -124,6 +124,7 @@ const ACTIONS = {
   'del-novel':     (id) => confirmDeleteNovel(id),
   'create-novel':  () => showCreateNovel(),
   'ai-short-book': () => showAIShortWizard(),
+  'ai-long-book': () => showAILongWizard(),
   'load-demo':     () => loadDemoBook(),
   'open-chapter':  (id) => openChapterById(id),
   'del-chapter':   (id) => deleteCh(id),
@@ -405,6 +406,113 @@ function showConceptConfirm(concept, genre) {
     showToast(`梗概已建档：${chapters.length} 章。进第一章点「续写」即可成稿。`);
     await renderHomePage();
     router.go('workspace', { novelId: novel.id });
+  });
+}
+
+// ═══════════════════ AI 起书（长篇从零向导 · 卷纲层） ═══════════════════
+// 长篇骨架 = 人物 + 世界设定 + 卷纲 + 首卷章纲。卷纲写进「写作笔记」，
+// 世界设定进 worldbuilding，章纲落章节拍点 —— 全部走既有存储，不发明新格式。
+
+function showAILongWizard() {
+  if (!NovelLLM.hasConfig()) {
+    showToast('AI 起书要先配 API Key（状态管理与连续性检查不需要）');
+    router.go('settings');
+    return;
+  }
+  const volumes = NovelLLM.LONG_VOLUME_OPTIONS;
+  const genres = ['不限','玄幻','都市','仙侠','科幻','悬疑','言情','历史','脑洞','现实'];
+  showModal('AI 起书 · 长篇', `
+    <div class="settings-field"><label class="settings-label">一句话想法 *</label>
+      <textarea class="settings-input" id="inp-ai-idea-l" rows="3" placeholder="例：扫地的少年每天给一座无面石像上香，直到石像流出了眼泪。"></textarea></div>
+    <div class="settings-field"><label class="settings-label">计划卷数</label>
+      <select class="settings-select" id="inp-ai-vol">
+        ${volumes.map((v) => `<option value="${attr(String(v))}" ${v === 3 ? 'selected' : ''}>约 ${v} 卷</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><label class="settings-label">题材</label>
+      <select class="settings-select" id="inp-ai-genre-l">
+        ${genres.map((g) => `<option value="${attr(g)}">${esc(g)}</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><button class="btn btn-primary" id="ai-gen-btn-l" style="width:100%">生成全书骨架（约 20 秒）</button></div>
+  `, null);
+  document.getElementById('modal-cancel').textContent = '关闭';
+  document.getElementById('ai-gen-btn-l').onclick = async function () {
+    const idea = document.getElementById('inp-ai-idea-l').value.trim();
+    if (!idea) { showToast('先写一句话想法'); return; }
+    this.disabled = true;
+    this.textContent = '生成中…（长篇骨架较大）';
+    const res = await NovelLLM.requestChat([
+      { role: 'system', content: '你是资深网文策划编辑，只输出 JSON。' },
+      { role: 'user', content: NovelLLM.buildLongConceptPrompt({
+          idea,
+          genre: document.getElementById('inp-ai-genre-l').value,
+          volumes: Number(document.getElementById('inp-ai-vol').value) || 3,
+        }) },
+    ], { maxTokens: 4000 });
+    this.disabled = false;
+    this.textContent = '生成全书骨架（约 20 秒）';
+    if (res.error) { showToast('生成失败：' + res.error); return; }
+    let concept;
+    try { concept = NovelLLM.parseConceptJSON(res.content); }
+    catch (e) { showToast('解析失败：' + e.message); return; }
+    closeModal();
+    showLongConceptConfirm(concept, document.getElementById('inp-ai-genre-l').value);
+  };
+  setTimeout(() => document.getElementById('inp-ai-idea-l')?.focus(), 60);
+}
+
+/** 长篇骨架确认：书名 / 梗概 / 人物 / 世界设定 / 卷纲 / 首卷章纲，全部可直接改。 */
+function showLongConceptConfirm(concept, genre) {
+  const chText = concept.chapters.map((c) => `${c.title}|${c.beat}`).join('\n') || '第一章|主角以动作或抉择出场，章末留钩子';
+  const wText = concept.world.map((w) => `${w.name}|${w.content}`).join('\n');
+  const vText = concept.volumes.map((v) => `${v.title}|${v.summary}`).join('\n');
+  const peText = concept.characters.map((c) => `${c.name}|${c.role}|${c.personality}`).join('\n');
+  showModal('确认长篇骨架 —— 每一项都可以改', `
+    <div class="settings-field"><label class="settings-label">书名</label>
+      <input class="settings-input" id="inp-c-title" value="${attr(concept.title)}" maxlength="50"></div>
+    <div class="settings-field"><label class="settings-label">一句话梗概</label>
+      <textarea class="settings-input" id="inp-c-logline" rows="2">${esc(concept.logline)}</textarea></div>
+    <div class="settings-field"><label class="settings-label">人物（名字|角色|性格）</label>
+      <textarea class="settings-input" id="inp-c-chars" rows="4">${esc(peText)}</textarea></div>
+    <div class="settings-field"><label class="settings-label">世界设定（一行一条：名称|内容）</label>
+      <textarea class="settings-input" id="inp-c-world" rows="3">${esc(wText)}</textarea></div>
+    <div class="settings-field"><label class="settings-label">卷纲（一行一卷：卷名|核心冲突与结局）</label>
+      <textarea class="settings-input" id="inp-c-vols" rows="3">${esc(vText)}</textarea></div>
+    <div class="settings-field"><label class="settings-label">第一卷章纲（标题|拍点与章末钩子）</label>
+      <textarea class="settings-input" id="inp-c-chapters" rows="8">${esc(chText)}</textarea></div>
+    <p class="usage-bar" style="margin-top:8px;">保存即建档：书 + 角色 + 世界设定 + 卷纲（写入写作笔记）+ 带拍点的空章节。正文由你逐章「续写」产出。</p>
+  `, async () => {
+    const title = val('inp-c-title');
+    if (!title) { showToast('书名不能为空'); return; }
+    const parseLines = (id) => document.getElementById(id).value.split('\n')
+      .map((l) => l.trim()).filter(Boolean)
+      .map((l) => { const [a, ...rest] = l.split('|'); return { a: (a || '').trim(), b: rest.join('|').trim() }; });
+    const chapters = parseLines('inp-c-chapters').filter((c) => c.a);
+    if (!chapters.length) { showToast('至少要有一章'); return; }
+    const novel = await NovelDB.novels.create({
+      title, genre: genre === '不限' ? '长篇' : genre,
+      description: document.getElementById('inp-c-logline').value.trim(), format: 'long',
+    });
+    for (const c of parseLines('inp-c-chars')) {
+      if (!c.a) continue;
+      const [name, role, personality] = c.a.split('|');
+      await NovelDB.characters.create(novel.id, { name: (name || '').trim(), role: (role || '配角').trim(), personality: (personality || '').trim() });
+    }
+    for (const w of parseLines('inp-c-world')) {
+      if (!w.a) continue;
+      await NovelDB.worldbuilding.create(novel.id, { name: w.a, type: 'custom', description: w.b });
+    }
+    const vols = parseLines('inp-c-vols').filter((v) => v.a);
+    if (vols.length) {
+      await NovelDB.notes.save(novel.id, { title: '卷纲', content: vols.map((v) => `【${v.a}】${v.b}`).join('\n') });
+    }
+    for (let i = 0; i < chapters.length; i++) {
+      await NovelDB.chapters.create(novel.id, { title: chapters[i].a, summary: chapters[i].b, order: i + 1 });
+    }
+    closeModal();
+    showToast(`长篇骨架已建档：${chapters.length} 章。逐章「续写」即可成稿。`);
+    await renderHomePage();
+    router.go('workspace', { novelId: novel.id });
+    if (confirm(`立即连续生成已建档的 ${chapters.length} 章正文？每章自动过机检，可随时停止。`)) await batchGenerateBook();
   });
 }
 

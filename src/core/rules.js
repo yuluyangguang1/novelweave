@@ -689,6 +689,62 @@
         return out;
       },
     },
+
+    'item-reappear': {
+      code: 'R18',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '物品在状态矩阵中连续缺席后又重新出现在持有物里。',
+      detail:
+        '以状态矩阵为准：某物品在某章记录于「持有物」，之后连续缺席，再往后又出现 —— ' +
+        '要么是中间章节忘了记，要么是失去了又重新获得但没写。矩阵没记不等于物品不存在，' +
+        '所以本条恒为 info，只提示补账或补情节，永不计入退出码。',
+      run(ctx) {
+        const out = [];
+        const byChapter = ctx.states?.byChapter || {};
+        const ents = new Map();
+        for (const [chId, dims] of Object.entries(byChapter)) {
+          const n = ctx.chapterNumbers.get(chId);
+          if (n == null) continue;
+          for (const [entId, d] of Object.entries(dims || {})) {
+            if (!ents.has(entId)) ents.set(entId, []);
+            ents.get(entId).push({
+              n, chId,
+              items: Array.isArray(d?.items) ? d.items.filter(Boolean) : [],
+            });
+          }
+        }
+        for (const [entId, recs] of ents) {
+          if (recs.length < 3) continue; // 记录太少不足以判断"缺席"
+          recs.sort((a, b) => a.n - b.n);
+          const lastSeen = new Map(); // 物品 → 最后出现的章号
+          const gapped = new Set();   // 已进入缺席期的物品
+          for (const r of recs) {
+            const cur = new Set(r.items);
+            for (const item of cur) {
+              const lastN = lastSeen.get(item);
+              if (lastN != null && gapped.has(item) && r.n - lastN >= 2) {
+                out.push(diag('item-reappear', {
+                  chapter: r.chId,
+                  entity: entId,
+                  severity: 'info',
+                  confidence: 0.6,
+                  evidence: { basis: [`上次记录于第 ${lastN} 章`, `第 ${lastN + 1}-${r.n - 1} 章缺席`, `本章重现`] },
+                  message: `物品「${item}」连续缺席后，在第 ${r.n} 章重新出现在持有物中。`,
+                  suggestion: '若物品一直在身边，请补记中间章节的状态矩阵；若确已失去，补写重新获得的情节，或删除本条重现记录。',
+                }));
+              }
+              lastSeen.set(item, r.n);
+              gapped.delete(item);
+            }
+            for (const item of lastSeen.keys()) {
+              if (!cur.has(item)) gapped.add(item);
+            }
+          }
+        }
+        return out;
+      },
+    },
   };
 
   // ═══════════════════ 执行 ═══════════════════

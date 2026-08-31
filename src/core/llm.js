@@ -189,11 +189,44 @@ ${chText}
         role: String(c.role || '配角').slice(0, 10),
         personality: String(c.personality || '').slice(0, 60),
       })).filter((c) => c.name),
-      chapters: j.chapters.slice(0, 10).map((c) => ({
+      world: (Array.isArray(j.world) ? j.world : []).slice(0, 6).map((w) => ({
+        name: String(w.name || '').slice(0, 30),
+        content: String(w.content || '').slice(0, 120),
+      })).filter((w) => w.name),
+      volumes: (Array.isArray(j.volumes) ? j.volumes : []).slice(0, 6).map((v) => ({
+        title: String(v.title || '').slice(0, 40),
+        summary: String(v.summary || '').slice(0, 200),
+      })).filter((v) => v.title),
+      chapters: j.chapters.slice(0, 12).map((c) => ({
         title: String(c.title || '').slice(0, 40),
         beat: String(c.beat || '').slice(0, 300),
       })).filter((c) => c.title),
     };
+  }
+
+  // ═══════════════════ AI 起书（长篇从零向导 · 卷纲层） ═══════════════════
+  // 长篇骨架 = 人物 + 世界设定 + 卷纲 + 首卷前 12 章章纲。卷纲落「写作笔记」，
+  // 世界设定落 worldbuilding,章纲落章节拍点 —— 全部走既有存储，不发明新格式。
+
+  const LONG_VOLUME_OPTIONS = [2, 3, 5];
+
+  function buildLongConceptPrompt({ idea, genre, volumes = 3 }) {
+    const chs = Math.min(12, volumes * 4);
+    return `你是资深网文策划编辑。根据作者的想法，为一部长篇连载生成全书骨架。
+
+【题材】${genre || '玄幻'}
+【计划卷数】约 ${volumes} 卷
+【作者的想法】${idea}
+
+要求：
+- 人物 3-6 个：主角、对手、导师或配角各至少一人，每人一句话性格
+- 世界设定 2-4 条（地点 / 势力 / 力量规则），每条不超过 40 字
+- 卷纲 ${volumes} 卷：每卷一句话，写明该卷核心冲突与卷末结局
+- 第一卷前 ${chs} 章的章纲：每章标题 + 拍点（该章发生什么 + 章末钩子）
+- 第一章必须让主角以动作或抉择出场；前三章各留一个钩子
+
+只输出一个 JSON 对象，不要任何解释、不要代码块标记，格式：
+{"title":"书名","logline":"一句话梗概","characters":[{"name":"","role":"","personality":""}],"world":[{"name":"","content":""}],"volumes":[{"title":"","summary":""}],"chapters":[{"title":"","beat":""}]}`;
   }
 
   // ═══════════════════ 传输 ═══════════════════
@@ -292,6 +325,7 @@ ${chText}
     buildContinuePrompt, buildContinueContext, buildConsistencyCheckPrompt, buildSummarizePrompt,
     buildPolishPrompt, buildOutlinePrompt,
     buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS,
+    buildLongConceptPrompt, LONG_VOLUME_OPTIONS,
     streamChat, requestChat, testConnection,
   };
 });
