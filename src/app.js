@@ -242,17 +242,27 @@ async function renderHomePage() {
   listEl.innerHTML = novels.map((n) => {
     const d = n.updated_at ? new Date(n.updated_at).toLocaleDateString('zh-CN') : '';
     const isDemo = typeof NWDemo !== 'undefined' && NWDemo.isDemo(n.id);
+    // 书封：书名竖排上封面，短篇在书脊下加一枚小圆点以示区分
+    const titleForCover = (n.title || '未命名').replace(/^《|》$/g, '');
+    const coverTitle = titleForCover.slice(0, 6);
     return `<div class="novel-card" data-action="open-novel" data-id="${attr(n.id)}">
+      <div class="novel-card-cover${n.format === 'short' ? ' short' : ''}" aria-hidden="true"><span>${esc(coverTitle)}</span></div>
+      <div class="novel-card-body">
       <div class="novel-card-actions">
         <button class="del-btn" data-action="del-novel" data-id="${attr(n.id)}" title="删除作品">${icon('trash')}</button>
       </div>
       ${isDemo ? '<span class="novel-card-badge">示例</span>' : ''}
+      ${(typeof NWDemo !== 'undefined' && isDemo && (n.demo_version || 0) < ((window.NWDemo && NWDemo.DEMO_VERSION) || 3))
+        ? '<button class="btn btn-secondary" style="font-size:11px;padding:4px 10px;margin-top:6px;" data-action="load-demo">内容已升级 · 点此更新示例书</button>'
+        : ''}
       <div class="novel-card-title">${esc(n.title)}</div>
       <div class="novel-card-meta">
         <span>${esc(n.genre)}</span>
         <span>${n.chapter_count || 0} 章</span>
         <span>${formatWordCount(n.word_count)}</span>
+        ${n.format === 'short' ? '<span>短篇</span>' : ''}
         <span>${esc(d)}</span>
+      </div>
       </div>
     </div>`;
   }).join('');

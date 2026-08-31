@@ -709,3 +709,24 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 
 /* ═══ 上下文用量 / 机检提示条（自检与向导共用） ═══ */
 .usage-bar { font-family: var(--mono); font-size: .68rem; letter-spacing: .04em; color: var(--dim); background: rgb(var(--mid-base) / .04); border: 1px solid var(--border); border-radius: 2px; padding: 8px 10px; line-height: 1.7; }
+
+/* ═══ 顶栏左侧品牌组：yu.ai 徽记 + 分隔线 + 织文（打包后 space-between 才不会把织文挤到中间） ═══ */
+.header-left { display: flex; align-items: center; gap: 12px; }
+
+/* ═══ 书封：书名竖排上封面 ═══ */
+.novel-card { display: flex; align-items: center; gap: 16px; }
+.novel-card-body { flex: 1; min-width: 0; }
+.novel-card-cover {
+  flex-shrink: 0; width: 42px; height: 58px;
+  border: 1px solid var(--border-strong); border-left: 3px solid var(--accent);
+  background: rgb(var(--mid-base) / .05);
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .25s var(--ease);
+}
+.novel-card:hover .novel-card-cover { border-color: var(--accent); }
+.novel-card-cover span {
+  writing-mode: vertical-rl; font-family: var(--serif); font-weight: 700;
+  font-size: .78rem; letter-spacing: .12em; color: var(--mid);
+  max-height: 46px; overflow: hidden;
+}
+.novel-card-cover.short { border-left-color: var(--warn); }
