@@ -31,6 +31,17 @@
         "mentions": { "$ref": "#/$defs/idList" },
         "flags": { "type": "array", "items": { "enum": ["flashback", "dream", "quoted", "offscreen", "montage"] }, "uniqueItems": true },
         "summary": { "type": "string", "maxLength": 400 },
+        "info_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "章节信息控制：读者知道什么、主角知道什么、必须隐瞒什么、只能暗示什么（悬念字段）",
+          "properties": {
+            "readerKnows": { "type": "string" },
+            "protagonistKnows": { "type": "string" },
+            "mustHide": { "type": "string" },
+            "onlyHint": { "type": "string" }
+          }
+        },
         "x-words": { "type": "integer" },
         "x-updated": { "type": "string" }
       }

@@ -12,7 +12,7 @@
  */
 
 const DB_NAME = 'novelweave_db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let _dbPromise = null;
 
@@ -42,6 +42,16 @@ function openDB() {
         const s = db.createObjectStore('states', { keyPath: 'id' });
         s.createIndex('novel_id', 'novel_id', { unique: false });
         s.createIndex('chapter', 'chapter', { unique: false });
+      }
+      // v5：创作决策记录（Decision）与 LLM 用量流水。决策当场记档、推翻留痕；
+      // 用量按次记，供设置页统计与未来成本预估。
+      if (!db.objectStoreNames.contains('decisions')) {
+        const s = db.createObjectStore('decisions', { keyPath: 'id' });
+        s.createIndex('novel_id', 'novel_id', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('usage')) {
+        const s = db.createObjectStore('usage', { keyPath: 'id' });
+        s.createIndex('novel_id', 'novel_id', { unique: false });
       }
       // v4：正文版本快照。润色是整章替换，没有留底就是不可逆的覆盖。
       if (!db.objectStoreNames.contains('revisions')) {
@@ -184,7 +194,7 @@ async function updateNovel(id, updates) {
 }
 
 /** 删书必须一起清掉的从属表；漏一个就会留下再也查不到的孤儿数据。 */
-const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions'];
+const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions', 'decisions', 'usage'];
 
 async function deleteNovel(id) {
   for (const store of CASCADE_STORES) {
@@ -524,5 +534,36 @@ window.NovelDB = {
     snapshot: snapshotRevision, list: listRevisions, delete: deleteRevision,
     clearChapter: clearChapterRevisions, keep: REVISION_KEEP,
   },
-  STATE_DIMS,
+  decisions:    { list: listDecisions, save: saveDecision, supersede: supersedeDecision, delete: deleteDecision },
+  usage:        { list: listUsage, record: recordUsage },
 };
+
+// ═══════════ 决策记录(Decision)与用量(usage) ═══════════
+
+async function saveDecision(novelId, { title, reason, risk = '', supersededBy = null }) {
+  return put('decisions', {
+    id: newId('dec'), novel_id: novelId, title, reason, risk,
+    supersededBy, created_at: Date.now(),
+  });
+}
+async function listDecisions(novelId) {
+  return stableSort(await getByIndex('decisions', 'novel_id', novelId)).reverse();
+}
+async function supersedeDecision(id, reason) {
+  const d = await get('decisions', id);
+  if (!d) throw new Error('决策不存在');
+  return put('decisions', { ...d, supersededBy: reason || '推翻', updated_at: Date.now() });
+}
+async function deleteDecision(id) { await del('decisions', id); }
+
+async function recordUsage(novelId, { tool, charsIn, charsOut, durationMs }) {
+  return put('usage', {
+    id: newId('use'), novel_id: novelId, tool,
+    chars_in: charsIn || 0, chars_out: charsOut || 0, duration_ms: durationMs || 0,
+    at: Date.now(),
+  });
+}
+async function listUsage(novelId, limit = 200) {
+  const rows = (await getByIndex('usage', 'novel_id', novelId)) || [];
+  return rows.sort((a, b) => b.at - a.at).slice(0, limit);
+}

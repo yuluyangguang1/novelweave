@@ -207,6 +207,7 @@
       mentions: declared.length ? declared : derived,
       locations: ch.locations || [], flags: ch.flags || [],
       summary: ch.summary || '', xWords: ch.word_count ?? null, body, meta: null,
+      infoControl: ch.info_control || null,
     };
   }
 

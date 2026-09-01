@@ -33,6 +33,8 @@ const AUTOSAVE_MS = 15000;
 const AI_TOOLS = [
   { id: 'continue',    icon: 'insert',  label: '续写',     needsChapter: true,  maxTokens: 8000 },
   { id: 'polish',      icon: 'sparkle', label: '润色',     needsChapter: true,  maxTokens: 4000, needsContent: true },
+  { id: 'refine',      icon: 'check',    label: '语病精修', needsChapter: true,  maxTokens: 4000, needsContent: 200 },
+  { id: 'review',      icon: 'bank',     label: '编辑评审', needsChapter: true,  maxTokens: 3000, needsContent: 200 },
   { id: 'consistency', icon: 'search',  label: '一致性检查', needsChapter: true,  maxTokens: 4000, needsContent: 100 },
   { id: 'summarize',   icon: 'note',    label: '总结本章',  needsChapter: true,  maxTokens: 1000, needsContent: true },
   { id: 'outline',     icon: 'chapter', label: '生成大纲',  needsChapter: true,  maxTokens: 4000 },
@@ -46,6 +48,7 @@ const TABS = [
   { id: 'timeline',   icon: 'clock',    label: '时间线',   hasAdd: true,  addTitle: '添加时间锚点' },
   { id: 'states',     icon: 'compass',  label: '状态',     hasAdd: false, addTitle: '' },
   { id: 'continuity', icon: 'search',   label: '连续性',   hasAdd: false, addTitle: '' },
+  { id: 'decisions',  icon: 'bank',     label: '决策',     hasAdd: true,  addTitle: '记一条创作决策' },
   { id: 'notes',      icon: 'note',     label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
   { id: 'settings',   icon: 'settings', label: 'AI 设置',  hasAdd: false, addTitle: '' },
 ];
@@ -135,7 +138,7 @@ function showOnboarding() {
 
 async function onPageEntered(page, params) {
   if (page === 'home') { await renderHomePage(); return; }
-  if (page === 'settings') { renderSettings(); return; }
+  if (page === 'settings') { await renderSettings(); return; }
   if (page === 'workspace') { await enterWorkspace(params); return; }
 }
 
@@ -159,6 +162,7 @@ const ACTIONS = {
   'edit-char':     (id) => editCharacter(id),
   'edit-world':    (id) => editWorldbuilding(id),
   'edit-note':     (id) => editNote(id),
+  'edit-decision': (id) => editDecision(id),
   'save-chapter':  () => saveChapter(),
   'edit-cast':     () => showCastPanel(),
   'edit-summary':  () => showSummaryEditor(),
@@ -820,6 +824,7 @@ const ADD_ACTIONS = {
   'nav-add-promises': () => showCreatePromise(),
   'nav-add-timeline': () => showCreateAnchor(),
   'nav-add-notes': () => showCreateNote(),
+  'nav-add-decisions': () => showCreateDecision(),
 };
 Object.assign(ACTIONS, ADD_ACTIONS);
 Object.assign(ACTIONS, {
@@ -841,6 +846,7 @@ const SIDEBAR_VIEWS = {
   timeline: showTimelineList,
   states: showStatesPanel,
   continuity: showContinuity,
+  decisions: showDecisionList,
   notes: showNotesList,
   settings: renderWorkspaceSettings,
 };
@@ -1962,6 +1968,20 @@ async function runAITool(toolId, target) {
       { role: 'system', content: '你是中文文字编辑，只改善表达，不改动情节事实。' },
       { role: 'user', content: NovelLLM.buildPolishPrompt(content) },
     ];
+  } else if (toolId === 'refine') {
+    messages = [
+      { role: 'system', content: '你是中文文字编辑，只修语言问题，不改情节事实。' },
+      { role: 'user', content: NovelLLM.buildRefinePrompt(content) },
+    ];
+  } else if (toolId === 'review') {
+    const ic = APP.chapter?.info_control;
+    const chapterInfo = ic
+      ? `读者已知：${ic.readerKnows || '-'}｜主角已知：${ic.protagonistKnows || '-'}｜必须隐瞒：${ic.mustHide || '-'}｜只能暗示：${ic.onlyHint || '-'}`
+      : null;
+    messages = [
+      { role: 'system', content: '你是资深网文编辑，只输出评审报告，不改写正文。' },
+      { role: 'user', content: NovelLLM.buildReviewPrompt(content, chapterInfo) },
+    ];
   } else if (toolId === 'outline') {
     const chapters = await NovelDB.chapters.list(novelId);
     messages = [
@@ -1995,6 +2015,8 @@ async function runAITool(toolId, target) {
     return;
   }
   APP.lastAIResult = full;
+  // 用量流水:按次记录(供设置页统计;失败不碍主流程)
+  try { NovelDB.usage.record(APP.novelId, { tool: toolId, charsIn: messages.reduce((n, m) => n + (m.content || '').length, 0), charsOut: full.length, durationMs: 0 }); } catch (_) {}
 
   // 生成后自检：草稿先在内存里过一遍机器规则。有 error/warn 就把诊断转成
   // 修订指令，让模型自修一轮，然后把「修订稿 + 机检发现」一起交给作者。
@@ -2330,7 +2352,7 @@ async function importNovelweave() {
 
 // ═══════════════════ 全局设置页 ═══════════════════
 
-function renderSettings() {
+async function renderSettings() {
   const cfg = NovelLLM.getConfig() || {};
   const body = document.getElementById('settings-body');
   if (!body) return;
@@ -2377,6 +2399,10 @@ function renderSettings() {
     <div class="settings-section" style="margin-top:20px;">
       <div class="settings-section-title">关于织文</div>
       <div class="settings-hint">NovelWeave · 织文 — AI 网文作者辅助工具<br>纯前端 · 零服务器 · IndexedDB 本地存储</div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">AI 用量</div>
+      <div id="usage-panel" class="settings-hint">加载中…</div>
     </div>`;
 }
 
@@ -2452,3 +2478,79 @@ Object.assign(ACTIONS, {
     showToast('备份已导出');
   },
 });
+
+  renderUsagePanel();
+
+/** AI 用量面板:按工具聚合次数与字数。 */
+async function renderUsagePanel() {
+  const host = document.getElementById('usage-panel');
+  if (!host || !APP.novelId) { if (host) host.textContent = '进入一本书后开始记录'; return; }
+  try {
+    const rows = await NovelDB.usage.list(APP.novelId, 500);
+    if (!rows.length) { host.textContent = '暂无调用记录'; return; }
+    const byTool = new Map();
+    for (const r of rows) {
+      const t = byTool.get(r.tool) || { n: 0, out: 0 };
+      t.n++; t.out += r.chars_out || 0;
+      byTool.set(r.tool, t);
+    }
+    const total = rows.length;
+    host.innerHTML = '近 ' + total + ' 次调用：' + [...byTool.entries()].map(([t, v]) => t + ' ' + v.n + ' 次 / ' + formatWordCount(v.out)).join(' · ');
+  } catch (_) { host.textContent = '读取失败'; }
+}
+
+// ═══════════════════ 决策记录(Decision) ═══════════════════
+// 学 neuro-book:创作决策当场记档(为什么让主角黑化),风险必填,推翻留痕。
+// 决策不进上下文 —— 它是给作者回头看的,不是给模型喂的。
+
+async function showDecisionList(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const list = await NovelDB.decisions.list(APP.novel.id);
+  if (!list.length) { host.innerHTML = emptyHint('点击 + 记一条创作决策'); return; }
+  host.innerHTML = '<div class="char-list">'
+    + list.map((d) => `
+      <div class="char-card" data-action="edit-decision" data-id="${attr(d.id)}">
+        <div class="char-card-name">${esc(d.title)}${d.supersededBy ? ' <span class="novel-card-upgrade">已推翻</span>' : ''}</div>
+        <div class="char-card-desc">${esc((d.reason || '').slice(0, 60))}${d.risk ? '<br>风险：' + esc(d.risk.slice(0, 40)) : ''}</div>
+      </div>`).join('')
+    + '</div>';
+}
+
+function showCreateDecision(existing) {
+  const isEdit = !!existing;
+  showModal(isEdit ? '编辑决策' : '记一条创作决策', `
+    <div class="settings-field"><label class="settings-label">决策 *</label>
+      <input class="settings-input" id="inp-dec-title" value="${attr(existing?.title || '')}" maxlength="60" placeholder="例：让主角在第 12 章黑化"></div>
+    <div class="settings-field"><label class="settings-label">理由（为什么）*</label>
+      <textarea class="settings-input" id="inp-dec-reason" rows="3" placeholder="三个月后回看,这里的理由就是你的依据">${esc(existing?.reason || '')}</textarea></div>
+    <div class="settings-field"><label class="settings-label">风险（这一步赌了什么）</label>
+      <input class="settings-input" id="inp-dec-risk" value="${attr(existing?.risk || '')}" placeholder="例：读者可能不接受主角伤人"></div>
+  `, async () => {
+    const title = val('inp-dec-title');
+    if (!title) { showToast('决策不能为空'); return; }
+    const row = { title, reason: val('inp-dec-reason'), risk: val('inp-dec-risk') };
+    if (isEdit) await NovelDB.decisions.update(existing.id, row);
+    else await NovelDB.decisions.save(APP.novel.id, row);
+    closeModal();
+    showToast(isEdit ? '决策已更新' : '决策已记档');
+    await renderSidebarPanel();
+  });
+  if (isEdit) {
+    const del = document.getElementById('modal-del-btn');
+    if (del) del.onclick = async () => {
+      if (!confirm('删除这条决策？')) return;
+      await NovelDB.decisions.delete(existing.id);
+      closeModal();
+      await renderSidebarPanel();
+    };
+  }
+  setTimeout(() => document.getElementById('inp-dec-title')?.focus(), 60);
+}
+
+function editDecision(id) {
+  NovelDB.decisions.list(APP.novel.id).then((list) => {
+    const d = list.find((x) => x.id === id);
+    if (d) showCreateDecision(d);
+  });
+}

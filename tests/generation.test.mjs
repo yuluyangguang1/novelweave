@@ -375,3 +375,48 @@ test('parseConceptJSON：缺书名或缺章节必须拒绝，不能带病建档'
   assert.throws(() => NovelLLM.parseConceptJSON('{"title":"只有书名"}'), /章节/);
   assert.throws(() => NovelLLM.parseConceptJSON('我觉得这个故事不错'), /JSON/);
 });
+
+// ═══════════════ 章节信息控制(悬念字段) ═══════════════
+
+test('信息控制：mustHide/onlyHint 进入硬禁令，随禁令排在第一节', () => {
+  const r = rows({
+    chapters: [
+      { id: 'ch-001', order: 1, title: '山门', content: 'x',
+        info_control: { readerKnows: '师父死了', protagonistKnows: '铜印会烫', mustHide: '灰衣人的身份', onlyHint: '铜印的另一半' } },
+      { id: 'ch-002', order: 2, title: '夜行', content: '' },
+    ],
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }],
+    promises: [],
+  });
+  const ctx = NWStory.buildCtx(r);
+  // 以 ch-001 为目标章(其 info_control 已填)验证注入
+  const built = NWContext.buildSections(ctx, { chapterId: 'ch-001' });
+  const ban = built.sections.find((s) => s.name === '硬禁令');
+  assert.ok(ban, '有 mustHide 时硬禁令节要出现');
+  assert.match(ban.text, /【必须隐瞒】本章不得揭示：灰衣人的身份/);
+  assert.match(ban.text, /【只能暗示】本章可暗示但不可点破：铜印的另一半/);
+  assert.equal(built.sections[0].name, '硬禁令');
+});
+
+test('信息控制：未填写时不注入，硬禁令节不出现', () => {
+  const r = rows({
+    chapters: [{ id: 'ch-001', order: 1, title: '山门', content: 'x' },
+               { id: 'ch-002', order: 2, title: '夜行', content: '' }],
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }],
+    promises: [],
+  });
+  const ctx = NWStory.buildCtx(r);
+  const built = NWContext.buildSections(ctx, { chapterId: 'ch-002' });
+  assert.ok(!built.sections.some((s) => s.name === '硬禁令'));
+});
+
+test('三重管线 prompt：Refine 只修语言；Review 四维度且携带信息控制', () => {
+  const refine = NovelLLM.buildRefinePrompt('正文的文字。');
+  assert.match(refine, /只修语言问题/);
+  assert.match(refine, /不得改动情节事实/);
+  const review = NovelLLM.buildReviewPrompt('正文的文字。', '必须隐瞒：灰衣人身份');
+  assert.match(review, /节奏/);
+  assert.match(review, /人物/);
+  assert.match(review, /伏笔/);
+  assert.match(review, /必须隐瞒：灰衣人身份/);
+});

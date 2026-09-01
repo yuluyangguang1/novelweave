@@ -113,6 +113,36 @@ ${String(content || '').slice(0, 6000)}
 ${title ? `【章节】${title}\n` : ''}${String(content || '').slice(0, 8000)}`;
   }
 
+  /** 语病精修(Refine):只修语言,不动事实 —— 三重管线第二环(学 vela)。 */
+  function buildRefinePrompt(content) {
+    return `你是中文文字编辑。检查下面章节的语病、错别字、重复用词与不通顺的句子，逐一改正。
+
+【要求】
+- 只修语言问题：错别字、语法、搭配、重复、标点
+- 不得改动情节事实、对白信息量与叙事顺序
+- 只输出修改后的完整正文，不要任何解释
+
+【正文】
+${String(content || '').slice(0, 8000)}`;
+  }
+
+  /** 编辑视角评审(Review):三重管线第三环,只出报告不动稿。 */
+  function buildReviewPrompt(content, chapterInfo) {
+    return `你是资深网文编辑，以读者与编辑双重视角评审下面这一章。
+
+${chapterInfo ? `【本章信息】${chapterInfo}\n` : ''}
+【正文】
+${String(content || '').slice(0, 8000)}
+
+从四个维度逐条点评，每条注明原文依据与改进建议；没有问题的维度写"通过"：
+1. 节奏：场景推进是否拖沓或跳跃，章末钩子是否成立
+2. 人物：言行是否符合既定性格，动机是否成立
+3. 伏笔：本章埋设/回收是否自然，是否与既定承诺一致
+4. 文字：是否有明显的套路化表达或节奏单调
+
+只输出评审报告，不要改写正文。`;
+  }
+
   /** 润色。只改表达，不改事实——这条约束是防止 AI 顺手把剧情改了。 */
   function buildPolishPrompt(content, instructions) {
     return `润色下面的文字，保持原意、人称、时态和风格，使表达更流畅、有画面感。
@@ -325,6 +355,7 @@ ${chText}
     buildContinuePrompt, buildContinueContext, buildConsistencyCheckPrompt, buildSummarizePrompt,
     buildPolishPrompt, buildOutlinePrompt,
     buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS,
+    buildRefinePrompt, buildReviewPrompt,
     buildLongConceptPrompt, LONG_VOLUME_OPTIONS,
     streamChat, requestChat, testConnection,
   };

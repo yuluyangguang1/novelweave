@@ -136,6 +136,7 @@ export function loadBook(bookDir, opts = {}) {
             locations: data.locations || [],
             flags: data.flags || [],
             summary: data.summary || '',
+            info_control: data.info_control || null,
             xWords: data['x-words'] ?? null,
             body,
           };

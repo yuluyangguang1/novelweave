@@ -173,7 +173,7 @@
   // 所以它排在第一节，预算再紧也先保它 —— 事后机检能抓到越界，但那一轮改写的
   // 成本比一开始就别说错要高得多。
 
-  function hardBanBlock(ctx, chapters, targetN) {
+  function hardBanBlock(ctx, chapters, targetN, current) {
     const lines = [];
     const dead = (ctx.characters || []).filter((c) => c.status === 'deceased' && c.enabled !== false);
     if (dead.length) {
@@ -189,6 +189,13 @@
     if (due.length) {
       lines.push('- 以下伏笔已到回收期限，本章应收束或明确写出推迟理由：'
         + due.map((i) => `${i.title}（埋于 ${i.setup?.chapter || '?'}，期限 ${i.payoff.due}）`).join('、'));
+    }
+    // 信息控制(悬念字段):目标章的 mustHide/onlyHint 是硬约束
+    const target = current || chapters[chapters.length - 1];
+    const ic = target?.infoControl;
+    if (ic) {
+      if (ic.mustHide) lines.push(`- 【必须隐瞒】本章不得揭示：${ic.mustHide}`);
+      if (ic.onlyHint) lines.push(`- 【只能暗示】本章可暗示但不可点破：${ic.onlyHint}`);
     }
     return lines.length ? lines.join('\n') : null;
   }
@@ -250,7 +257,7 @@
     const targetN = current
       ? (current.number ?? current.order)
       : (chapters.length ? (chapters[chapters.length - 1].number ?? chapters[chapters.length - 1].order) : null);
-    const banText = hardBanBlock(ctx, chapters, targetN);
+    const banText = hardBanBlock(ctx, chapters, targetN, current);
 
     const useStyle = !!opts.style;
     const exemplars = useStyle ? pickStyleExemplars(chapters, current) : [];
