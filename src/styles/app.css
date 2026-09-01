@@ -775,3 +775,40 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 /* SW 横幅关闭钮 */
 .sw-close { background: none; border: none; color: var(--bg); font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 6px; margin-left: 4px; opacity: .8; }
 .sw-close:hover { opacity: 1; }
+
+/* ═══════════════════════════════════════════════════════════
+   审美升级 · 借鉴 mono-color-skill(单墨孔版印刷编辑美学)
+   原则映射(织文=单墨"朱砂"体系,不引入第二印刷色):
+   · 5x-12x 尺度跳跃:hero 标题为微标签的 5 倍以上
+   · 留白是主动节奏:编辑器列宽收窄、空态留白充足
+   · 强调色只承担"一个角色":朱砂仅用于焦点(当前项/数字/主 CTA)
+   · 微字号纪律:mono 小字 10-11px 间距加大,不做彩色装饰
+   · 无阴影无渐变(原本就守住了),去掉残余的重叠装饰
+   ═══════════════════════════════════════════════════════════ */
+
+/* 1. 尺度跳跃:首页空态标题与说明文字拉大对比(约 5x) */
+.empty-title { font-size: 1.7rem; letter-spacing: .06em; }
+.empty-text { max-width: 34em; margin-left: auto; margin-right: auto; }
+
+/* 2. 编辑器:阅读列宽收窄 + 行距微调(约 38-42 字/行) */
+.editor-textarea { max-width: 46em; margin: 0 auto; line-height: 2.05; }
+
+/* 3. 统计条数字:让数字成为小焦点(等宽+朱砂已有,加字距) */
+.home-stats b { letter-spacing: .04em; }
+
+/* 4. 卡片:封面书名即"主导对象",弱化其余线条(纸面呼吸) */
+.novel-card { padding: 18px 22px; }
+
+/* 5. 侧栏导航项:激活态用朱砂左边线(单强调色纪律:一处焦点) */
+.sidebar-nav-item { border-left: 2px solid transparent; }
+.sidebar-nav-item.active { border-left-color: var(--accent); background: rgb(var(--accent-base) / .05); }
+
+/* 6. 按钮层级:主按钮唯一、次按钮全素色(双色纪律:墨+朱砂) */
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { filter: brightness(1.06); }
+
+/* 7. 编辑器顶栏微字号统一 11px 字距 .12em(纪律化微排版) */
+.editor-toolbar { font-size: 11px; letter-spacing: .12em; }
+
+/* 8. 弹层与横幅同源:无阴影,用 1px 强边框(印刷感) */
+.modal { box-shadow: none; border: 1px solid var(--border-strong); }
