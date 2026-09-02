@@ -420,3 +420,53 @@ test('三重管线 prompt：Refine 只修语言；Review 四维度且携带信�
   assert.match(review, /伏笔/);
   assert.match(review, /必须隐瞒：灰衣人身份/);
 });
+
+// ═══════════════ R19 关系矛盾 ═══════════════
+
+test('R19：同一对角色 kind 互相矛盾的边 → warn', () => {
+  const r = rows({
+    chapters: [{ id: 'ch-001', order: 1, title: '山门', content: 'x' }],
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' },
+                 { id: 'c_su', name: '苏晚', role: '配角', status: 'alive' }],
+    relations: { edges: [
+      { id: 'r1', from: 'c_lin', to: 'c_su', kind: '同门' },
+      { id: 'r2', from: 'c_su', to: 'c_lin', kind: '敌对' },
+    ] },
+  });
+  const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['relation-contradiction'] });
+  const hit = diags.find((d) => d.rule === 'relation-contradiction');
+  assert.ok(hit, '矛盾边要被点名');
+  assert.equal(hit.severity, 'warn');
+  assert.match(hit.message, /同门 \/ 敌对/);
+});
+
+test('R19：称谓越界 —— 登记了 address 但正文用了其他强称谓 → warn', () => {
+  const r = rows({
+    chapters: [{ id: 'ch-001', order: 1, title: '山门',
+      content: '林烟火见到苏晚，脱口喊了声师父。' }],
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' },
+                 { id: 'c_su', name: '苏晚', role: '配角', status: 'alive' }],
+    relations: { edges: [
+      { id: 'r1', from: 'c_lin', to: 'c_su', kind: '同门', address: '师姐' },
+    ] },
+  });
+  const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['relation-contradiction'] });
+  const hit = diags.find((d) => d.rule === 'relation-contradiction');
+  assert.ok(hit, '称谓不符要提示');
+  assert.equal(hit.severity, 'warn', '可能是口癖设计,恒为 warn');
+  assert.match(hit.message, /师姐/);
+});
+
+test('R19：正文正常使用登记称谓 → 不提示', () => {
+  const r = rows({
+    chapters: [{ id: 'ch-001', order: 1, title: '山门',
+      content: '林烟火向苏晚行礼，叫了声师姐。' }],
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' },
+                 { id: 'c_su', name: '苏晚', role: '配角', status: 'alive' }],
+    relations: { edges: [
+      { id: 'r1', from: 'c_lin', to: 'c_su', kind: '同门', address: '师姐' },
+    ] },
+  });
+  const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['relation-contradiction'] });
+  assert.equal(diags.filter((d) => d.rule === 'relation-contradiction').length, 0);
+});

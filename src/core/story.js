@@ -310,6 +310,7 @@
       timeline: toTimeline(rows.timeline || []),
       lexicon,
       suppressions: toSuppressions(rows.suppressions || []),
+      relations: rows.relations || { edges: [] },
       chapterNumbers: new Map(chapters.map((c) => [c.id, c.number])),
     };
   }

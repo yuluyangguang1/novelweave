@@ -45,6 +45,11 @@ function openDB() {
       }
       // v5：创作决策记录（Decision）与 LLM 用量流水。决策当场记档、推翻留痕；
       // 用量按次记，供设置页统计与未来成本预估。
+      // v5b：关系边(作者登记的结构化事实,与状态矩阵同级)
+      if (!db.objectStoreNames.contains('relations')) {
+        const s = db.createObjectStore('relations', { keyPath: 'id' });
+        s.createIndex('novel_id', 'novel_id', { unique: false });
+      }
       if (!db.objectStoreNames.contains('decisions')) {
         const s = db.createObjectStore('decisions', { keyPath: 'id' });
         s.createIndex('novel_id', 'novel_id', { unique: false });
@@ -195,7 +200,7 @@ async function updateNovel(id, updates) {
 }
 
 /** 删书必须一起清掉的从属表；漏一个就会留下再也查不到的孤儿数据。 */
-const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions', 'decisions', 'usage'];
+const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions', 'decisions', 'usage', 'relations'];
 
 async function deleteNovel(id) {
   for (const store of CASCADE_STORES) {
@@ -531,40 +536,30 @@ window.NovelDB = {
     delete: deleteState, clearChapter: clearChapterStates, bytes: chapterStateBytes,
     dims: STATE_DIMS, idOf: stateId,
   },
+
+
+  relations:    { list: listRelations, save: saveRelation, delete: deleteRelation },
+  decisions:    { list: listDecisions, save: saveDecision, supersede: supersedeDecision, delete: deleteDecision },
   revisions: {
     snapshot: snapshotRevision, list: listRevisions, delete: deleteRevision,
     clearChapter: clearChapterRevisions, keep: REVISION_KEEP,
   },
-  decisions:    { list: listDecisions, save: saveDecision, supersede: supersedeDecision, delete: deleteDecision },
   usage:        { list: listUsage, record: recordUsage },
 };
 
-// ═══════════ 决策记录(Decision)与用量(usage) ═══════════
 
-async function saveDecision(novelId, { title, reason, risk = '', supersededBy = null }) {
-  return put('decisions', {
-    id: newId('dec'), novel_id: novelId, title, reason, risk,
-    supersededBy, created_at: Date.now(),
+
+// ═══════════ 决策记录(Decision)/用量(usage)/关系(relations) ═══════════
+
+async function saveRelation(novelId, edge) {
+  return put('relations', {
+    id: edge.id || newId('rel'), novel_id: novelId,
+    from: edge.from, to: edge.to, kind: edge.kind,
+    address: edge.address || '', since: edge.since || null, until: edge.until || null,
+    notes: edge.notes || '', created_at: Date.now(), updated_at: Date.now(),
   });
 }
-async function listDecisions(novelId) {
-  return stableSort(await getByIndex('decisions', 'novel_id', novelId)).reverse();
+async function listRelations(novelId) {
+  return stableSort(await getByIndex('relations', 'novel_id', novelId));
 }
-async function supersedeDecision(id, reason) {
-  const d = await get('decisions', id);
-  if (!d) throw new Error('决策不存在');
-  return put('decisions', { ...d, supersededBy: reason || '推翻', updated_at: Date.now() });
-}
-async function deleteDecision(id) { await del('decisions', id); }
-
-async function recordUsage(novelId, { tool, charsIn, charsOut, durationMs }) {
-  return put('usage', {
-    id: newId('use'), novel_id: novelId, tool,
-    chars_in: charsIn || 0, chars_out: charsOut || 0, duration_ms: durationMs || 0,
-    at: Date.now(),
-  });
-}
-async function listUsage(novelId, limit = 200) {
-  const rows = (await getByIndex('usage', 'novel_id', novelId)) || [];
-  return rows.sort((a, b) => b.at - a.at).slice(0, limit);
-}
+async function deleteRelation(id) { await del('relations', id); }

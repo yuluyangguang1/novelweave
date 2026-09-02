@@ -745,7 +745,72 @@
         return out;
       },
     },
+  'relation-contradiction': {
+    code: 'R19',
+    defaultSeverity: 'warn',
+    scope: 'book',
+    summary: '称谓与登记关系不符，或同一对角色的关系边互相矛盾。',
+    detail:
+      '以 relations.edges 为准：①同一对实体存在两条 kind 不同的边 → warn（双向矛盾）；' +
+      '②登记了 address 的边，正文出现其他强称谓词且客体名字在场 → 提示人工复核' +
+      '（可能是口癖/反讽设计，所以保留 confidence 0.5）。关系是作者登记的结构化事实，' +
+      '判断不经过模型与词频统计，属机器规则；但称谓设计空间大，故默认 warn 不作 error。',
+    run(ctx) {
+      const out = [];
+      const edges = (ctx.relations?.edges || []).filter((e) => e && e.from && e.to && e.kind);
+      if (!edges.length) return out;
+      // ① 双向一致性
+      const pairKey = (x, y) => [x, y].sort().join('|');
+      const pairs = new Map();
+      for (const e of edges) {
+        const k = pairKey(e.from, e.to);
+        if (!pairs.has(k)) pairs.set(k, []);
+        pairs.get(k).push(e);
+      }
+      for (const [k, group] of pairs) {
+        if (group.length < 2) continue;
+        const kinds = new Set(group.map((e) => e.kind));
+        if (kinds.size > 1) {
+          out.push(diag('relation-contradiction', {
+            entity: k,
+            severity: 'warn',
+            evidence: { basis: group.map((e) => e.from + '→' + e.to + ': ' + e.kind) },
+            message: '同一对角色登记了互相矛盾的关系：' + [...kinds].join(' / ') + '。',
+            suggestion: '确认哪条是对的：修正另一条，或给其中一条加 until 表示关系已变化。',
+          }));
+        }
+      }
+      // ② 称谓检查:仅对登记了 address 的边做正文比对
+      const byId = new Map(ctx.characters.map((c) => [c.id, c]));
+      for (const e of edges) {
+        if (!e.address) continue;
+        const from = byId.get(e.from), to = byId.get(e.to);
+        if (!from || !to) continue;
+        for (const ch of ctx.chapters) {
+          if (isExempt(ch)) continue;
+          const body = ch.body || '';
+          if (!body.includes(from.name) || !body.includes(to.name)) continue;
+          if (body.includes(e.address)) continue;
+          const OTHER = /哥哥|姐姐|师父|师傅|师尊|老爷|大人|兄弟|姐妹|叔|伯|婶|姨|徒儿|徒弟/;
+          if (OTHER.test(body)) {
+            out.push(diag('relation-contradiction', {
+              chapter: ch.id,
+              entity: e.from + '|' + e.to,
+              severity: 'warn',
+              confidence: 0.5,
+              evidence: { basis: ['登记称谓「' + e.address + '」', '正文出现其他称谓词'] },
+              message: ch.id + ' 中 ' + from.name + ' 对 ' + to.name + ' 的称呼可能与登记关系「' + e.kind + '（' + e.address + '）」不符。',
+              suggestion: '若为口癖/反讽设计，可忽略或豁免本条指纹；否则改称呼或修正关系登记。',
+            }));
+          }
+        }
+      }
+      return out;
+    },
+  },
+
   };
+
 
   // ═══════════════════ 执行 ═══════════════════
 

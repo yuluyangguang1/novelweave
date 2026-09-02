@@ -307,3 +307,14 @@ README 只写已经能用的一切；这个文件写还没做的。
   (硅基流动 bge 系列免费),Key 复用聊天配置只存本机。配置变更自动作废向量缓存。
 - 续写流程:ensureEmbeddings() → 查询向量(本章拍点摘要 + 正文尾部) →
   rankByVector topK=3 → 相关旧章节替换为语义召回结果。
+
+## P0-2 关系图谱(已落地 —— schema v1 增补 relations)
+
+- **`relations.json` / IndexedDB `relations` 表**:边 = from→to 的 kind(关系类型)、
+  address(称谓)、since/until(生效区间,死亡/决裂)。schema 增补 `relationEdge`/`relations`。
+- **侧栏「关系」页**:登记/编辑/删除关系边;客体选单来自角色卡;称谓是 R19 的检查依据。
+- **R19 关系矛盾**:①同一对角色存在 kind 互相矛盾的边 → warn;②登记了 address 的边,
+  正文出现其他强称谓词且客体在场 → warn(可能口癖设计,confidence 0.5,可豁免)。
+- buildCtx/CLI loadBook 双端透传 relations;连续性面板可查。
+- **AI 抽关系边(提案制)与可视化**:未做,列下一批。参考 graphify-novel 的做法:
+  LLM 从正文抽取候选边 → 作者确认才入库,与 ---CHANGES--- 同构。

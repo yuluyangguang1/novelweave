@@ -49,6 +49,7 @@ const TABS = [
   { id: 'states',     icon: 'compass',  label: '状态',     hasAdd: false, addTitle: '' },
   { id: 'continuity', icon: 'search',   label: '连续性',   hasAdd: false, addTitle: '' },
   { id: 'decisions',  icon: 'bank',     label: '决策',     hasAdd: true,  addTitle: '记一条创作决策' },
+  { id: 'relations',  icon: 'thread',   label: '关系',     hasAdd: true,  addTitle: '登记一条关系' },
   { id: 'notes',      icon: 'note',     label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
   { id: 'settings',   icon: 'settings', label: 'AI 设置',  hasAdd: false, addTitle: '' },
 ];
@@ -163,6 +164,7 @@ const ACTIONS = {
   'edit-world':    (id) => editWorldbuilding(id),
   'edit-note':     (id) => editNote(id),
   'edit-decision': (id) => editDecision(id),
+  'edit-relation': (id) => editRelation(id),
   'save-chapter':  () => saveChapter(),
   'edit-cast':     () => showCastPanel(),
   'edit-summary':  () => showSummaryEditor(),
@@ -840,6 +842,7 @@ const ADD_ACTIONS = {
   'nav-add-timeline': () => showCreateAnchor(),
   'nav-add-notes': () => showCreateNote(),
   'nav-add-decisions': () => showCreateDecision(),
+  'nav-add-relations': () => showCreateRelation(),
 };
 Object.assign(ACTIONS, ADD_ACTIONS);
 Object.assign(ACTIONS, {
@@ -862,6 +865,7 @@ const SIDEBAR_VIEWS = {
   states: showStatesPanel,
   continuity: showContinuity,
   decisions: showDecisionList,
+  relations: showRelationList,
   notes: showNotesList,
   settings: renderWorkspaceSettings,
 };
@@ -1795,7 +1799,7 @@ async function loadStoryCtx() {
     NovelDB.timeline.list(novelId), NovelDB.suppressions.list(novelId), NovelDB.states.list(novelId),
   ]);
   APP.chaptersCache = chapters;
-  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states });
+  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states, relations: { edges: relations } });
 }
 
 async function showContinuity(host) {
@@ -2610,5 +2614,75 @@ function editDecision(id) {
   NovelDB.decisions.list(APP.novel.id).then((list) => {
     const d = list.find((x) => x.id === id);
     if (d) showCreateDecision(d);
+  });
+}
+
+// ═══════════════════ 关系图谱(Relations) ═══════════════════
+// 作者登记的结构化关系事实:from→to 的 kind(关系类型)与 address(称谓)。
+// R19 据此查称谓越界与双向矛盾;编辑评审携带关系作为依据。
+
+async function showRelationList(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const edges = await NovelDB.relations.list(APP.novel.id);
+  const chars = await NovelDB.characters.list(APP.novel.id);
+  const nameOf = (id) => (chars.find((c) => c.id === id) || {}).name || id;
+  if (!edges.length) { host.innerHTML = emptyHint('点击 + 登记一条关系'); return; }
+  host.innerHTML = '<div class="char-list">'
+    + edges.map((e) => `
+      <div class="char-card" data-action="edit-relation" data-id="${attr(e.id)}">
+        <div class="char-card-name">${esc(nameOf(e.from))} → ${esc(nameOf(e.to))}${e.until ? ' <span class="novel-card-upgrade">已结束</span>' : ''}</div>
+        <div class="char-card-desc">${esc(e.kind)}${e.address ? '（称谓：' + esc(e.address) + '）' : ''}${e.since ? '<br>自 ' + esc(e.since) : ''}${e.until ? ' 至 ' + esc(e.until) : ''}</div>
+      </div>`).join('')
+    + '</div>';
+}
+
+function showCreateRelation(existing) {
+  const isEdit = !!existing;
+  NovelDB.characters.list(APP.novel.id).then((chars) => {
+    const opts = (sel) => chars.map((c) => `<option value="${attr(c.id)}" ${sel === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+    showModal(isEdit ? '编辑关系' : '登记一条关系', `
+      <div class="settings-field"><label class="settings-label">主体 *</label>
+        <select class="settings-select" id="inp-rel-from">${opts(existing?.from)}</select></div>
+      <div class="settings-field"><label class="settings-label">客体 *</label>
+        <select class="settings-select" id="inp-rel-to">${opts(existing?.to)}</select></div>
+      <div class="settings-field"><label class="settings-label">关系类型 *</label>
+        <input class="settings-input" id="inp-rel-kind" value="${attr(existing?.kind || '')}" placeholder="例：师徒 / 父女 / 敌对 / 同门" maxlength="20"></div>
+      <div class="settings-field"><label class="settings-label">称谓（主体对客体的称呼，可选）</label>
+        <input class="settings-input" id="inp-rel-address" value="${attr(existing?.address || '')}" placeholder="例：师父 / 老爷"></div>
+      <div class="settings-field"><label class="settings-label">自哪章生效（可选）</label>
+        <input class="settings-input" id="inp-rel-since" value="${attr(existing?.since || '')}" placeholder="例：ch-001"></div>
+      <div class="settings-field"><label class="settings-label">到哪章失效（可选，死亡/决裂）</label>
+        <input class="settings-input" id="inp-rel-until" value="${attr(existing?.until || '')}" placeholder="例：ch-020"></div>
+    `, async () => {
+      const kind = val('inp-rel-kind');
+      if (!kind) { showToast('关系类型不能为空'); return; }
+      const edge = {
+        from: val('inp-rel-from'), to: val('inp-rel-to'), kind,
+        address: val('inp-rel-address'), since: val('inp-rel-since') || null, until: val('inp-rel-until') || null,
+      };
+      if (edge.from === edge.to) { showToast('主体和客体不能相同'); return; }
+      if (isEdit) await NovelDB.relations.save(APP.novel.id, { ...existing, ...edge });
+      else await NovelDB.relations.save(APP.novel.id, edge);
+      closeModal();
+      showToast(isEdit ? '关系已更新' : '关系已登记');
+      await renderSidebarPanel();
+    });
+    if (isEdit) {
+      const del = document.getElementById('modal-del-btn');
+      if (del) del.onclick = async () => {
+        if (!confirm('删除这条关系？')) return;
+        await NovelDB.relations.delete(existing.id);
+        closeModal();
+        await renderSidebarPanel();
+      };
+    }
+  });
+}
+
+function editRelation(id) {
+  NovelDB.relations.list(APP.novel.id).then((list) => {
+    const e = list.find((x) => x.id === id);
+    if (e) showCreateRelation(e);
   });
 }

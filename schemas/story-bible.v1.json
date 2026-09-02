@@ -260,6 +260,31 @@
       }
     },
 
+    "relationEdge": {
+      "type": "object",
+      "required": ["schemaVersion", "id", "from", "to", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "id": { "$ref": "#/$defs/slug" },
+        "from": { "type": "string", "minLength": 1, "description": "关系主体（角色 id 或名字）" },
+        "to": { "type": "string", "minLength": 1, "description": "关系客体" },
+        "kind": { "type": "string", "minLength": 1, "description": "关系类型：父女/师徒/敌对/同门 等" },
+        "address": { "type": "string", "description": "称谓：from 对 to 的称呼，如「师父」" },
+        "since": { "type": "string", "nullable": true, "description": "自哪章生效" },
+        "until": { "type": "string", "nullable": "true", "description": "到哪章失效（死亡/决裂）" },
+        "notes": { "type": "string" }
+      }
+    },
+    "relations": {
+      "type": "object",
+      "required": ["schemaVersion", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "string" },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/relationEdge" } }
+      }
+    },
     "diagnostic": {
       "type": "object",
       "description": "机器规则与 LLM 规则共用同一信封，差异只在 source / confidence / needsReview",
