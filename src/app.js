@@ -348,6 +348,7 @@ async function renderHomePage() {
   if (!novels.length) {
     if (emptyEl) emptyEl.style.display = '';
     listEl.innerHTML = '';
+    renderHomeStats(); // 无书也要刷新统计条(空态隐藏),否则残留上一本的数字
     return;
   }
   if (emptyEl) emptyEl.style.display = 'none';
@@ -581,7 +582,7 @@ function showDeconstruct() {
     try { pat = NovelLLM.parseDeconstructJSON(res.content); }
     catch (e) { showToast('解析失败：' + e.message); return; }
     try {
-      NovelDB.usage.record(APP.novelId, { tool: 'deconstruct', charsIn: text.length, charsOut: res.content.length, durationMs: Date.now() - t0 });
+      if (APP.novelId) NovelDB.usage.record(APP.novelId, { tool: 'deconstruct', charsIn: text.length, charsOut: res.content.length, durationMs: Date.now() - t0 });
     } catch (_) {}
     closeModal();
     // 结果落进「写作笔记」,作者可编辑可删
@@ -725,6 +726,7 @@ async function batchGenerateBook(novelId) {
     waited += 100;
   }
   if (APP.novelId !== targetId) { showToast('工作区未就绪，请稍后在书内点「连续生成正文」'); return; }
+  APP.chaptersCache = null; // 等待期间可能残留上一本书的章列表,强制重读
   const all = APP.chaptersCache && APP.chaptersCache.length ? APP.chaptersCache : (await NovelDB.chapters.list(APP.novelId));
   const pending = all.filter((c) => !(c.body || '').trim());
   if (!pending.length) { showToast('没有待生成的空章节'); return; }
@@ -2711,6 +2713,7 @@ async function showRelationList(host) {
 }
 
 function showCreateRelation(existing) {
+  if (!APP.novel) { showToast('先进入一本书'); return; }
   const isEdit = !!existing;
   NovelDB.characters.list(APP.novel.id).then((chars) => {
     const opts = (sel) => chars.map((c) => `<option value="${attr(c.id)}" ${sel === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
