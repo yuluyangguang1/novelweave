@@ -346,3 +346,13 @@ README 只写已经能用的一切；这个文件写还没做的。
 - **正文转 XHTML**:段落分段、全部转义(模型输出不得注入标记);空书也产出
   合法容器。
 - **入口**:设置页「数据」区「导出当前作品为 EPUB」。
+
+## A. 导出盲区补齐(已落地 —— 代码审计第五章 A 项)
+
+- **relations**:`.novelweave/` 目录的 `bible/relations.json` 原本就在导出树里
+  (CLI loadBook 一直读它),但 Web 导入合并漏了这条 bucket —— 现已补齐,
+  关系边走逐条三方合并(与伏笔/时间线同策略,冲突不自动选边)。
+- **decisions**:新增 `continuity/decisions.json` 投影(决策本来就该进 git,
+  推翻留痕也要导出);loadStoryCtx 透传 ctx.decisions。导入时决策为单文件物,
+  跟随文件版直接覆盖(决策无逐条合并意义)。
+- usage 流水不导出 —— 它是机器统计不是作者内容。

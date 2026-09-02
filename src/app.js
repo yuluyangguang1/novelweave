@@ -1866,13 +1866,14 @@ async function showStateEditor(chapterId, entityId) {
 /** 读全库装配 ctx。与 CLI 唯一的差别是不跑 schema 校验（浏览器里没有那份 JSON）。 */
 async function loadStoryCtx() {
   const novelId = APP.novel.id;
-  const [novel, chapters, characters, world, promises, timeline, suppressions, states] = await Promise.all([
+  const [novel, chapters, characters, world, promises, timeline, suppressions, states, relations, decisions] = await Promise.all([
     NovelDB.novels.get(novelId), NovelDB.chapters.list(novelId), NovelDB.characters.list(novelId),
     NovelDB.worldbuilding.list(novelId), NovelDB.promises.list(novelId),
     NovelDB.timeline.list(novelId), NovelDB.suppressions.list(novelId), NovelDB.states.list(novelId),
+    NovelDB.relations.list(novelId), NovelDB.decisions.list(novelId),
   ]);
   APP.chaptersCache = chapters;
-  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states, relations: { edges: relations } });
+  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states, relations: { edges: relations }, decisions });
 }
 
 async function showContinuity(host) {
@@ -2364,6 +2365,7 @@ async function buildMergePlan(parsed, currentRows) {
     ['promises', 'promise', parsed.promises, currentRows.promises],
     ['timeline', 'anchor', parsed.timeline, currentRows.timeline],
     ['states', 'state', parsed.states || [], currentRows.states || []],
+    ['relations', 'relation', parsed.relations?.edges || [], currentRows.relations || []],
   ];
   for (const [store, kind, fileRows, localRows] of buckets) {
     const localById = new Map(localRows.map((r) => [r.id, r]));

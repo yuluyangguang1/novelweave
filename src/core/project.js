@@ -108,6 +108,10 @@
     }
     files[p('bible/relations.json')] = JSON.stringify(ctx.relations || { schemaVersion: Bible.SCHEMA_VERSION, edges: [] }, null, 2) + '\n';
 
+    // 创作决策记录:决策本来就该进 git —— 推翻留痕也要导出
+    const decisions = (ctx.decisions || []).map((d) => pick(d, ['id', 'title', 'reason', 'risk', 'supersededBy', 'created']));
+    files[p('continuity/decisions.json')] = JSON.stringify({ schemaVersion: Bible.SCHEMA_VERSION, items: decisions }, null, 2) + '\n';
+
     const tl = ctx.timeline || Bible.emptyTimeline();
     const cleanAnchor = (a) => pick(a, ['id', 'chapter', 'label', 'at', 'thread', 'kind', 'entities', 'confidence', 'evidence']);
     const tlOut = {
@@ -258,6 +262,8 @@
       states: Story.stateRowsFromFile(json(files, `${slug}/bible/states.json`), novelId),
       timeline: (json(files, `${slug}/bible/timeline.json`)?.anchors || []).map((rec) => Story.fromAnchor(rec)),
       suppressions: json(files, `${slug}/continuity/suppressions.json`)?.items || [],
+      relations: json(files, `${slug}/bible/relations.json`) || { schemaVersion: Bible.SCHEMA_VERSION, edges: [] },
+      decisions: json(files, `${slug}/continuity/decisions.json`)?.items || [],
       sync: json(files, `${slug}/meta/sync.json`),
     };
   }
