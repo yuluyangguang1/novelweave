@@ -818,3 +818,6 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 .target-progress-bar { height: 4px; background: rgb(var(--mid-base) / .08); }
 .target-progress-bar span { display: block; height: 100%; background: var(--accent); transition: width .3s var(--ease); }
 .target-progress-text { margin-top: 4px; font-family: var(--mono); font-size: .62rem; letter-spacing: .08em; color: var(--dim); }
+
+/* 设置页渲染失败提示 */
+.warn { padding: 12px 16px; border-left: 3px solid var(--warn); background: rgb(var(--warn-base) / .07); font-size: .9rem; opacity: .9; }

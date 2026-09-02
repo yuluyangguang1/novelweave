@@ -2478,12 +2478,14 @@ async function ensureEmbeddings() {
 
 async function renderSettings() {
   const cfg = NovelLLM.getConfig() || {};
+  const ecfg = getEmbedConfig() || {};
   const body = document.getElementById('settings-body');
   if (!body) return;
-  body.innerHTML = `
+  try {
+    body.innerHTML = `
     <div class="settings-section">
       <div class="settings-section-title">AI API 配置</div>
-      <div class="settings-hint" style="margin-bottom:12px;">选择服务商，填入 API Key。<br>Key 只保存在本机浏览器，不经过任何服务器。</div>
+      <div class="settings-hint" style="margin-bottom:12px;">选择服务商，填入 API Key。<br>Key 只保存在本机浏览器，不经过任何服务器。Ollama / LM Studio 本地端点无需 Key。</div>
       <div class="settings-presets">
         ${Object.entries(NovelLLM.PRESETS).map(([k, p]) => `
           <button class="preset-btn ${cfg.provider === k ? 'active' : ''}" data-action="pick-provider" data-id="${attr(k)}">
@@ -2495,35 +2497,13 @@ async function renderSettings() {
         <input class="settings-input" id="s-baseurl" value="${attr(cfg.baseURL || NovelLLM.PRESETS.openrouter.baseURL)}"></div>
       <div class="settings-field"><label class="settings-label">API Key</label>
         <input class="settings-input" id="s-apikey" type="password" value="${attr(cfg.apiKey || '')}" placeholder="sk-..."></div>
-      <div class="settings-field"><label class="settings-label">模型</label>
+      <div class="settings-field"><label class="settings-label">模型名称</label>
         <input class="settings-input" id="s-model" value="${attr(cfg.model || NovelLLM.PRESETS.openrouter.defaultModel)}"></div>
-      <div class="settings-actions">
+      <div style="display:flex;gap:10px;margin-top:10px;">
         <button class="btn btn-secondary" data-action="s-test">测试连接</button>
         <button class="btn btn-primary" data-action="s-save">保存</button>
       </div>
       <div id="s-result" style="margin-top:12px;font-size:13px;min-height:1em;"></div>
-    </div>
-    <div class="settings-section" style="margin-top:20px;">
-      <div class="settings-section-title">数据</div>
-      <div class="settings-hint" style="margin-bottom:10px;">作品存在本机浏览器 IndexedDB 里。清浏览器数据会一起丢，请定期导出备份。</div>
-      <div class="settings-field">
-        <button class="btn btn-secondary" data-action="export-backup">导出全部作品备份（单文件快照）</button>
-        <button class="btn btn-secondary" data-action="import-backup">导入备份 JSON</button>
-      </div>
-      <div class="settings-field">
-        <button class="btn btn-primary" data-action="export-novelweave">导出当前作品为 .novelweave/</button>
-        <button class="btn btn-secondary" data-action="export-epub">导出当前作品为 EPUB</button>
-        <button class="btn btn-secondary" data-action="import-novelweave">从 .novelweave/ 目录导入</button>
-        <div class="settings-hint" style="margin-top:8px;">
-          目录是与命令行 agent 共享的工作副本：正文是 Markdown，状态是 JSON。
-          导入时逐条三方比较，两侧都改过的记录不会被自动覆盖，会连本地版一起导出到 conflicts/ 让你选。
-          ${fsAvailable() ? '' : '<br>此浏览器不支持目录读写，导出会退回单个 JSON 文件。'}
-        </div>
-      </div>
-    </div>
-    <div class="settings-section" style="margin-top:20px;">
-      <div class="settings-section-title">关于织文</div>
-      <div class="settings-hint">NovelWeave · 织文 — AI 网文作者辅助工具<br>纯前端 · 零服务器 · IndexedDB 本地存储</div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">AI 用量</div>
@@ -2534,91 +2514,33 @@ async function renderSettings() {
       <div class="settings-hint" style="margin-bottom:12px;">配置 OpenAI 兼容 /embeddings 端点后，相关旧章按语义召回（硅基流动的 bge 系列免费）。不配置则用词频召回。</div>
       <div class="settings-field"><label class="settings-label">Embeddings Base URL</label>
         <input class="settings-input" id="s-embed-url" value="${attr(ecfg.baseURL || '')}" placeholder="https://api.siliconflow.cn/v1"></div>
-      <div class=settings-field><label class=settings-label>Embeddings 模型</label>
-        <input class=settings-input id=s-embed-model placeholder=BAAI/bge-m3></div>
-      <div class=settings-hint>API Key 复用上方聊天配置的 Key，只存本机。</div>
+      <div class="settings-field"><label class="settings-label">Embeddings 模型</label>
+        <input class="settings-input" id="s-embed-model" value="${attr(ecfg.model || '')}" placeholder="BAAI/bge-m3"></div>
+      <div class="settings-hint">API Key 复用上方聊天配置的 Key，只存本机。</div>
+    </div>
+    <div class="settings-section" style="margin-top:20px;">
+      <div class="settings-section-title">数据</div>
+      <div class="settings-hint" style="margin-bottom:10px;">作品存在本机浏览器 IndexedDB 里。清浏览器数据会一起丢，请定期导出备份。</div>
+      <div class="settings-field">
+        <button class="btn btn-secondary" data-action="export-backup">导出全部作品备份（单文件快照）</button>
+        <button class="btn btn-secondary" data-action="import-backup">导入备份 JSON</button>
+      </div>
+      <div class="settings-field">
+        <button class="btn btn-primary" data-action="export-novelweave">导出当前作品为 .novelweave/</button>
+        <button class="btn btn-secondary" data-action="import-novelweave">从 .novelweave/ 目录导入</button>
+        <button class="btn btn-primary" data-action="export-epub">导出当前作品为 EPUB</button>
+      </div>
+    </div>
+    <div class="settings-section" style="margin-top:20px;">
+      <div class="settings-section-title">关于</div>
+      <div class="settings-hint">NovelWeave · 织文 — AI 网文作者辅助工具<br>纯前端 · 零服务器 · IndexedDB 本地存储</div>
     </div>`;
+    renderUsagePanel();
+  } catch (e) {
+    body.innerHTML = '<div class="warn">设置页渲染失败：' + (e && e.message ? e.message : e) + '</div>';
+  }
 }
 
-Object.assign(ACTIONS, {
-  'pick-provider': (key, el) => {
-    const pr = NovelLLM.PRESETS[key];
-    if (!pr) return;
-    document.getElementById('s-provider').value = key;
-    if (pr.baseURL) document.getElementById('s-baseurl').value = pr.baseURL;
-    if (pr.defaultModel) document.getElementById('s-model').value = pr.defaultModel;
-    document.querySelectorAll('.preset-btn').forEach((b) => b.classList.remove('active'));
-    el.classList.add('active');
-  },
-  's-save': () => {
-    NovelLLM.setConfig({
-      provider: val('s-provider'), baseURL: val('s-baseurl'),
-      apiKey: val('s-apikey'), model: val('s-model'),
-    });
-    setEmbedConfig({ baseURL: document.getElementById('s-embed-url')?.value.trim() || '', model: document.getElementById('s-embed-model')?.value.trim() || '' });
-    APP.embedCache = null; // 配置变了,向量缓存作废
-    showToast('已保存');
-    if (!APP.novelId) renderHomePage();
-  },
-  's-test': async () => {
-    const el = document.getElementById('s-result');
-    el.textContent = '测试中…';
-    const r = await NovelLLM.testConnection({ baseURL: val('s-baseurl'), apiKey: val('s-apikey'), model: val('s-model') });
-    el.innerHTML = r.ok ? `${icon('check')}<span>连接成功</span>` : `${icon('x')}<span>连接失败：${esc(r.message)}</span>`;
-  },
-  'export-novelweave': () => exportNovelweave(),
-  'import-novelweave': () => importNovelweave(),
-  'import-backup': () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json,application/json';
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      try {
-        const dump = JSON.parse(await file.text());
-        if (!dump?.data?.novels) { showToast('不是织文的备份文件'); return; }
-        if (!confirm('导入会按 id 覆盖库里同名记录（正文覆盖前会各留一版，可在该章「正文历史」回退；'
-          + '其余记录不会留底）。建议先点上面的「导出全部作品备份」存一份。继续吗？')) return;
-        let n = 0;
-        for (const [store, rows] of Object.entries(dump.data)) {
-          for (const row of rows || []) {
-            if (store === 'chapters') {
-              const local = await NovelDB.chapters.get(row.id);
-              if (local) await NovelDB.revisions.snapshot(local, 'pre-import');
-            }
-            await NovelDB.putRow(store, row); n++;
-          }
-        }
-        await NovelDB.recountAll();
-        showToast(`已导入 ${n} 条记录`);
-        await renderHomePage();
-      } catch (e) {
-        showToast(`导入失败：${e.message}`);
-      }
-    };
-    input.click();
-  },
-  'export-epub':   () => exportEpub(),
-  'export-backup': async () => {
-    const dump = { app: 'novelweave', schemaVersion: 1, exportedAt: new Date().toISOString(), data: {} };
-    // 从数据层推导，不再手写表名 —— 手写清单在加表时会静默漏备份
-    for (const store of ['novels', ...NovelDB.CASCADE_STORES]) {
-      dump.data[store] = await NovelDB.dump(store);
-    }
-    const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `novelweave-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    showToast('备份已导出');
-  },
-});
-
-  renderUsagePanel();
-
-/** AI 用量面板:按工具聚合次数与字数。 */
 async function renderUsagePanel() {
   const host = document.getElementById('usage-panel');
   if (!host || !APP.novelId) { if (host) host.textContent = '进入一本书后开始记录'; return; }

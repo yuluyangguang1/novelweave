@@ -24,6 +24,11 @@ const NW_LLM_PRESETS = {
     openrouter: { label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', defaultModel: 'deepseek/deepseek-chat-v3.1', note: '一个 Key 多家模型 · 有 :free 款' },
     gemini: { label: 'Google Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/', defaultModel: 'gemini-2.5-flash', note: '免费层 · 多模态 · 1M ctx' },
     openai: { label: 'OpenAI', baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o', note: '最稳，贵' },
+    qwen: { label: '通义千问', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', note: '阿里百炼 · qwen-plus/turbo/max' },
+    doubao: { label: '豆包 火山引擎', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-seed-1-6-250615', note: '每日 200 万 Token 免费' },
+    minimax: { label: 'MiniMax', baseURL: 'https://api.minimax.chat/v1', defaultModel: 'MiniMax-M2', note: '国产 · 长文本' },
+    ollama: { label: 'Ollama 本地', baseURL: 'http://127.0.0.1:11434/v1', defaultModel: 'qwen3:8b', note: '完全离线 · 需本地运行 ollama' },
+    lmstudio: { label: 'LM Studio 本地', baseURL: 'http://127.0.0.1:1234/v1', defaultModel: 'local-model', note: '完全离线 · 需本地运行 LM Studio' },
     custom: { label: '自定义', baseURL: '', defaultModel: '', note: '任何兼容接口' },
   }
 
