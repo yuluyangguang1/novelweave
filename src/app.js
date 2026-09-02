@@ -35,6 +35,7 @@ const AI_TOOLS = [
   { id: 'polish',      icon: 'sparkle', label: '润色',     needsChapter: true,  maxTokens: 4000, needsContent: true },
   { id: 'refine',      icon: 'check',    label: '语病精修', needsChapter: true,  maxTokens: 4000, needsContent: 200 },
   { id: 'review',      icon: 'bank',     label: '编辑评审', needsChapter: true,  maxTokens: 3000, needsContent: 200 },
+  { id: 'relations-ai', icon: 'users',   label: 'AI 抽关系', needsChapter: true,  maxTokens: 2000, needsContent: 300, outputOnly: true },
   { id: 'consistency', icon: 'search',  label: '一致性检查', needsChapter: true,  maxTokens: 4000, needsContent: 100 },
   { id: 'summarize',   icon: 'note',    label: '总结本章',  needsChapter: true,  maxTokens: 1000, needsContent: true },
   { id: 'outline',     icon: 'chapter', label: '生成大纲',  needsChapter: true,  maxTokens: 4000 },
@@ -2085,6 +2086,11 @@ async function runAITool(toolId, target) {
       { role: 'system', content: '你是资深网文编辑，只输出评审报告，不改写正文。' },
       { role: 'user', content: NovelLLM.buildReviewPrompt(content, chapterInfo) },
     ];
+  } else if (toolId === 'relations-ai') {
+    messages = [
+      { role: 'system', content: '你是网文结构编辑，只输出 JSON。' },
+      { role: 'user', content: NovelLLM.buildExtractRelationsPrompt(content, characters) },
+    ];
   } else if (toolId === 'outline') {
     const chapters = await NovelDB.chapters.list(novelId);
     messages = [
@@ -2118,6 +2124,26 @@ async function runAITool(toolId, target) {
     return;
   }
   APP.lastAIResult = full;
+  // AI 抽关系:结果走提案确认,不进编辑器
+  if (toolId === 'relations-ai' && !aborted) {
+    APP.aiAbort = null;
+    let edges;
+    try { edges = NovelLLM.parseExtractedRelations(full); }
+    catch (e) {
+      target.textContent = full;
+      const err = document.createElement('div');
+      err.className = 'usage-bar';
+      err.textContent = '解析失败：' + e.message;
+      target.appendChild(err);
+      return;
+    }
+    if (!edges.length) {
+      target.textContent = '本章没有发现需要登记的新关系。';
+      return;
+    }
+    renderExtractedRelations(target, edges);
+    return;
+  }
   // 用量流水:按次记录(供设置页统计;失败不碍主流程)
   try { NovelDB.usage.record(APP.novelId, { tool: toolId, charsIn: messages.reduce((n, m) => n + (m.content || '').length, 0), charsOut: full.length, durationMs: 0 }); } catch (_) {}
 
@@ -2152,6 +2178,45 @@ async function runAITool(toolId, target) {
   }
 
   renderAIResult(target, full, { toolId, aborted });
+}
+
+/** AI 抽出的候选关系边:作者勾选确认才入库(提案制)。 */
+function renderExtractedRelations(el, edges) {
+  const bar = document.createElement('div');
+  bar.className = 'usage-bar';
+  bar.style.cssText = 'margin-top:10px;';
+  bar.textContent = '发现 ' + edges.length + ' 条候选关系 —— 勾选后入库（提案制）：';
+  el.appendChild(bar);
+  for (const e of edges) {
+    const row = document.createElement('label');
+    row.className = 'usage-bar';
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;';
+    row.innerHTML = '<input type="checkbox" checked style="accent-color:var(--accent)"> '
+      + esc(e.from) + ' → ' + esc(e.to) + '：' + esc(e.kind)
+      + (e.address ? '（称谓「' + esc(e.address) + '」）' : '')
+      + (e.evidence ? '<br><span style="opacity:.6">依据：' + esc(e.evidence) + '</span>' : '');
+    row.dataset.edge = JSON.stringify(e);
+    el.appendChild(row);
+  }
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-primary';
+  btn.style.cssText = 'margin-top:8px;';
+  btn.textContent = '确认入库';
+  btn.onclick = async () => {
+    let n = 0;
+    for (const row of el.querySelectorAll('label[data-edge]:has(input:checked)')) {
+      const e = JSON.parse(row.dataset.edge);
+      // 名字→id:只接受已知角色,未知角色跳过并提示
+      const chars = await NovelDB.characters.list(APP.novelId);
+      const byName = new Map(chars.map((c) => [c.name, c.id]));
+      if (!byName.get(e.from) || !byName.get(e.to)) continue;
+      await NovelDB.relations.save(APP.novelId, e);
+      n++;
+    }
+    btn.disabled = true;
+    btn.textContent = '已入库 ' + n + ' 条';
+  };
+  el.appendChild(btn);
 }
 
 /** 失败要能一键重试：网络中断与限流大多再发一次就好，不该逼用户重新点一遍流程。 */

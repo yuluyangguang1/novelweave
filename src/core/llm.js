@@ -308,7 +308,35 @@ ${chText}
     };
   }
 
-    // ═══════════════════ 传输 ═══════════════════
+    // ═══════════════════ AI 抽关系边(提案制) ═══════════════════
+  // 从新正文抽取候选关系边 → 作者确认才入库(与 ---CHANGES--- 同构)。
+
+  function buildExtractRelationsPrompt(content, knownCharacters) {
+    const known = (knownCharacters || []).map((c) => c.name).join('、');
+    return `你是网文结构编辑。从下面正文里抽取"新出现或发生变化的角色关系"，只要明确依据，不要臆测。
+
+【已知角色】${known || '无'}
+
+【正文】
+${String(content || '').slice(0, 6000)}
+
+已知关系不必重复抽取。只输出 JSON：{"edges":[{"from":"角色A名","to":"角色B名","kind":"关系类型","address":"A对B的称呼或空","evidence":"原文依据"}]}，无新关系则 edges 为空数组。只输出 JSON，不要解释。`;
+  }
+
+  function parseExtractedRelations(text) {
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('模型没有返回可解析的 JSON');
+    const j = JSON.parse(m[0]);
+    return (Array.isArray(j.edges) ? j.edges : []).slice(0, 10).map((e) => ({
+      from: String(e.from || '').slice(0, 20),
+      to: String(e.to || '').slice(0, 20),
+      kind: String(e.kind || '').slice(0, 20),
+      address: String(e.address || '').slice(0, 20),
+      evidence: String(e.evidence || '').slice(0, 120),
+    })).filter((e) => e.from && e.to && e.kind);
+  }
+
+  // ═══════════════════ 传输 ═══════════════════
 
   function endpoint(cfg) {
     return `${String(cfg.baseURL || '').replace(/\/$/, '')}/chat/completions`;
@@ -406,6 +434,7 @@ ${chText}
     buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS, SHORT_PLATFORMS,
     buildRefinePrompt, buildReviewPrompt,
     buildDeconstructPrompt, parseDeconstructJSON,
+    buildExtractRelationsPrompt, parseExtractedRelations,
     buildLongConceptPrompt, LONG_VOLUME_OPTIONS,
     streamChat, requestChat, testConnection,
   };
