@@ -265,7 +265,45 @@ ${chText}
 {"title":"书名","logline":"一句话梗概","characters":[{"name":"","role":"","personality":""}],"world":[{"name":"","content":""}],"volumes":[{"title":"","summary":""}],"chapters":[{"title":"","beat":""}]}`;
   }
 
-  // ═══════════════════ 传输 ═══════════════════
+  // ═══════════════════ 拆书(结构模式逆向) ═══════════════════
+  // 学星月 AI 拆书:从已有文本抽取"结构模式"而非文字 —— 版权安全(只提取模式)。
+  // 产物是可复用的拍点模板,与 genre-presets/golden-three 同格式家族。
+
+  function buildDeconstructPrompt(text, meta = {}) {
+    return `你是资深网文结构编辑。拆解下面的文本，抽取"结构模式"——只要骨架，不要复述情节或句子。
+
+【文本来源】${meta.source || '作者提供'}
+【篇幅】约 ${meta.words || '未知'} 字
+
+请抽取：
+1. 金手指/核心设定类型及其登场时机
+2. 爽点节拍：几次、分别在第几屏/章、类型（打脸/升级/反转/情感）
+3. 伏笔密度与回收节奏
+4. 章末钩子类型分布（问句/突转/期限/身份悬置）
+5. 节奏结构：按屏或章列拍点序列
+
+只输出一个 JSON 对象，格式：
+{"name":"模式名","goldenFinger":"类型及登场时机","beats":[{"at":"第1屏","type":"钩子","note":"模式描述"}],"foreshadowDensity":"描述","hookTypes":["类型"],"summary":"一段话总结该结构适合什么题材"}
+`;
+  }
+
+  /** 从模型输出抠出拆解 JSON（容忍围栏）。 */
+  function parseDeconstructJSON(text) {
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('模型没有返回可解析的拆解 JSON');
+    const j = JSON.parse(m[0]);
+    if (!j.name || !Array.isArray(j.beats) || !j.beats.length) throw new Error('拆解缺少模式名或拍点');
+    return {
+      name: String(j.name).slice(0, 40),
+      goldenFinger: String(j.goldenFinger || '').slice(0, 120),
+      beats: j.beats.slice(0, 20).map((b) => ({ at: String(b.at || '').slice(0, 20), type: String(b.type || '').slice(0, 20), note: String(b.note || '').slice(0, 120) })),
+      foreshadowDensity: String(j.foreshadowDensity || '').slice(0, 120),
+      hookTypes: (Array.isArray(j.hookTypes) ? j.hookTypes : []).slice(0, 6).map((h) => String(h).slice(0, 20)),
+      summary: String(j.summary || '').slice(0, 200),
+    };
+  }
+
+    // ═══════════════════ 传输 ═══════════════════
 
   function endpoint(cfg) {
     return `${String(cfg.baseURL || '').replace(/\/$/, '')}/chat/completions`;
@@ -362,6 +400,7 @@ ${chText}
     buildPolishPrompt, buildOutlinePrompt,
     buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS, SHORT_PLATFORMS,
     buildRefinePrompt, buildReviewPrompt,
+    buildDeconstructPrompt, parseDeconstructJSON,
     buildLongConceptPrompt, LONG_VOLUME_OPTIONS,
     streamChat, requestChat, testConnection,
   };

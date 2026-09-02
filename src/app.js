@@ -155,6 +155,7 @@ const ACTIONS = {
   'create-novel':  () => showCreateNovel(),
   'ai-short-book': () => showAIShortWizard(),
   'ai-long-book': () => showAILongWizard(),
+  'deconstruct': () => showDeconstruct(),
   'batch-generate': () => batchGenerateBook(),
   'load-demo':     () => loadDemoBook(),
   'open-chapter':  (id) => openChapterById(id),
@@ -541,6 +542,69 @@ function showConceptConfirm(concept, genre, targetWords = null) {
 // ═══════════════════ AI 起书（长篇从零向导 · 卷纲层） ═══════════════════
 // 长篇骨架 = 人物 + 世界设定 + 卷纲 + 首卷章纲。卷纲写进「写作笔记」，
 // 世界设定进 worldbuilding，章纲落章节拍点 —— 全部走既有存储，不发明新格式。
+
+
+// ═══════════════════ 拆书(结构模式逆向) ═══════════════════
+// 学星月 AI 拆书:粘贴/导入已有文本 → LLM 抽取结构模式(金手指/爽点节拍/伏笔密度/钩子分布)
+// → 产物存入当前书的「写作笔记」(模式名+拍点序列),供起书向导与章纲生成引用。
+// 版权安全:只提取模式,不复制表达;文本不落盘。
+
+function showDeconstruct() {
+  if (!NovelLLM.hasConfig()) {
+    showToast('拆书要先配 API Key');
+    router.go('settings');
+    return;
+  }
+  showModal('拆书 · 结构模式逆向', `
+    <div class="settings-field"><label class="settings-label">粘贴要拆解的文本 *</label>
+      <textarea class="settings-input" id="inp-dec-text" rows="10" placeholder="粘贴一章或若干章正文（建议整章，3000 字以上效果最好）"></textarea></div>
+    <div class="settings-field"><label class="settings-label">来源标注（存入笔记用，可选）</label>
+      <input class="settings-input" id="inp-dec-src" placeholder="例：《某某某》第 1-3 章" maxlength="40"></div>
+    <div class="settings-field"><button class="btn btn-primary" id="dec-run" style="width:100%">抽取结构模式（约 15 秒）</button></div>
+    <div class="settings-hint">只提取结构模式（金手指/爽点节拍/伏笔密度/钩子类型），不复制文字表达。</div>
+  `, null);
+  document.getElementById('modal-cancel').textContent = '关闭';
+  document.getElementById('dec-run').onclick = async function () {
+    const text = document.getElementById('inp-dec-text').value.trim();
+    if (text.length < 500) { showToast('文本太短，建议至少 500 字'); return; }
+    this.disabled = true;
+    this.textContent = '拆解中…';
+    const t0 = Date.now();
+    const res = await NovelLLM.requestChat([
+      { role: 'system', content: '你是资深网文结构编辑，只输出 JSON。' },
+      { role: 'user', content: NovelLLM.buildDeconstructPrompt(text, { source: document.getElementById('inp-dec-src').value.trim(), words: String(text.length) }) },
+    ], { maxTokens: 2500 });
+    this.disabled = false;
+    this.textContent = '抽取结构模式（约 15 秒）';
+    if (res.error) { showToast('拆解失败：' + res.error); return; }
+    let pat;
+    try { pat = NovelLLM.parseDeconstructJSON(res.content); }
+    catch (e) { showToast('解析失败：' + e.message); return; }
+    try {
+      NovelDB.usage.record(APP.novelId, { tool: 'deconstruct', charsIn: text.length, charsOut: res.content.length, durationMs: Date.now() - t0 });
+    } catch (_) {}
+    closeModal();
+    // 结果落进「写作笔记」,作者可编辑可删
+    const note = [
+      '【模式名】' + pat.name,
+      pat.goldenFinger ? '【金手指】' + pat.goldenFinger : '',
+      '【拍点序列】',
+      ...pat.beats.map((b) => '- ' + b.at + '（' + b.type + '）：' + b.note),
+      pat.foreshadowDensity ? '【伏笔密度】' + pat.foreshadowDensity : '',
+      pat.hookTypes.length ? '【钩子类型】' + pat.hookTypes.join('、') : '',
+      '【适用】' + pat.summary,
+    ].filter(Boolean).join('\n');
+    if (!APP.novel) {
+      showToast('已拆解。先创建或进入一本书，再拆可自动存入笔记');
+      await navigator.clipboard?.writeText(note).catch(() => {});
+      showToast('结构模式已复制到剪贴板');
+      return;
+    }
+    await NovelDB.notes.save(APP.novel.id, { title: '拆书：' + pat.name, content: note, tags: ['拆书'] });
+    showToast('结构模式已存入「写作笔记」');
+  };
+  setTimeout(() => document.getElementById('inp-dec-text')?.focus(), 60);
+}
 
 function showAILongWizard() {
   if (!NovelLLM.hasConfig()) {
