@@ -300,6 +300,7 @@
       book: { id: rows.novel.id, slug: T.slugify(rows.novel.title), title: rows.novel.title,
         genre: rows.novel.genre, description: rows.novel.description,
         format: rows.novel.format === 'short' ? 'short' : 'long',
+        targetWords: rows.novel.target_words || null,
         _derived: { words: rows.novel.word_count, chapters: rows.novel.chapter_count } },
       chapters, characters,
       world: (rows.world || []).map(toWorld),

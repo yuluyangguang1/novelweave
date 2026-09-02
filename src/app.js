@@ -477,13 +477,23 @@ function showAIShortWizard() {
     try { concept = NovelLLM.parseConceptJSON(res.content); }
     catch (e) { showToast('解析失败：' + e.message); return; }
     closeModal();
-    showConceptConfirm(concept, document.getElementById('inp-ai-genre').value);
+    const platformSel = document.getElementById('inp-ai-platform');
+    const targetWords = Number(platformSel?.selectedOptions[0]?.dataset.words || 0) || null;
+    showConceptConfirm(concept, document.getElementById('inp-ai-genre').value, targetWords);
+  };
+  // 平台联动篇幅档:6k→微型,2 万→标准,5 万→大短篇
+  document.getElementById('inp-ai-platform').onchange = function () {
+    const words = Number(this.selectedOptions[0]?.dataset.words || 0);
+    const tierSel = document.getElementById('inp-ai-tier');
+    if (!words || !tierSel) return;
+    const idx = words <= 6000 ? 0 : words <= 15000 ? 1 : 2;
+    if (tiers[idx]) tierSel.selectedIndex = idx;
   };
   setTimeout(() => document.getElementById('inp-ai-idea')?.focus(), 60);
 }
 
 /** 梗概确认：书名 / 一句话 / 章节（标题|拍点，一行一章）/ 人物（名字|角色|性格），全部可直接改。 */
-function showConceptConfirm(concept, genre) {
+function showConceptConfirm(concept, genre, targetWords = null) {
   const chText = concept.chapters.map((c) => `${c.title}|${c.beat}`).join('\n') || '开篇|第一屏就立住钩子';
   const peText = concept.characters.map((c) => `${c.name}|${c.role}|${c.personality}`).join('\n');
   showModal('确认梗概 —— 每一项都可以改', `
@@ -509,7 +519,7 @@ function showConceptConfirm(concept, genre) {
       .filter((c) => c.name);
     const novel = await NovelDB.novels.create({
       title, genre: genre === '不限' ? '短篇' : genre,
-      description: document.getElementById('inp-c-logline').value.trim(), format: 'short',
+      description: document.getElementById('inp-c-logline').value.trim(), format: 'short', targetWords,
     });
     for (const c of chars) await NovelDB.characters.create(novel.id, c);
     for (let i = 0; i < chapters.length; i++) {
@@ -810,6 +820,11 @@ async function renderSidebar() {
           ${counts[t.id] != null ? `<span class="sidebar-nav-count">${counts[t.id]}</span>` : ''}
           ${t.hasAdd ? `<span class="sidebar-nav-add" data-action="${attr('nav-add-' + t.id)}" title="${attr(t.addTitle)}">${icon('plus')}</span>` : ''}
         </div>`).join('')}
+      ${novel.format === 'short' && novel.target_words ? `
+      <div class="target-progress" title="按汉字计，不含标点">
+        <div class="target-progress-bar"><span style="width:${Math.min(100, Math.round((novel.word_count || 0) / novel.target_words * 100))}%"></span></div>
+        <div class="target-progress-text">${formatWordCount(novel.word_count || 0)} / ${formatWordCount(novel.target_words)}${(novel.word_count || 0) >= novel.target_words ? ' · 已达标' : ''}</div>
+      </div>` : ''}
       ${novel.format === 'short' ? `
       <div style="padding:10px 4px 2px;">
         <button class="btn btn-secondary" style="width:100%;font-size:12px;" data-action="batch-generate">连续生成正文</button>

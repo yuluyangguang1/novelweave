@@ -185,6 +185,12 @@ ${chText}
   /** 结构流派与篇幅档的口径与 skills/novelweave/assets/templates/short-presets.json 一致。 */
   const SHORT_STRUCTURES = ['反转流', '情感流', '脑洞设定流'];
   const SHORT_TIERS = ['微型（3k-6k 字，1-2 章）', '标准（8k-15k 字，3-6 章）', '大短篇（20k-30k 字，6-10 章）'];
+  // 平台档位:名称 → 目标字数(与 short-presets.json 的 wordBudgets 同口径)
+  const SHORT_PLATFORMS = [
+    { id: 'gzh', label: '公众号（约 6k 字）', words: 6000 },
+    { id: 'fanqie', label: '番茄短篇（约 2 万字）', words: 20000 },
+    { id: 'yanxuan', label: '知乎盐选（约 5 万字）', words: 50000 },
+  ];
 
   function buildShortConceptPrompt({ idea, genre, structure, tier }) {
     return `你是资深短篇网文编辑。根据作者的一句话想法，生成一篇短篇的完整梗概。
@@ -354,7 +360,7 @@ ${chText}
     
     buildContinuePrompt, buildContinueContext, buildConsistencyCheckPrompt, buildSummarizePrompt,
     buildPolishPrompt, buildOutlinePrompt,
-    buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS,
+    buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS, SHORT_PLATFORMS,
     buildRefinePrompt, buildReviewPrompt,
     buildLongConceptPrompt, LONG_VOLUME_OPTIONS,
     streamChat, requestChat, testConnection,

@@ -164,9 +164,10 @@ async function resequenceChapters(novelId) {
 
 // ═══════════ 小说 ═══════════
 
-async function createNovel({ title, genre = '玄幻', description = '', format = 'long' }) {
+async function createNovel({ title, genre = '玄幻', description = '', format = 'long', targetWords = null }) {
   return put('novels', {
     id: newId('novel'), title, genre, description, format: format === 'short' ? 'short' : 'long',
+    target_words: format === 'short' && targetWords ? Number(targetWords) || null : null,
     word_count: 0, chapter_count: 0, created_at: Date.now(), updated_at: Date.now(),
   });
 }

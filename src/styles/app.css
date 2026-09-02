@@ -812,3 +812,9 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 
 /* 8. 弹层与横幅同源:无阴影,用 1px 强边框(印刷感) */
 .modal { box-shadow: none; border: 1px solid var(--border-strong); }
+
+/* ═══ 短篇字数达标进度(平台档位,路线图 P0-3) ═══ */
+.target-progress { padding: 10px 4px 2px; }
+.target-progress-bar { height: 4px; background: rgb(var(--mid-base) / .08); }
+.target-progress-bar span { display: block; height: 100%; background: var(--accent); transition: width .3s var(--ease); }
+.target-progress-text { margin-top: 4px; font-family: var(--mono); font-size: .62rem; letter-spacing: .08em; color: var(--dim); }
