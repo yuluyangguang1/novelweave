@@ -2510,6 +2510,7 @@ async function renderSettings() {
       </div>
       <div class="settings-field">
         <button class="btn btn-primary" data-action="export-novelweave">导出当前作品为 .novelweave/</button>
+        <button class="btn btn-secondary" data-action="export-epub">导出当前作品为 EPUB</button>
         <button class="btn btn-secondary" data-action="import-novelweave">从 .novelweave/ 目录导入</button>
         <div class="settings-hint" style="margin-top:8px;">
           目录是与命令行 agent 共享的工作副本：正文是 Markdown，状态是 JSON。
@@ -2596,6 +2597,7 @@ Object.assign(ACTIONS, {
     };
     input.click();
   },
+  'export-epub':   () => exportEpub(),
   'export-backup': async () => {
     const dump = { app: 'novelweave', schemaVersion: 1, exportedAt: new Date().toISOString(), data: {} };
     // 从数据层推导，不再手写表名 —— 手写清单在加表时会静默漏备份
@@ -2756,4 +2758,21 @@ function editRelation(id) {
     const e = list.find((x) => x.id === id);
     if (e) showCreateRelation(e);
   });
+}
+
+/** EPUB 导出:整本书 → 合法 EPUB 3 容器下载。 */
+async function exportEpub() {
+  if (!APP.novel) { showToast('先进入一本书'); return; }
+  const chapters = await NovelDB.chapters.list(APP.novel.id);
+  if (!chapters.length) { showToast('这本书还没有章节'); return; }
+  const bytes = NWEpub.buildEpub(
+    { title: APP.novel.title, author: 'yu.ai 织文' },
+    chapters.map((c) => ({ title: c.title, body: c.content || '' })),
+  );
+  const blob = new Blob([bytes], { type: 'application/epub+zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = (APP.novel.title || 'book') + '.epub';
+  a.click(); URL.revokeObjectURL(url);
+  showToast('EPUB 已导出（' + chapters.length + ' 章）');
 }
