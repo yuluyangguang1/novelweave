@@ -176,6 +176,29 @@
   // 所以它排在第一节，预算再紧也先保它 —— 事后机检能抓到越界，但那一轮改写的
   // 成本比一开始就别说错要高得多。
 
+  // ═══════════════ 活跃关系:登记的关系边约束续写中的称谓与互动 ═══════════════
+  // 只列与本章出场角色相关的边;until 已失效的不列。称谓(address)是 R19 的检查依据,
+  // 写之前让模型看到,比写完再报 R19 便宜。
+
+  function relationBlock(ctx, chars) {
+    const edges = ctx.relations?.edges || [];
+    if (!edges.length || !chars.length) return null;
+    const ids = new Set(chars.map((c) => c.id));
+    const names = new Set(chars.map((c) => c.name));
+    const rel = edges.filter((e) => {
+      if (e.until) return false; // 已结束的关系不再约束
+      return (ids.has(e.from) && (ids.has(e.to) || names.has(e.to))) ||
+             (ids.has(e.to) && (ids.has(e.from) || names.has(e.from)));
+    });
+    if (!rel.length) return null;
+    const byId = new Map((ctx.characters || []).map((c) => [c.id, c.name]));
+    const nm = (id) => byId.get(id) || id;
+    return rel.slice(0, 10).map((e) => {
+      const addr = e.address ? `（称谓「${e.address}」）` : '';
+      return `- ${nm(e.from)} → ${nm(e.to)}：${e.kind}${addr}${e.since ? `（自 ${e.since}）` : ''}`;
+    }).join('\n');
+  }
+
   function hardBanBlock(ctx, chapters, targetN, current) {
     const lines = [];
     const dead = (ctx.characters || []).filter((c) => c.status === 'deceased' && c.enabled !== false);
@@ -201,6 +224,18 @@
       if (ic.onlyHint) lines.push(`- 【只能暗示】本章可暗示但不可点破：${ic.onlyHint}`);
     }
     return lines.length ? lines.join('\n') : null;
+  }
+
+  // ═══════════════ 创作决策:为什么走到今天,写作时要尊重这些决定 ═══════════════
+  // 只列未推翻的;已推翻(supersededBy)的历史决策不约束当下。
+
+  function decisionBlock(ctx) {
+    const decisions = (ctx.decisions || []).filter((d) => d.title && !d.supersededBy);
+    if (!decisions.length) return null;
+    return decisions.slice(0, 8).map((d) => {
+      const risk = d.risk ? `（风险：${d.risk}）` : '';
+      return `- ${d.title}：${d.reason}${risk}`;
+    }).join('\n');
   }
 
   // ═══════════════ 风格样例：模仿作者自己的笔法，而不是模板文 ═══════════════
@@ -275,8 +310,10 @@
         ctx.book.voice?.notes ? `笔法：${ctx.book.voice.notes}` : '',
       ].filter(Boolean).join('\n') },
       { name: '出场角色', text: characterBlock(chars) },
+      ...(relationBlock(ctx, chars) ? [{ name: '活跃关系', text: relationBlock(ctx, chars) }] : []),
       { name: '分章状态快照', text: stateBlock(ctx.states, prev, ctx.characters) },
       { name: '未结线索', text: promiseBlock(ctx.promises) },
+      ...(decisionBlock(ctx) ? [{ name: '创作决策', text: decisionBlock(ctx) }] : []),
       { name: '前情摘要', text: recapBlock(chapters, current, isShort ? Infinity : RECAP_ITEMS) },
       ...(related.length ? [{ name: '相关旧章', text: relatedBlock(related) }] : []),
       { name: '相关世界设定', text: lore.entries.length
@@ -326,6 +363,7 @@
           ...(s.name === '相关世界设定' ? { included: lore.entries.map((e) => e.name) } : {}),
           ...(s.name === '风格样例' ? { included: exemplars.map((e) => e.label) } : {}),
           ...(s.name === '相关旧章' ? { included: related.map((r) => r.label) } : {}),
+          ...(s.name === '活跃关系' ? { included: ['登记关系边'] } : {}),
         })),
         loreIncluded: lore.entries.map((e) => e.name),
         loreDropped: lore.dropped,
