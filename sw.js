@@ -25,6 +25,7 @@ const PRECACHE = [
   'src/core/story.js',
   'src/core/context.js',
   'src/core/selfcheck.js',
+  'src/core/retrieval.js',
   'src/core/project.js',
   'src/core/db.js',
   'src/demo.js',

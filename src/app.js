@@ -1958,7 +1958,17 @@ async function runAITool(toolId, target) {
       // 编辑器里未保存的正文必须覆盖进去，否则 AI 看到的是上次自动保存的旧内容
       if (live) live.body = content;
       continueCtx = storyCtx;
-      built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: APP.chapter.id, style: true });
+      // 语义检索(可选):配了 embeddings 就按语义召回相关旧章;失败降级词频
+      let embedHits = null;
+      if (await ensureEmbeddings()) {
+        try {
+          const q = [APP.chapter.summary, (content || '').slice(-800)].filter(Boolean).join('\n') || APP.chapter.title;
+          const ecfg = getEmbedConfig() || {};
+          const qc = await NWRetrieval.embedTexts([q], { baseURL: ecfg.baseURL, apiKey: (NovelLLM.getConfig() || {}).apiKey, model: ecfg.model });
+          if (qc && qc[0]) embedHits = NWRetrieval.rankByVector(qc[0], APP.embedCache.chunks, { topK: 3 });
+        } catch (_) {}
+      }
+      built = NovelLLM.buildContinueContext({ ctx: storyCtx, chapterId: APP.chapter.id, style: true, embedHits });
     } catch (e) {
       renderAIError(target, toolId, '组装上下文失败：' + e.message);
       return;
@@ -2160,6 +2170,7 @@ function renderWorkspaceSettings(host) {
   host = host || document.getElementById('sidebar-content');
   if (!host) return;
   const cfg = NovelLLM.getConfig() || {};
+  const ecfg = getEmbedConfig() || {};
   host.innerHTML = `<div style="padding:12px;">
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">配置 AI API（Key 只存在本机浏览器）</div>
     <div class="settings-field"><label class="settings-label">服务商</label>
@@ -2367,6 +2378,27 @@ async function importNovelweave() {
 
 // ═══════════════════ 全局设置页 ═══════════════════
 
+const EMBED_KEY = 'nw_embed_config';
+function getEmbedConfig() {
+  try { const c = JSON.parse(localStorage.getItem(EMBED_KEY) || 'null'); return (c && c.baseURL && c.model) ? c : null; } catch { return null; }
+}
+function setEmbedConfig(cfg) { try { localStorage.setItem(EMBED_KEY, JSON.stringify(cfg)); } catch (_) {} }
+
+/** 把当前书的章节向量算好并缓存到 APP.embedCache。失败返回 false(词频降级)。 */
+async function ensureEmbeddings() {
+  if (APP.embedCache && APP.embedCache.novelId === APP.novelId) return true;
+  const cfg = getEmbedConfig();
+  if (!cfg || !NovelLLM.hasConfig()) return false;
+  const chapters = await NovelDB.chapters.list(APP.novelId);
+  const chunks = NWRetrieval.chunkChapters(chapters.map((c) => ({ id: c.id, title: c.title, body: c.content })));
+  if (!chunks.length) return false;
+  const vecs = await NWRetrieval.embedTexts(chunks.map((c) => c.text), { baseURL: cfg.baseURL, apiKey: (NovelLLM.getConfig() || {}).apiKey, model: cfg.model });
+  if (!vecs) return false;
+  chunks.forEach((c, i) => { c.vector = vecs[i]; });
+  APP.embedCache = { novelId: APP.novelId, chunks };
+  return true;
+}
+
 async function renderSettings() {
   const cfg = NovelLLM.getConfig() || {};
   const body = document.getElementById('settings-body');
@@ -2418,6 +2450,15 @@ async function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">AI 用量</div>
       <div id="usage-panel" class="settings-hint">加载中…</div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">语义检索（可选）</div>
+      <div class="settings-hint" style="margin-bottom:12px;">配置 OpenAI 兼容 /embeddings 端点后，相关旧章按语义召回（硅基流动的 bge 系列免费）。不配置则用词频召回。</div>
+      <div class="settings-field"><label class="settings-label">Embeddings Base URL</label>
+        <input class="settings-input" id="s-embed-url" value="${attr(ecfg.baseURL || '')}" placeholder="https://api.siliconflow.cn/v1"></div>
+      <div class=settings-field><label class=settings-label>Embeddings 模型</label>
+        <input class=settings-input id=s-embed-model placeholder=BAAI/bge-m3></div>
+      <div class=settings-hint>API Key 复用上方聊天配置的 Key，只存本机。</div>
     </div>`;
 }
 
@@ -2436,6 +2477,8 @@ Object.assign(ACTIONS, {
       provider: val('s-provider'), baseURL: val('s-baseurl'),
       apiKey: val('s-apikey'), model: val('s-model'),
     });
+    setEmbedConfig({ baseURL: document.getElementById('s-embed-url')?.value.trim() || '', model: document.getElementById('s-embed-model')?.value.trim() || '' });
+    APP.embedCache = null; // 配置变了,向量缓存作废
     showToast('已保存');
     if (!APP.novelId) renderHomePage();
   },

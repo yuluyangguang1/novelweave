@@ -126,12 +126,15 @@
     return n;
   }
 
-  function relatedPastChapters(ctx, current, prev, cast) {
+  function relatedPastChapters(ctx, current, prev, cast, embedHits) {
     if (!cast.length) return [];
     const chapters = ctx.chapters || [];
     const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
     const older = chapters.slice(0, Math.max(0, upto - RECAP_ITEMS)) // 细摘要窗口内的不算"旧"
       .filter((c) => c.id !== prev?.id && (c.body || '').length > 50);
+    if (embedHits && embedHits.length) {
+      return embedHits.map((h) => ({ id: h.chapterId, label: Bible.chapterLabel(chapters.find((x) => x.id === h.chapterId) || { number: '?', title: h.chapterTitle }), score: h.score, who: ['语义'], snippet: (h.text || '').slice(0, RELATED_SNIPPET) }));
+    }
     const scored = older.map((c) => {
       let score = 0;
       const who = [];
@@ -248,7 +251,7 @@
     const lore = Story.loreTrigger(scanText, ctx.world, { loreBytes: b.loreBytes });
     // 短篇换挡：体量小（几千至三万字），前情摘要全量列出，不做滚动窗口
     const isShort = ctx.book?.format === 'short';
-    const related = isShort ? [] : relatedPastChapters(ctx, current, prev, chars);
+    const related = isShort ? [] : relatedPastChapters(ctx, current, prev, chars, opts.embedHits);
 
     const hasBody = !!(current?.body || '').trim();
     const tail = (text, n) => '…' + String(text).slice(-n);

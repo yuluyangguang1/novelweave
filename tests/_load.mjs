@@ -22,6 +22,7 @@ export const NWProject = (globalThis.NWProject = require('../src/core/project.js
 export const NWContext = (globalThis.NWContext = require('../src/core/context.js'));
 export const NWDraft = (globalThis.NWDraft = require('../src/core/draft.js'));
 export const NWSelfCheck = (globalThis.NWSelfCheck = require('../src/core/selfcheck.js'));
+export const NWRetrieval = (globalThis.NWRetrieval = require('../src/core/retrieval.js'));
 export const NovelLLM = (globalThis.NovelLLM = require('../src/core/llm.js'));
 export const routerMod = require('../src/router.js');
 

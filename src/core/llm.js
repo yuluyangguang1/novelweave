@@ -76,7 +76,7 @@ const NW_LLM_PRESETS = {
    */
   function buildContinueContext(opts = {}) {
     const built = NWContext.buildSections(opts.ctx, {
-      chapterId: opts.chapterId, budget: opts.budget, style: opts.style,
+      chapterId: opts.chapterId, budget: opts.budget, style: opts.style, embedHits: opts.embedHits,
     });
     const rules = WRITING_RULES(opts.ctx?.book?.genre)
       + (opts.extraInstructions ? `\n- ${opts.extraInstructions}` : '');

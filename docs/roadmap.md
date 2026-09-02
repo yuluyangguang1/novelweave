@@ -295,3 +295,15 @@ README 只写已经能用的一切；这个文件写还没做的。
   只评审不改稿。与既有「润色(Rewrite)」和机检自检构成完整闭环。
 - **用量统计**（新库表 usage + 设置页「AI 用量」面板）：每次 LLM 调用记录
   工具 / 输入输出字数，按工具聚合展示。为未来成本预估打底。
+
+## P0-1 语义检索(已落地)
+
+- **`src/core/retrieval.js`**:章节正文按段落聚合切块(约 500 字/块,单书上限
+  400 块),BYOK 调 OpenAI 兼容 `/embeddings`,余弦检索 topK 相关章块。
+  纯 fetch + 原生 Math,零依赖零向量库;任何失败返回 null 降级,绝不阻塞写作。
+- **context.js**:`relatedPastChapters` 接受 `embedHits` —— 有语义命中直接用
+  (标注"语义"),没有则回落词频方案。相关旧章节的 usage 面板照常如实显示。
+- **设置页**新增"语义检索(可选)"配置:embeddings Base URL + 模型
+  (硅基流动 bge 系列免费),Key 复用聊天配置只存本机。配置变更自动作废向量缓存。
+- 续写流程:ensureEmbeddings() → 查询向量(本章拍点摘要 + 正文尾部) →
+  rankByVector topK=3 → 相关旧章节替换为语义召回结果。
