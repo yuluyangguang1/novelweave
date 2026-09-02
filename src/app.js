@@ -728,7 +728,10 @@ async function batchGenerateBook(novelId) {
   const all = APP.chaptersCache && APP.chaptersCache.length ? APP.chaptersCache : (await NovelDB.chapters.list(APP.novelId));
   const pending = all.filter((c) => !(c.body || '').trim());
   if (!pending.length) { showToast('没有待生成的空章节'); return; }
-  if (!confirm(`将按顺序逐章生成 ${pending.length} 章正文。\n每章自动过机检并自修一轮；过程中可随时点「停止」，已完成的章节不受影响，已有正文的章节一律不碰。\n\n继续？`)) return;
+  // 成本预估(保守:每章输入约 12KB 上下文 + 输出至多 8k tokens)
+  const estIn = pending.length * 12, estOut = pending.length * 8; // 单位 KB
+  const estNote = getEmbedConfig() ? '（含语义检索 embedding 调用）' : '';
+  if (!confirm(`将按顺序逐章生成 ${pending.length} 章正文。\n预估消耗：输入约 ${estIn}KB + 输出约 ${estOut}KB tokens${estNote}。\n每章自动过机检并自修一轮；可随时点「停止」，已有正文的章节一律不碰。\n\n继续？`)) return;
 
   APP.batchAbort = new AbortController();
   const mask = document.createElement('div');
@@ -793,8 +796,12 @@ async function batchGenerateBook(novelId) {
   APP.batchAbort = null;
   const footer = document.createElement('div');
   footer.className = 'onboard-actions';
-  footer.innerHTML = `<button class="btn btn-primary" id="batch-done">完成（${done}/${pending.length} 章${fixed ? `，${fixed} 章自修` : ''}）</button>`;
+  const remaining = (await NovelDB.chapters.list(APP.novelId)).filter((c) => !(c.body || '').trim()).length;
+  footer.innerHTML = `<button class="btn btn-primary" id="batch-done">完成（${done}/${pending.length} 章${fixed ? `，${fixed} 章自修` : ''}）</button>`
+    + (remaining && !APP.batchAbort?.signal?.aborted === false || remaining ? ` <button class="btn btn-secondary" id="batch-continue">续跑剩余 ${remaining} 章</button>` : '');
   card.querySelector('.onboard-actions').replaceWith(footer);
+  const contBtn = footer.querySelector('#batch-continue');
+  if (contBtn) contBtn.onclick = async () => { mask.remove(); await batchGenerateBook(APP.novelId); };
   footer.querySelector('#batch-done').onclick = async () => {
     mask.remove();
     try { await NovelDB.recountNovelStats(APP.novelId); } catch (_) {}
