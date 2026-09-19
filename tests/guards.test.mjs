@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -184,4 +184,20 @@ test('界面与 README 里写死的机器规则条数必须等于实际实现数
   assert.ok(claims.length > 0, '没抓到任何条数声明，检查匹配式');
   const stale = claims.filter((c) => c.claimed !== actual);
   assert.deepEqual(stale, [], `实际 ${actual} 条，这些声明过期：\n${stale.map((s) => `${s.file}:${s.line} 写 ${s.claimed} — ${s.text}`).join('\n')}`);
+});
+
+test('app.js 用到的每个 NovelDB 门面成员都必须真的存在', () => {
+  // 实测事故：db.js 顶层的 `window.NovelDB = { decisions: { list: listDecisions, … },
+  // usage: { list: listUsage, record: recordUsage } }` 引用了六个从未定义过的函数，
+  // 于是那条赋值语句抛 ReferenceError，整个数据层根本没挂上，站点只剩一个空态首页。
+  // 当时的 188 项测试全绿 —— 语法守卫只 vm.Script 解析，而这份代码语法完全合法，
+  // 缺的只是符号。门面引用与暴露面必须静态对上。
+  assert.equal(typeof NovelDB, 'object', 'db.js 顶层没能挂出 window.NovelDB');
+  const js = read('src/app.js');
+  const missing = new Set();
+  for (const [, group, member] of js.matchAll(/NovelDB\.([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?/g)) {
+    if (NovelDB[group] === undefined) { missing.add(`NovelDB.${group}`); continue; }
+    if (member && NovelDB[group][member] === undefined) missing.add(`NovelDB.${group}.${member}`);
+  }
+  assert.deepEqual([...missing].sort(), [], 'app.js 调用了门面上不存在的成员');
 });

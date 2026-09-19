@@ -25,6 +25,11 @@ export const NWSelfCheck = (globalThis.NWSelfCheck = require('../src/core/selfch
 export const NWRetrieval = (globalThis.NWRetrieval = require('../src/core/retrieval.js'));
 export const NWEpub = (globalThis.NWEpub = require('../src/core/epub.js'));
 export const NovelLLM = (globalThis.NovelLLM = require('../src/core/llm.js'));
+// db.js 是经典脚本、没有导出，它把数据层门面挂在 window 上。在这里 require 一次，
+// 等于让「顶层能不能跑完」成为所有测试的前置条件 —— 顶层抛错时全套测试一起红，
+// 而不是像那次 decisions/usage 六个函数全缺一样，188 项全绿而站点其实是空的。
+require('../src/core/db.js');
+export const NovelDB = globalThis.NovelDB;
 export const routerMod = require('../src/router.js');
 
 export function readSchema() {

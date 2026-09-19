@@ -539,7 +539,7 @@ window.NovelDB = {
 
 
   relations:    { list: listRelations, save: saveRelation, delete: deleteRelation },
-  decisions:    { list: listDecisions, save: saveDecision, supersede: supersedeDecision, delete: deleteDecision },
+  decisions:    { list: listDecisions, save: saveDecision, update: updateDecision, supersede: supersedeDecision, delete: deleteDecision },
   revisions: {
     snapshot: snapshotRevision, list: listRevisions, delete: deleteRevision,
     clearChapter: clearChapterRevisions, keep: REVISION_KEEP,
@@ -563,3 +563,62 @@ async function listRelations(novelId) {
   return stableSort(await getByIndex('relations', 'novel_id', novelId));
 }
 async function deleteRelation(id) { await del('relations', id); }
+
+async function listDecisions(novelId) {
+  return stableSort(await getByIndex('decisions', 'novel_id', novelId));
+}
+
+async function saveDecision(novelId, data) {
+  const now = Date.now();
+  return put('decisions', {
+    id: data.id || newId('dec'), novel_id: novelId,
+    title: data.title || '', reason: data.reason || '', risk: data.risk || '',
+    supersededBy: data.supersededBy ?? null,
+    created_at: data.created_at || now, updated_at: now,
+  });
+}
+
+async function updateDecision(id, updates) {
+  const d = await get('decisions', id);
+  if (!d) throw new Error('决策不存在');
+  return put('decisions', { ...d, ...updates, updated_at: Date.now() });
+}
+
+/**
+ * 推翻留痕：不删旧行，只标记它被谁推翻。已推翻的决策不再进续写上下文
+ * （context.js 的 decisionBlock 按 supersededBy 过滤），但作者仍能看到
+ * 「当初为什么那么写」。byId 省略时只留一个布尔痕迹，不猜是谁顶替的。
+ */
+async function supersedeDecision(id, byId = null) {
+  return updateDecision(id, { supersededBy: byId || true });
+}
+
+async function deleteDecision(id) { await del('decisions', id); }
+
+/** 用量流水只留最近这些条：每次 AI 调用记一行，不限量会让库随写作时长无限膨胀。 */
+const USAGE_KEEP = 500;
+
+/**
+ * 记一次 LLM 调用。字段在库里是 snake_case（与 .novelweave/ 的其它表同一口径），
+ * 入参用 camel 是调用方（app.js 的 usage.record）已经在用的形状。
+ */
+async function recordUsage(novelId, { tool = 'unknown', charsIn = 0, charsOut = 0, durationMs = 0 } = {}) {
+  if (!novelId) return null;   // 无书时的调用不记账：孤儿记录既查不到也清不掉
+  const rec = {
+    id: newId('use'), novel_id: novelId, tool,
+    chars_in: Number(charsIn) || 0, chars_out: Number(charsOut) || 0,
+    duration_ms: Number(durationMs) || 0, at: Date.now(),
+  };
+  await put('usage', rec);
+  const all = await getByIndex('usage', 'novel_id', novelId);
+  if (all.length > USAGE_KEEP) {
+    for (const r of all.sort((a, b) => b.at - a.at).slice(USAGE_KEEP)) await del('usage', r.id);
+  }
+  return rec;
+}
+
+/** 最近 limit 次调用，新的在前 —— 面板要的是「最近在用什么」。 */
+async function listUsage(novelId, limit = USAGE_KEEP) {
+  const rows = await getByIndex('usage', 'novel_id', novelId);
+  return rows.sort((a, b) => b.at - a.at).slice(0, limit);
+}
