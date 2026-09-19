@@ -161,7 +161,6 @@ const ACTIONS = {
   'load-demo':     () => loadDemoBook(),
   'open-chapter':  (id) => openChapterById(id),
   'del-chapter':   (id) => deleteCh(id),
-  'add-chapter':   () => addChapter(),
   'edit-char':     (id) => editCharacter(id),
   'edit-world':    (id) => editWorldbuilding(id),
   'edit-note':     (id) => editNote(id),
@@ -176,7 +175,6 @@ const ACTIONS = {
   'run-ai':        (id, el) => runAIPanel(el.dataset.tool || id),
   'close-ai':      () => closeAIPanel(),
   'switch-tab':    (id, el) => switchTab(el.dataset.tab),
-  'goto-settings': () => switchTab('settings'),
 };
 
 function wireDelegation() {
@@ -921,7 +919,6 @@ const ADD_ACTIONS = {
 Object.assign(ACTIONS, ADD_ACTIONS);
 Object.assign(ACTIONS, {
   'edit-promise':    (id) => editPromise(id),
-  'del-promise':     (id) => removePromise(id),
   'edit-anchor':     (id) => editAnchor(id),
   'edit-state':      (id, el) => showStateEditor(el.dataset.chapter, el.dataset.entity),
   'jump-diag':       (id, el) => jumpToEvidence(el.dataset.chapter, el.dataset.start, el.dataset.len),
@@ -2334,11 +2331,105 @@ function renderWorkspaceSettings(host) {
 }
 
 Object.assign(ACTIONS, {
+  's-save': () => {
+    NovelLLM.setConfig(providerFormFrom('s'));
+    // 语义检索的两个框也在这里落盘：不填就等于关掉（getEmbedConfig 要求 baseURL+model 都有）
+    setEmbedConfig({ baseURL: val('s-embed-url'), model: val('s-embed-model') });
+    showToast('设置已保存');
+  },
+  's-test': async () => {
+    const out = document.getElementById('s-result');
+    out.textContent = '测试中…';
+    const r = await NovelLLM.testConnection(providerFormFrom('s'));
+    out.innerHTML = r.ok ? `${icon('check')}<span>连接成功</span>` : `${icon('x')}<span>连接失败：${esc(r.message)}</span>`;
+  },
+  // 点服务商 = 预填该家的 Base URL 与默认模型；要连点两次「保存」才落盘是故意分开的：
+  // 作者常要先改 Key。active 态跟着走，否则看起来没反应。
+  'pick-provider': (key, el) => {
+    const p = NovelLLM.PRESETS[key];
+    if (!p) return;
+    document.getElementById('s-provider').value = key;
+    document.getElementById('s-baseurl').value = p.baseURL || '';
+    document.getElementById('s-model').value = p.defaultModel || '';
+    document.querySelectorAll('.preset-btn').forEach((b) => b.classList.toggle('active', b === el));
+  },
+  'export-novelweave': () => exportNovelweave(),
+  'import-novelweave': () => importNovelweave(),
+  'export-epub': () => exportEpub(),
+  'export-backup': () => exportBackup(),
+  'import-backup': () => importBackup(),
+});
+
+/**
+ * 工作区面板（ws-*）与全局设置页（s-*）是同一份 LLM 配置的两个入口。
+ * 读值统一走这里 —— 两套各读一遍，就会出现「一边改了另一边不知道」。
+ * s-provider 是隐藏域（服务商靠点卡片选），ws-provider 是 <select>。
+ */
+function providerFormFrom(prefix) {
+  const v = (k) => val(`${prefix}-${k}`);
+  return {
+    provider: prefix === 's' ? (document.getElementById('s-provider')?.value || 'openrouter') : v('provider'),
+    baseURL: v('baseurl'), apiKey: v('apikey'), model: v('model'),
+  };
+}
+
+const BACKUP_APP = 'novelweave';
+/** 备份覆盖全部表：CASCADE_STORES 是数据层自己认定的「从属表全集」，不再手写第二份名单。 */
+const BACKUP_STORES = ['novels', ...NovelDB.CASCADE_STORES];
+
+async function exportBackup() {
+  const dump = { app: BACKUP_APP, schemaVersion: 1, exportedAt: new Date().toISOString(), data: {} };
+  for (const store of BACKUP_STORES) dump.data[store] = await NovelDB.dump(store);
+  const total = Object.values(dump.data).reduce((n, rows) => n + rows.length, 0);
+  downloadText(`novelweave-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(dump, null, 2));
+  showToast(`已备份 ${dump.data.novels.length} 部作品 · ${total} 条记录`);
+}
+
+/** 单文件选择：File System Access 的 pickDirectory 只能挑目录，备份 JSON 用原生 input。 */
+function pickJsonText() {
+  return new Promise((resolve) => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'application/json,.json';
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0];
+      resolve(f ? await f.text() : null);
+    };
+    inp.oncancel = () => resolve(null);
+    inp.click();
+  });
+}
+
+async function importBackup() {
+  const text = await pickJsonText();
+  if (!text) return;
+  let dump;
+  try { dump = JSON.parse(text); } catch (e) { showToast(`不是合法的 JSON：${e.message}`); return; }
+  if (!dump || dump.app !== BACKUP_APP || typeof dump.data !== 'object' || dump.data === null) {
+    showToast('不是织文的备份文件（缺 app / data）');
+    return;
+  }
+  // 先把所有 store 名校验完再动手写：一半写进去、一半抛错，库就废了
+  const unknown = Object.keys(dump.data).filter((s) => !BACKUP_STORES.includes(s));
+  if (unknown.length) { showToast(`备份里有不认识的表：${unknown.join('、')}`); return; }
+  const counts = Object.entries(dump.data).filter(([, rows]) => Array.isArray(rows) && rows.length)
+    .map(([s, rows]) => `${s} ${rows.length} 条`);
+  if (!counts.length) { showToast('备份是空的'); return; }
+  if (!confirm(`导入会按 id 覆盖同名记录（备份：${counts.join(' · ')}）。继续？`)) return;
+  let n = 0;
+  for (const [store, rows] of Object.entries(dump.data)) {
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) { await NovelDB.putRow(store, row); n++; }
+  }
+  await NovelDB.recountAll();
+  showToast(`备份已导入：${n} 条记录`);
+  router.go('home');
+  await renderHomePage();
+}
+
+Object.assign(ACTIONS, {
   'ws-save': () => {
-    NovelLLM.setConfig({
-      provider: val('ws-provider'), baseURL: val('ws-baseurl'),
-      apiKey: val('ws-apikey'), model: val('ws-model'),
-    });
+    NovelLLM.setConfig(providerFormFrom('ws'));
     showToast('设置已保存');
   },
   'ws-test': async () => {

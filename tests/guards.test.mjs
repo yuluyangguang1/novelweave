@@ -201,3 +201,40 @@ test('app.js 用到的每个 NovelDB 门面成员都必须真的存在', () => {
   }
   assert.deepEqual([...missing].sort(), [], 'app.js 调用了门面上不存在的成员');
 });
+
+/** ACTIONS 的四处长法：两处字面量常量 + 若干 Object.assign(ACTIONS, {…})。 */
+function actionsSource(js) {
+  const parts = [];
+  for (const op of ['const ACTIONS = {', 'const ADD_ACTIONS = {', 'Object.assign(ACTIONS, {']) {
+    for (let i = js.indexOf(op); i !== -1; i = js.indexOf(op, i + op.length)) {
+      const body = js.slice(i + op.length);
+      const end = body.search(/^(?:\};|\}\));[^\n]*$/m);
+      parts.push(end === -1 ? body : body.slice(0, end));
+    }
+  }
+  return parts.join('\n');
+}
+
+test('每个 data-action 都有处理器 —— 派发器遇到未注册的名字是静默 return', () => {
+  // 实测事故：设置页 8 个按钮（导出 .novelweave/、导入、EPUB、备份、保存、测试连接、选服务商）
+  // 的 data-action 从来没进 ACTIONS，点了既不报错也不动；README 却把它们写成能用。
+  const js = read('src/app.js');
+  const registered = new Set([...actionsSource(js).matchAll(/^\s+(['"])([\w-]+)\1\s*:/gm)].map((m) => m[2]));
+  // data-action="${…}" 那种拼出来的名字守卫管不到，靠 ADD_ACTIONS 与 nav-add-* 那条约定
+  const used = [...read('index.html').matchAll(/data-action="([^"$]+)"/g), ...js.matchAll(/data-action="([^"$]+)"/g)].map((m) => m[1]);
+  const missing = [...new Set(used)].filter((a) => !registered.has(a)).sort();
+  assert.deepEqual(missing, [], `这些按钮点了没反应：${missing.join('、')}`);
+});
+
+test('设置页的每个表单控件都有人读 —— 填了没人接等于没填', () => {
+  const js = read('src/app.js');
+  const ids = new Set([...js.matchAll(/<(?:input|select|textarea)\b[^>]*id="((?:s|ws)-[\w-]+)"/g)].map((m) => m[1]));
+  const readIds = new Set([...js.matchAll(/(?:val|document\.getElementById)\(\s*['"]((?:s|ws)-[\w-]+)['"]/g)].map((m) => m[1]));
+  // providerFormFrom 用 `${prefix}-baseurl` 拼 id，把它展开进「已读」名单，否则误报
+  const body = js.match(/function providerFormFrom[\s\S]*?\n\}/)?.[0] || '';
+  const suffixes = [...body.matchAll(/v\('([\w-]+)'\)/g)].map((m) => m[1]);
+  const prefixes = [...js.matchAll(/providerFormFrom\('([\w-]+)'\)/g)].map((m) => m[1]);
+  for (const p of prefixes) for (const s of suffixes) readIds.add(`${p}-${s}`);
+  const orphan = [...ids].filter((id) => !readIds.has(id)).sort();
+  assert.deepEqual(orphan, [], `这些输入框的值从来没被读过：${orphan.join('、')}`);
+});
