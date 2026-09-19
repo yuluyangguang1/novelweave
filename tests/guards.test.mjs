@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot } from './_load.mjs';
+import { repoPath, repoRoot, NWRules } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -166,4 +166,22 @@ test('README 不得声称尚未实现的能力', () => {
   if (!(hasManifest && hasSw)) {
     assert.equal(/PWA[^\n]*可安装/.test(md), false, '没有 manifest 与 service worker 时，README 不该写「PWA 可安装」');
   }
+});
+
+test('界面与 README 里写死的机器规则条数必须等于实际实现数', () => {
+  // 「N 条机器规则」这个数字被 R17/R18/R19 连续三次落地甩在后面，写第二遍时
+  // 没人回去改第一遍。规则表是唯一事实源，面向用户的声称值由它算出来。
+  // docs/roadmap.md 不在内：它是编年记录，「阶段二 10 条」说的是当时。
+  const actual = Object.keys(NWRules.RULES).length;
+  const claims = [];
+  for (const f of ['index.html', 'README.md']) {
+    read(f).split('\n').forEach((line, i) => {
+      for (const m of line.matchAll(/(\d+)\s*条[^，。\n]{0,6}机器规则/g)) {
+        claims.push({ file: f, line: i + 1, claimed: Number(m[1]), text: line.trim().slice(0, 50) });
+      }
+    });
+  }
+  assert.ok(claims.length > 0, '没抓到任何条数声明，检查匹配式');
+  const stale = claims.filter((c) => c.claimed !== actual);
+  assert.deepEqual(stale, [], `实际 ${actual} 条，这些声明过期：\n${stale.map((s) => `${s.file}:${s.line} 写 ${s.claimed} — ${s.text}`).join('\n')}`);
 });
