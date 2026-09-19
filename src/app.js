@@ -2627,7 +2627,8 @@ async function renderUsagePanel() {
 
 // ═══════════════════ 决策记录(Decision) ═══════════════════
 // 学 neuro-book:创作决策当场记档(为什么让主角黑化),风险必填,推翻留痕。
-// 决策不进上下文 —— 它是给作者回头看的,不是给模型喂的。
+// 未推翻的决策由 context.js 的「创作决策」节注入续写上下文（d-sync 起生效），
+// 推翻留痕的历史行不进 prompt。
 
 async function showDecisionList(host) {
   host = host || document.getElementById('sidebar-content');

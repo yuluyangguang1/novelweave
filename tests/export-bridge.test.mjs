@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NWStory, NWProject, NWRules, NWText, NWBible, repoRoot } from './_load.mjs';
+import { NWStory, NWProject, NWRules, NWText, NWBible, NWContext, repoRoot } from './_load.mjs';
 
 /**
  * 阶段三的契约核心：Web 导出的 .novelweave/ 目录，CLI 必须原样读得懂。
@@ -247,6 +247,40 @@ test('sync.json 里的哈希与 CLI 的 authorHash 用同一套算法', async ()
   const a = await NWProject.hashOf({ ...rec, _derived: { hits: 1 } });
   const b = await NWProject.hashOf({ ...rec, _derived: { hits: 999 }, 'x-words': 12 });
   assert.equal(a, b, '派生字段必须不参与哈希');
+});
+
+test('创作决策一路走通：Web 库行 → 导出文件（毫秒转 ISO）→ CLI 上下文带出这节', async () => {
+  const rows = { ...rowsFixture(), decisions: [
+    { id: 'dec_1', title: '不让主角换城', reason: '保持主线紧凑', risk: '中', supersededBy: null, created_at: 1700000000000 },
+    { id: 'dec_2', title: '第二人称试验', reason: '已放弃', supersededBy: 'dec_1', created_at: 1700000000000 },
+  ] };
+  const ctx = NWStory.buildCtx(rows);
+  const webSec = NWContext.buildSections(ctx, { chapterId: 'ch_a2' }).sections.find((s) => s.name === '创作决策');
+  assert.ok(webSec, 'Web 侧没有「创作决策」节，说明 buildCtx 把 decisions 丢了');
+  assert.equal(webSec.text, '- 不让主角换城：保持主线紧凑（风险：中）', '已推翻的不该进 prompt');
+
+  const tree = await NWProject.buildProjectTree(ctx);
+  const items = JSON.parse(tree[Object.keys(tree).find((k) => k.endsWith('continuity/decisions.json'))]).items;
+  assert.equal(items[0].created, '2023-11-14T22:13:20.000Z', '库里是毫秒 created_at，文件里必须是 ISO');
+  assert.equal(items[0].created_at, undefined, '毫秒字段不该漏进文件');
+  assert.equal(NWProject.parseFileMap(tree).decisions[0].title, '不让主角换城');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-decision-'));
+  try {
+    for (const [rel, text] of Object.entries(tree)) {
+      const f = path.join(tmp, '.novelweave', rel);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, text, 'utf8');
+    }
+    const c = run('nw-context.mjs', [path.join(tmp, '.novelweave', '桥接测试'), '--chapter', 'ch_a2', '--json']);
+    assert.equal(c.code, 0, c.stderr);
+    const built = JSON.parse(c.stdout);
+    assert.ok(built.sections.map((s) => s.name).includes('创作决策'), 'CLI 上下文要有这节：' + built.sections.map((s) => s.name).join(','));
+    assert.ok(built.document.includes('不让主角换城'), 'document 里应看到决策内容');
+    assert.ok(!built.document.includes('第二人称试验'), 'CLI 侧同样不该看到已推翻的');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('Web 写的多行摘要，CLI 读得懂、上下文也带得动（一条链断在哪都算没做）', async () => {

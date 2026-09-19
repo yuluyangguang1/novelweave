@@ -95,3 +95,20 @@ test('多行摘要在库行与文件记录两种形状下哈希一致，否则�
   const fileRow = { id: 'ch_a', number: 1, title: '山门', body: '正文', content: '正文', status: 'draft', summary: '核心事件：甲\n状态变化：乙' };
   assert.equal(await NWProject.hashRecord('chapter', dbRow), await NWProject.hashRecord('chapter', fileRow));
 });
+
+test('创作决策要一路走到 prompt：buildCtx 漏了它，界面记下的决定就永远进不了上下文', () => {
+  const ctx = NWStory.buildCtx(rows({
+    decisions: [
+      { id: 'dec_a', title: '不让主角换城', reason: '保持主线紧凑', risk: '中', supersededBy: null },
+      { id: 'dec_b', title: '第二人称试验', reason: '已放弃', supersededBy: 'dec_a' },
+    ],
+  }));
+  const sec = NWContext.buildSections(ctx, { chapterId: 'ch_c' }).sections.find((s) => s.name === '创作决策');
+  assert.ok(sec, '没有「创作决策」节');
+  assert.equal(sec.text, '- 不让主角换城：保持主线紧凑（风险：中）');
+});
+
+test('一条决策都没有时不留空节', () => {
+  const names = NWContext.buildSections(NWStory.buildCtx(rows()), { chapterId: 'ch_c' }).sections.map((s) => s.name);
+  assert.ok(!names.includes('创作决策'), names.join(','));
+});

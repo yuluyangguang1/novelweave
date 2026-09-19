@@ -311,6 +311,8 @@
       lexicon,
       suppressions: toSuppressions(rows.suppressions || []),
       relations: rows.relations || { edges: [] },
+      // 决策原样带过：app.js 查询后传进来，context.js 的「创作决策」节和导出都要用
+      decisions: rows.decisions || [],
       chapterNumbers: new Map(chapters.map((c) => [c.id, c.number])),
     };
   }

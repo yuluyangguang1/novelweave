@@ -160,6 +160,8 @@ export function loadBook(bookDir, opts = {}) {
     lexicon: readJson(dirOf('lexicon.json'), NWBible.emptyLexicon()),
     relations: readJson(dirOf('relations.json'), { edges: [] }),
     suppressions: readJson(path.join(bookDir, 'continuity', 'suppressions.json'), { items: [] }),
+    // 决策文件只在 Web 导出过之后才存在；没有就是没有，不补空文件
+    decisions: readJson(path.join(bookDir, 'continuity', 'decisions.json'), { items: [] }).items || [],
     pending: readJson(path.join(bookDir, 'continuity', 'pending.json'), { items: [] }),
     sync: readJson(path.join(bookDir, 'meta', 'sync.json'), { records: {} }),
     schema: opts.schema === false ? null : readSchema(),

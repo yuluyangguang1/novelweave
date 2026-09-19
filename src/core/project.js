@@ -109,7 +109,11 @@
     files[p('bible/relations.json')] = JSON.stringify(ctx.relations || { schemaVersion: Bible.SCHEMA_VERSION, edges: [] }, null, 2) + '\n';
 
     // 创作决策记录:决策本来就该进 git —— 推翻留痕也要导出
-    const decisions = (ctx.decisions || []).map((d) => pick(d, ['id', 'title', 'reason', 'risk', 'supersededBy', 'created']));
+    // created 与 book/chapter 同一口径：库里存 created_at 毫秒，文件里是 ISO
+    const decisions = (ctx.decisions || []).map((d) => ({
+      ...pick(d, ['id', 'title', 'reason', 'risk', 'supersededBy']),
+      created: d.created || T.toISO(d.created_at),
+    }));
     files[p('continuity/decisions.json')] = JSON.stringify({ schemaVersion: Bible.SCHEMA_VERSION, items: decisions }, null, 2) + '\n';
 
     const tl = ctx.timeline || Bible.emptyTimeline();
