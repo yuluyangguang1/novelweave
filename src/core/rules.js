@@ -8,10 +8,10 @@
  * 每条规则都必须自带误报控制。误报的检查器会被作者关掉，等于没有。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible);
+  const mod = factory(root.NWText, root.NWBible, root.NWStylePack);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWRules = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack) {
   'use strict';
 
   const ENGINE_VERSION = '1.0.0';
@@ -906,6 +906,49 @@
             evidence: { basis: [`排期 ${s.reveal_chapter}（第 ${n} 章）`, `已写到第 ${last} 章`, `「${term}」在正文里从未出现`] },
             message: `信息差「${term}」排在第 ${n} 章揭示，但到第 ${last} 章正文里从没出现过，revealed_at 也仍为空。`,
             suggestion: '补写揭示并回填 revealed_at；若已经用别的说法揭过，把 term 改成读者实际看到的那个词。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'ai-flavor': {
+      code: 'R22',
+      defaultSeverity: 'warn',
+      scope: 'chapter',
+      summary: '本章的 AI 腔禁词密度或句式套路过高（去 AI 味规则包）。',
+      detail:
+        '判据全部来自 NWStylePack 的统计，不做主观评价：禁词按每千字命中数算，句式只数那五条' +
+        '（同开头连击、连续无对话段、二元对照句、三短句连击、破折号插入语）。密度 ≥3/千字 或 句式套路 ≥2 类为 warn，' +
+        '低一档为 info；正文不足 500 字不评。作者可在本书的 stylePack 里关掉整组或加自己的禁词。' +
+        '本条是文笔提示，不是事实矛盾：误报了关掉那组即可，不要拿它当门禁。',
+      run(ctx) {
+        const out = [];
+        const opts = StylePack.optsFrom(ctx.book);
+        for (const ch of ctx.chapters) {
+          const body = (ch.body || '').trim();
+          if (!body) continue;
+          const r = StylePack.lint(body, opts);
+          const v = StylePack.verdict(r);
+          if (!v.severity) continue;
+          const tally = new Map();
+          for (const b of r.banned) tally.set(b.term, (tally.get(b.term) || 0) + 1);
+          const hits = [...tally.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+            .slice(0, 6).map(([term, n]) => `${term}×${n}`);
+          const first = r.banned[0] ? r.banned[0].quote : (r.patterns[0]?.samples || [''])[0];
+          out.push(diag('ai-flavor', {
+            chapter: ch.id,
+            severity: v.severity,
+            confidence: 0.6,
+            evidence: {
+              basis: [...v.reasons, ...(hits.length ? [`高频：${hits.join('、')}`] : [])],
+              quote: first,
+              per1000: r.per1000,
+              patterns: r.patterns.map((p) => ({ id: p.id, count: p.count })),
+            },
+            message: `${ch.id} 的 AI 味偏高：每千字 ${r.per1000} 处禁词，${r.patterns.length} 类句式套路。`,
+            suggestion: '把心理名词换成动作、删掉喻体直接写下一件事、段尾收在台词或动作上；' +
+              '确属本书用词习惯的，可在侧栏「文体规则」里关掉对应词组，或豁免本章。',
           }));
         }
         return out;

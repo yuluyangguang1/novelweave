@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NWBible, NWText, NWProject, NWStory, repoRoot, scaffoldBook, upsertProject, writeFileAtomic } from './_load-cli.mjs';
+import { NWBible, NWText, NWProject, NWStory, repoRoot, scaffoldBook, upsertProject, writeFileAtomic, writeJsonAtomic } from './_load-cli.mjs';
 
 /**
  * nw-prose 是「交接」机制，不是文体引擎。所以这里测的不是它判文笔准不准
@@ -144,6 +144,72 @@ test('文体状态永不阻断：台账里有问题也退出 0', () => {
   const r = run(['status', bookDir, '--home', path.join(tmp, 'no-such-home')]);
   assert.equal(r.code, 0, 'CI 不该因为"这台机器没装第三方技能"或"某章有文笔问题"而红');
   assert.match(r.stdout, /文体检查台账/);
-  assert.match(r.stdout, /已查·有问题/, '前序测试写入的结论要能读回来');
-  assert.match(r.stdout, /本机无可用文体引擎/);
+  assert.match(r.stdout, /已查·有问题/, '前序测试写入的结论要读回来');
+  assert.match(r.stdout, /本机无外部文体引擎/);
+  assert.match(r.stdout, /nw-prose lint --chapter/, '没有外部引擎时要给出内置包这条退路');
+});
+
+// ═══════════════ 内置包 lint（P2）═══════════════
+
+// 650 字以上、禁词成片、句子连着同一起首：过 isProse(200)、本包密度门槛与句式门槛
+const AI_TEXT = ('他心里五味杂陈，仿佛夜色压了下来，非常疲惫，神色又格外冷清。'
+  + '他望着山道尽头，这一刻只剩下脚步声，谁能想到那匣子里是半枚铜印。').repeat(13);
+
+test('探测：内置包永远可用，但不算外部引擎（recommended 才落到它头上）', () => {
+  const noHome = json(['probe', '--home', path.join(tmp, 'no-such-home')]);
+  const byId = Object.fromEntries(noHome.engines.map((e) => [e.id, e]));
+  assert.equal(byId.builtin.usable, true, '内置包随代码走，不该探成不可用');
+  assert.ok(noHome.usable.includes('builtin'));
+  assert.deepEqual(noHome.external, [], '内置包不是「本机装了什么」的一部分');
+  assert.equal(noHome.recommended, 'builtin', '没有外部引擎时该推荐内置包');
+
+  const withHome = json(['probe', '--home', fakeHome]);
+  assert.deepEqual(withHome.external, ['story-deslop'], '有外部引擎时 recommended 不该是内置包');
+  assert.equal(withHome.recommended, 'story-deslop');
+  // packet 的默认引擎也不该被内置包顶掉：那条路径的语义是「交给别人」
+  assert.equal(json(['packet', bookDir, '--chapter', 'ch-001', '--home', path.join(tmp, 'no-such-home')]).engine, null);
+});
+
+test('lint：查得出禁词与句式，退出码恒 0，默认不动台账', () => {
+  writeChapter('ch-002', 2, 'ch2', '夜袭', AI_TEXT);
+  const before = json(['status', bookDir]).rows.find((r) => r.chapter === 'ch-002').state;
+  const r = json(['lint', bookDir, '--chapter', 'ch-002']);
+  assert.equal(r.words >= 500, true, `夹具太短测不到密度：${r.words}`);
+  assert.equal(r.result, 'issues');
+  assert.equal(r.severity, 'warn');
+  assert.ok(r.terms.some((t) => t.term === '仿佛'), '禁词清单要按词汇总');
+  assert.ok(r.patterns.some((p) => p.id === 'same-subject'), '连续同开头该算进句式');
+  assert.ok(r.findings > 0);
+  assert.equal(json(['status', bookDir]).rows.find((x) => x.chapter === 'ch-002').state, before,
+    '没加 --record 就不该偷偷改台账');
+  assert.equal(run(['lint', bookDir, '--chapter', 'ch-002']).code, 0, '文体结论不是门禁');
+});
+
+test('lint --record 写台账，正文一改结论就过期', () => {
+  run(['lint', bookDir, '--chapter', 'ch-002', '--record'], 0);
+  const row = json(['status', bookDir]).rows.find((r) => r.chapter === 'ch-002');
+  assert.equal(row.state, 'issues');
+  assert.equal(row.engine, 'builtin');
+  writeChapter('ch-002', 2, 'ch2', '夜袭', AI_TEXT + '他抬起断臂挡下那一击。');
+  assert.equal(json(['status', bookDir]).rows.find((r) => r.chapter === 'ch-002').state, 'stale');
+});
+
+test('lint 吃本书的 stylePack 开关；没评的章一律 skipped，不冒充「查过没问题」', () => {
+  const book = JSON.parse(fs.readFileSync(path.join(bookDir, 'book.json'), 'utf8'));
+  writeJsonAtomic(path.join(bookDir, 'book.json'), { ...book, stylePack: { enabled: false } });
+  const off = json(['lint', bookDir, '--chapter', 'ch-002']);
+  assert.equal(off.enabled, false, 'book.json 里的 stylePack 没被 CLI 读到');
+  assert.deepEqual(off.terms, [], '作者把包关了就别再报禁词');
+  assert.equal(off.result, 'skipped');
+  assert.match(off.note, /已停用/);
+  writeJsonAtomic(path.join(bookDir, 'book.json'), book);   // 还原：下面的测试用默认包
+
+  writeChapter('ch-002', 2, 'ch2', '夜袭', LONG);            // 300 字：够正文、不够密度门槛
+  const short = json(['lint', bookDir, '--chapter', 'ch-002']);
+  assert.equal(short.result, 'skipped', '短到不评的章记成 clean，台账就在撒谎');
+  assert.match(short.note, /不足 500 字/);
+
+  const outline = json(['lint', bookDir, '--chapter', 'ch-003']);
+  assert.equal(outline.result, 'skipped');
+  assert.match(outline.note, /不足 200 字/);
 });

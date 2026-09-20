@@ -52,9 +52,11 @@
       genre: ctx.book.genre, language: ctx.book.language || 'zh-CN', description: ctx.book.description || '',
       audience: ctx.book.audience || '', target: ctx.book.target || { chapters: 0, wordsPerChapter: 3000 },
       voice: ctx.book.voice || { person: '', tense: '', povDefault: null, notes: '' },
+      // 作者关掉哪几组禁词是本作品的设定，不导出就等于换台机器重新写一遍；没设过就别写这个键
+      stylePack: ctx.book.stylePack || null,
       created: ctx.book.created || T.toISO(ctx.book.created_at),
       updated: ctx.book.updated || T.toISO(ctx.book.updated_at),
-    }, ['schemaVersion', 'id', 'slug', 'title', 'genre', 'language', 'description', 'audience', 'target', 'voice', 'created', 'updated']);
+    }, ['schemaVersion', 'id', 'slug', 'title', 'genre', 'language', 'description', 'audience', 'target', 'voice', 'stylePack', 'created', 'updated']);
     book._derived = {
       chapters: ctx.chapters.length,
       words: ctx.chapters.reduce((s, c) => s + T.countWords(c.body), 0),

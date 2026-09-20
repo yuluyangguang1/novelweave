@@ -7,13 +7,16 @@
 实际结果是续写完一章没人看文字质感，那一章带着 AI 味就进稿了，而且事后
 没有任何地方能回答"这几章到底查过没有"。
 
-`nw-prose` 补的是那段缺失的管道：**探测 → 交接 → 记录**。它自己不做任何文体判断。
+`nw-prose` 补的是那段缺失的管道：**探测 → 交接 → 记录**。它自己不做任何文体判断——
+除了 `lint`，那是唯一一处例外，见下。
 
-## 四个子命令
+## 五个子命令
 
 ```bash
 node scripts/nw-prose.mjs probe                       # 本机有什么引擎可用，不可用的说清为什么
 node scripts/nw-prose.mjs packet --chapter ch-007     # 取这一章的交接包
+node scripts/nw-prose.mjs lint --chapter ch-007       # 织文内置去 AI 味包：只数禁词密度与句式套路
+node scripts/nw-prose.mjs lint --chapter ch-007 --record   # 同上，并把结论写进台账
 node scripts/nw-prose.mjs record --chapter ch-007 \
      --engine story-deslop --result issues --findings 6
 node scripts/nw-prose.mjs status                      # 台账：哪些章查过、结论是否还成立
@@ -37,6 +40,20 @@ node scripts/nw-prose.mjs status                      # 台账：哪些章查过
 深度 2，因此 Hermes 的 `skills/<类别>/<技能>/` 嵌套布局也探得到。
 清单里标了 `network: true` 的引擎默认要连远端 API，离线机器上不要指望它。
 
+## 内置包 `lint`：本机没有外部引擎时也有东西可跑
+
+交接机制假定本机装了别人的引擎，而大多数机器没有。`lint` 用的就是织文自己那份
+「去 AI 味」包（`src/core/stylepack.js`），**与 Web 端 R22 同一份代码**，所以命令行查出来的
+和网页里报的是同一条结论。它只做机械统计：禁词按每千字命中数、句式按那五条套路，
+不判断文笔好坏，也不给改写建议（要建议请交给外部引擎或作者自己）。
+
+- 读的是本书 `book.json` 里的 `stylePack` 开关，与网页侧栏「文体规则」页同一份设定。
+- `probe` 里 builtin 永远 `usable: true`，但它排在最后，`recommended` 仍是第一个可用的**外部**引擎
+  ——`packet` 的语义是"交给别人"，交给自己直接跑 `lint` 就行。
+- 结论三态：`clean` / `issues` / **`skipped`**。"没评"和"评了没问题"是两件事：包被作者关掉、
+  正文不足 500 字（密度没有统计意义）一律记 `skipped` 并带原因，不冒充查过没问题。
+- 默认不写台账，`--record` 才写；`lint` 与 `status` 一样恒退 0，不是门禁。
+
 ## 交接包里有什么
 
 `packet --json`：`file`（章节正文路径，不内联正文）、`engine`（选中的引擎与它的用法和清单文件）、
@@ -51,7 +68,7 @@ node scripts/nw-prose.mjs status                      # 台账：哪些章查过
 1. 只诊断，不替作者改写正文；要改由作者点头。
 2. 本 skill 不判断文笔好坏，清单来自被交接的引擎。
 3. 改完必须重跑 `nw-continuity` —— 换句子会挪动证据偏移，R1/R7 的定位跟着失效。
-4. 结论必须 `record` 回台账。
+4. 结论必须写回台账：外部引擎用 `record`，内置包用 `lint --record`。不写，这一章在 `status` 里永远是「未查」。
 
 ## 台账 `continuity/prose.json`
 

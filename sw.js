@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v3'; // v3: activate 时向页面广播 sw-updated(横幅)
+const VERSION = 'nw-v4'; // v4: 加 stylepack.js —— 旧 shell 缓存里没有它，离线打开会静默缺一条规则
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 
@@ -21,6 +21,7 @@ const PRECACHE = [
   'src/styles/app.css',
   'src/core/text.js',
   'src/core/bible.js',
+  'src/core/stylepack.js',
   'src/core/rules.js',
   'src/core/story.js',
   'src/core/context.js',

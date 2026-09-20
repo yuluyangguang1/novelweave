@@ -10,6 +10,7 @@
  * 用法：
  *   node scripts/nw-prose.mjs probe [--home DIR] [--json]
  *   node scripts/nw-prose.mjs packet [bookDir] --chapter ch-003 [--engine ID] [--json]
+ *   node scripts/nw-prose.mjs lint [bookDir] --chapter ch-003 [--record] [--json]
  *   node scripts/nw-prose.mjs record [bookDir] --chapter ch-003 --engine ID
  *        --result clean|issues|skipped [--findings N] [--note "..."]
  *   node scripts/nw-prose.mjs status [bookDir] [--home DIR] [--json]
@@ -17,12 +18,17 @@
  * 退出码：0 · 2 用法错 · 5 IO 错。
  * 文体状态**永不阻断**：它是建议。与 nw-continuity 的机器门禁混在一起，
  * 会让 CI 因为「这台机器没装第三方技能」而变红，那是假失败。
+ *
+ * `lint` 是这文件里唯一自己动手的子命令，用的就是 Web 端 R22 那份内置包
+ * （src/core/stylepack.js）。它存在的理由：交接机制假定本机有别人的引擎，
+ * 而大多数机器没有 —— 于是「建议去查文笔」在现实中永远不发生。
+ * 它仍然只数词与句式，不判断好坏。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import {
   loadBook, resolveBookDir, chapterFileOf, parseArgs, emit, log, EXIT, expandHome,
-  readJson, writeJsonAtomic, NWBible, NWProject, NWText,
+  readJson, writeJsonAtomic, NWBible, NWProject, NWText, NWStylePack,
 } from './lib/book.mjs';
 
 /** 交接边界只写一次，JSON 与人类可读输出共用同一份。 */
@@ -30,7 +36,7 @@ const BOUNDARY = [
   '只诊断，不替作者改写正文；要改由作者点头',
   '本 skill 不判断文笔好坏，交接包里的清单来自被交接的引擎',
   '改完必须重跑 nw-continuity —— 换句子会挪动证据偏移，R1/R7 的定位跟着失效',
-  '结论用 nw-prose record 写回台账；不写，这一章在 status 里永远是「未查」',
+  '结论要写回台账：外部引擎用 record，内置包用 lint --record；不写，这一章在 status 里永远是「未查」',
 ];
 
 const pathToFile = (p) => String(p).split(path.sep).join('/');
@@ -65,6 +71,12 @@ const ENGINES = [
     names: ['novelwriter'],
     files: ['references', 'templates', 'experience'],
     how: '仅当它真的带了清单文件时才用',
+  },
+  // 兜底引擎排最后：packet 默认取第一个可用的，别把本机真有的第三方引擎挤掉
+  {
+    id: 'builtin', label: '织文内置去 AI 味包', kind: 'builtin',
+    how: 'node scripts/nw-prose.mjs lint --chapter <ID>',
+    note: '与 Web 端 R22 同一份包，永远可用；只数禁词密度与句式套路，不判断文笔',
   },
 ];
 
@@ -122,6 +134,13 @@ function probe({ home }) {
   const dirs = skillDirs(SKILL_ROOTS, home);
   const out = [];
   for (const spec of ENGINES) {
+    if (spec.kind === 'builtin') {
+      // 自家包不需要探测：它随代码走，永远在。写清楚这点，probe 的「不可用要有原因」
+      // 那条约定才仍然成立 —— 它没有原因可给。
+      out.push({ id: spec.id, label: spec.label, kind: spec.kind, how: spec.how, note: spec.note || '',
+        network: false, usable: true, path: null, why: '' });
+      continue;
+    }
     if (spec.kind === 'cli') {
       const bin = onPath(spec.bins);
       out.push({
@@ -206,8 +225,8 @@ const { positional, flags } = parseArgs(process.argv.slice(2));
 const sub = positional[0];
 const rest = positional.slice(1);
 
-if (!sub || !['probe', 'packet', 'record', 'status'].includes(sub)) {
-  log('用法：nw-prose.mjs <probe|packet|record|status> [bookDir] [--chapter ID] [--engine ID] [--result clean|issues|skipped] [--json]');
+if (!sub || !['probe', 'packet', 'lint', 'record', 'status'].includes(sub)) {
+  log('用法：nw-prose.mjs <probe|packet|lint|record|status> [bookDir] [--chapter ID] [--engine ID] [--result clean|issues|skipped] [--json]');
   process.exit(EXIT.USAGE);
 }
 
@@ -216,7 +235,13 @@ const home = flags.home ? path.resolve(String(flags.home)) : null;
 if (sub === 'probe') {
   const engines = probe({ home });
   const usable = engines.filter((e) => e.usable);
-  emit(!!flags.json, { engines, usable: usable.map((e) => e.id), recommended: usable[0]?.id || null }, () => [
+  // 内置包不算「外部引擎」：packet 那条交接路径的存在意义是把活交给别人，
+  // 交给自己的话直接跑 lint 就行，不必假装有个要交接的对象。
+  const external = usable.filter((e) => e.kind !== 'builtin');
+  emit(!!flags.json, {
+    engines, usable: usable.map((e) => e.id), external: external.map((e) => e.id),
+    recommended: external[0]?.id || 'builtin',
+  }, () => [
     `文体引擎探测（本机 ${engines.length} 个候选）`, '',
     ...engines.map((e) => `${e.usable ? '✅' : '·'} ${e.id}${e.path ? ` — ${pathToFile(e.path)}` : ''}`
       + (e.usable ? '' : `（${e.why}）`)
@@ -224,7 +249,9 @@ if (sub === 'probe') {
       + (e.usable ? `\n     用法：${e.how}` : '')
       + (e.note ? `\n     注意：${e.note}` : '')),
     '',
-    usable.length ? `可用 ${usable.length} 个；交接：nw-prose packet --chapter <ID>` : '本机没有可用引擎。不要静默跳过 —— 用 record --result skipped 把原因记进台账。',
+    external.length ? `外部引擎 ${external.length} 个可用；交接：nw-prose packet --chapter <ID>`
+      : '本机没有外部文体引擎。内置包仍然能跑（nw-prose lint --chapter <ID>）；要交给别的 agent 时，'
+        + '把结论用 record --engine builtin 记进台账，别静默跳过。',
   ].join('\n'));
   process.exit(EXIT.OK);
 }
@@ -244,8 +271,9 @@ if (sub === 'packet') {
   const engines = probe({ home });
   const want = flags.engine ? engines.find((e) => e.id === flags.engine) : null;
   if (flags.engine && !want) { log(`未知引擎：${flags.engine}。先看 probe`); process.exit(EXIT.USAGE); }
-  // 指定了引擎但它不可用时不降级到别的引擎：作者点名要的那个失败，比悄悄换一个更有用
-  const engine = want || (engines.find((e) => e.usable) || null);
+  // 指定了引擎但它不可用时不降级到别的引擎：作者点名要的那个失败，比悄悄换一个更有用。
+  // 默认也不选内置包 —— packet 的语义是「交给别人」，交给自己是 lint 那条路。
+  const engine = want || (engines.find((e) => e.usable && e.kind !== 'builtin') || null);
   const file = chapterFileOf(bookDir, chapter);
   const hasFile = fs.existsSync(file);
   const words = NWText.countWords(chapter.body || '');
@@ -259,7 +287,7 @@ if (sub === 'packet') {
   }, () => [
     `文体检查交接包 · ${NWBible.chapterLabel(chapter)}（${words} 字）`, '',
     engine ? `交给：${engine.id}（${engine.kind}）${engine.usable ? '' : ` — 不可用：${engine.why}`}\n  ${engine.how}`
-      : '本机没有可用引擎 —— 见 nw-prose probe 的候选与原因',
+      : '本机没有外部引擎 —— 内置包仍可用：node scripts/nw-prose.mjs lint --chapter ' + chapter.id,
     engine?.files?.length ? `  清单：${engine.files.join('\n        ')}` : null,
     engine?.network ? '  注意：该引擎默认走远端 API，离线时不要指望它' : null,
     engine ? `  正文：${hasFile ? pathToFile(file) : '（找不到章节文件，先跑 nw-io export）'}` : null,
@@ -268,9 +296,72 @@ if (sub === 'packet') {
     ...BOUNDARY.map((b) => `· ${b}`),
     '',
     engine ? `跑完后：node scripts/nw-prose.mjs record --chapter ${chapter.id} --engine ${engine.id} --result clean|issues [--findings N]`
-      : `记下来：node scripts/nw-prose.mjs record --chapter ${chapter.id} --engine none --result skipped --note "本机无文体引擎"`,
+      : `内置包顶上：node scripts/nw-prose.mjs lint --chapter ${chapter.id} --record`,
   ].filter((l) => l !== null).join('\n'));
   process.exit(EXIT.OK);
+}
+
+if (sub === 'lint') {
+  if (!chapter) { log('lint 需要 --chapter <ID>'); process.exit(EXIT.USAGE); }
+  const opts = NWStylePack.optsFrom(ctx.book);
+  const body = String(chapter.body || '');
+  const words = NWText.countWords(body);
+  const r = NWStylePack.lint(body, opts);
+  const v = NWStylePack.verdict(r);
+  const findings = r.banned.length + r.patterns.reduce((n, p) => n + p.count, 0);
+  // 「没评」与「评了没问题」是两件事：包被作者关掉、正文短于门槛，一律算 skipped。
+  // 图省事写成 clean，台账就在对作者撒谎。
+  const stopped = opts.enabled === false;
+  const result = stopped || words < 500 ? 'skipped' : (v.severity ? 'issues' : 'clean');
+  const note = stopped ? '本书已停用去 AI 味包（stylePack.enabled=false）'
+    : words < 200 ? '本章不足 200 字，没有正文可查'
+      : words < 500 ? '正文不足 500 字，本包不评密度' : '';
+
+  const byTerm = new Map();
+  for (const b of r.banned) {
+    const k = `${b.group}\u0000${b.term}`;
+    const row = byTerm.get(k) || { group: b.groupLabel, term: b.term, count: 0, at: b.at };
+    row.count += 1; byTerm.set(k, row);
+  }
+  const terms = [...byTerm.values()].sort((a, b) => b.count - a.count || (a.term < b.term ? -1 : 1));
+
+  const payload = {
+    chapter: chapter.id, number: chapter.number, title: chapter.title, words,
+    packVersion: NWStylePack.PACK_VERSION, per1000: r.per1000,
+    severity: v.severity, reasons: v.reasons,
+    terms, patterns: r.patterns, findings, result, note,
+    enabled: opts.enabled !== false,
+  };
+  if (flags.record) {
+    await putRecord(bookDir, chapter, { engine: 'builtin', result, findings: result === 'issues' ? findings : null, note });
+  }
+  emit(!!flags.json, payload, () => [
+    `${NWBible.chapterLabel(chapter)} · ${words} 字 · 内置去 AI 味包 v${NWStylePack.PACK_VERSION}`, '',
+    `结论：${zhState(result === 'issues' ? 'issues' : result)}${findings ? `（${findings} 处）` : ''}`,
+    v.reasons.length ? `  ${v.reasons.join('；')}` : (note ? `  ${note}` : '  密度与句式都在门槛内'),
+    terms.length ? '' : null,
+    ...terms.slice(0, 12).map((t) => `  ${t.group}｜${t.term} ×${t.count}（首个位置 ${t.at}）`),
+    terms.length > 12 ? `  …另有 ${terms.length - 12} 个词` : null,
+    ...r.patterns.map((p) => `  句式｜${p.label} ×${p.count}：${(p.samples || []).join(' / ')}`),
+    '',
+    flags.record ? '已写进台账 continuity/prose.json'
+      : `要记进台账：加 --record（不写的话这一章在 status 里仍是「未查」）`,
+    '边界：只诊断不改写；改完必须重跑 nw-continuity（换句子会挪动证据偏移）',
+  ].filter((l) => l !== null).join('\n'));
+  process.exit(EXIT.OK);
+}
+
+/** lint 与 record 共用同一份落盘逻辑，避免两处写出两种形状。 */
+async function putRecord(bookDir, chapter, { engine, result, findings = null, note = '' }) {
+  const rec = {
+    contentHash: await NWProject.hashRecord('chapter', chapter), engine, result,
+    findings: findings ?? (result === 'clean' ? 0 : null),
+    note, at: new Date().toISOString(),
+  };
+  const ledger = readLedger(bookDir);
+  ledger.byChapter[chapter.id] = rec;
+  writeJsonAtomic(path.join(bookDir, ...LEDGER_REL), ledger);
+  return rec;
 }
 
 if (sub === 'record') {
@@ -284,16 +375,9 @@ if (sub === 'record') {
   if (findings !== null && (!Number.isInteger(findings) || findings < 0)) { log('--findings 得是非负整数'); process.exit(EXIT.USAGE); }
   if (result === 'issues' && !findings) { log('result=issues 却没给 --findings，等于没记'); process.exit(EXIT.USAGE); }
 
-  const hash = await NWProject.hashRecord('chapter', chapter);
-  const ledger = readLedger(bookDir);
-  const rec = {
-    contentHash: hash, engine: engineId, result,
-    findings: findings ?? (result === 'clean' ? 0 : null),
-    note: flags.note ? String(flags.note) : '',
-    at: new Date().toISOString(),
-  };
-  ledger.byChapter[chapter.id] = rec;
-  writeJsonAtomic(path.join(bookDir, ...LEDGER_REL), ledger);
+  const rec = await putRecord(bookDir, chapter, {
+    engine: engineId, result, findings, note: flags.note ? String(flags.note) : '',
+  });
   emit(!!flags.json, { chapter: chapter.id, ...rec },
     () => `已记录：${NWBible.chapterLabel(chapter)}文体=${result}${findings !== null ? `（${findings} 处）` : ''} · 引擎 ${engineId}`);
   process.exit(EXIT.OK);
@@ -303,7 +387,7 @@ if (sub === 'record') {
 {
   const s = await statusOf(ctx, { home });
   emit(!!flags.json, s, () => {
-    const usable = s.engines.filter((e) => e.usable).map((e) => e.id);
+    const usable = s.engines.filter((e) => e.usable && e.kind !== 'builtin').map((e) => e.id);
     const icon = { unchecked: '·', stale: '⚠️', clean: '✅', issues: '❌', skipped: '🚫' };
     return [
       `《${s.book}》文体检查台账 · ${s.total} 章有正文`, '',
@@ -312,7 +396,8 @@ if (sub === 'record') {
         + (r.note ? `｜${r.note}` : '')),
       '',
       Object.entries(s.counts).map(([k, v]) => `${zhState(k)} ${v}`).join(' / '),
-      usable.length ? `\n可用引擎：${usable.join('、')}` : '\n本机无可用文体引擎（跑 nw-prose probe 看候选与原因）',
+      usable.length ? `\n外部引擎：${usable.join('、')}（交接：nw-prose packet --chapter <ID>）`
+        : '\n本机无外部文体引擎（跑 nw-prose probe 看候选与原因）；内置包随时可查：nw-prose lint --chapter <ID>',
     ].join('\n');
   });
   process.exit(EXIT.OK);

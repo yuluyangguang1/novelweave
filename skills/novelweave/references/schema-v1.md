@@ -125,6 +125,7 @@ Web 端目前的 5 个 store 到新格式的映射。完整字段表在实现导
 | — | `slug` | 新，由 `title` 生成；为空则 `book-<id 后 6 位>` |
 | — | `language` | 新，默认 `"zh-CN"` |
 | — | `audience` / `target` / `voice` | 新，默认 `""` / `{chapters:0,wordsPerChapter:3000}` / 空对象 |
+| `stylePack` | `stylePack` | 去 AI 味规则包的本书开关（`enabled` / `disabled[]` 组 id / `extraBanned[]`）。Web 侧栏「文体规则」页写它，导出原样带、没设过就不写这个键；组 id 见 `src/core/stylepack.js` 的 `GROUPS` |
 
 ### `chapters` → `manuscript/chapters/*.md`
 

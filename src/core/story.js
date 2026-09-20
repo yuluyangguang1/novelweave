@@ -333,6 +333,9 @@
         genre: rows.novel.genre, description: rows.novel.description,
         format: rows.novel.format === 'short' ? 'short' : 'long',
         targetWords: rows.novel.target_words || null,
+        // 去 AI 味包必须原样过桥：R22 与 prompt 都只认 ctx.book.stylePack，
+        // 这里漏掉一项，作者在设置里关掉的词组就只是看起来生效
+        stylePack: rows.novel.stylePack || null,
         _derived: { words: rows.novel.word_count, chapters: rows.novel.chapter_count } },
       chapters, characters,
       world: (rows.world || []).map(toWorld),

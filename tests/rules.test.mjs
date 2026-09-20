@@ -392,3 +392,88 @@ test('R21：enabled:false 与缺 term 的行不参与检查', () => {
   const c = ctx({ chapters: six(), secrets: [secret({ reveal_chapter: 'ch-002', enabled: false }), secret({ id: 'sec_2', term: '  ', reveal_chapter: 'ch-002' })] });
   assert.deepEqual(of(NWRules.runRules(c), 'unresolved-secret'), []);
 });
+
+// ═══════════════════ R22 去 AI 味（规则包见 src/core/stylepack.js） ═══════════════════
+// 这三段文本是校准用的样本，改动前请先跑 tests/stylepack.test.mjs：
+// plainBlock 是刻意写干净的人话（729 字，禁词 0、句式 0），aiLine 是典型 AI 腔。
+const PLAIN = [
+  '师父把匣子推到桌心，火漆上还留着几道很新的划痕。他说这东西原本有半枚，另半枚随葬在山上，谁也取不回来了。',
+  '林烟火没有立刻接。她盯着那道火漆看了很久，久到廊下的影子从第三步挪到第五步，才伸手把匣子接过来压在掌心。',
+  '「拿着。」他说完就转过身去，手在袖子里握了握，把那二十年一并递了过来。',
+  '匣底的铜印断口很新。她用指腹擦过那道缺口，碎屑落在袖口上，像一小片没有烧尽的雪，落在地上就找不着了。',
+  '她在阶前站住，回头看了一眼亮着灯的那间屋子，屋里的人已经睡下，灯是她进门之前就被谁点上的。',
+  '「为什么不打开？」她问了一句，声音落在石阶上，没有回音，夜风把它送进林子里去了。',
+];
+const plain = (times = 3) => PLAIN.join('\n\n').repeat(times);
+const AI_LINE = '他仿佛望出去，那一刻只觉得十分疲惫，又格外冷清。';
+const SIMILE_LINE = '他仿佛望出去，夜里的山门比白日更静，灯火一盏一盏往后退去，退到石阶下面看不见的地方。';
+
+test('R22：AI 腔长章 → warn，证据里带密度与高频词', () => {
+  const c = ctx({ chapters: [ch(1, { body: AI_LINE.repeat(30) })] });
+  const d = of(NWRules.runRules(c), 'ai-flavor');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'warn');
+  assert.equal(d[0].chapter, 'ch-001');
+  assert.equal(d[0].fingerprint, 'ai-flavor:ch-001:-');
+  assert.ok(d[0].evidence.basis.join('）').includes('禁词密度'), d[0].evidence.basis.join(' / '));
+  assert.ok(d[0].evidence.basis.some((b) => b.includes('仿佛×')), '高频命中清单没带出来');
+  assert.ok(d[0].evidence.quote.includes('仿佛'), '引证要指到踩词的那一句');
+});
+
+test('R22：干净长章不报（这条是整套阈值的下界，阈值一放宽就会红）', () => {
+  const c = ctx({ chapters: [ch(1, { body: plain() })] });
+  assert.deepEqual(of(NWRules.runRules(c), 'ai-flavor'), []);
+});
+
+test('R22：只踩密度是 info，不升 warn', () => {
+  const body = plain() + '\n\n' + SIMILE_LINE + '\n\n' + SIMILE_LINE;
+  const c = ctx({ chapters: [ch(1, { body })] });
+  const d = of(NWRules.runRules(c), 'ai-flavor');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'info');
+});
+
+test('R22：不足 500 字的章节不评', () => {
+  const c = ctx({ chapters: [ch(1, { body: AI_LINE.repeat(6) }), ch(2, { body: '' })] });
+  assert.deepEqual(of(NWRules.runRules(c), 'ai-flavor'), []);
+});
+
+test('R22：本书 stylePack 关掉那组，就不再用它计分', () => {
+  const body = plain(4) + '\n\n' + SIMILE_LINE.repeat(24);
+  const on = ctx({ chapters: [ch(1, { body })] });
+  const off = ctx({
+    book: { id: 'novel_t', title: '测试书', genre: '玄幻', stylePack: { disabled: ['simile'] } },
+    chapters: [ch(1, { body })],
+  });
+  const warned = of(NWRules.runRules(on), 'ai-flavor');
+  const after = of(NWRules.runRules(off), 'ai-flavor');
+  assert.equal(warned[0].severity, 'warn');
+  assert.equal(after[0].severity, 'info', '关掉比喻组后仍该由句式给出 info，而不是整条消失');
+});
+
+test('R22：自定义禁词进得了本书的账', () => {
+  const custom = [
+    '他祭出紫气东来，掌风压得阶前碎石纷纷后退，退成一道窄窄的缝。',
+    '紫气东来这个名字是师父取的，说来也俗，可当年凭这一口剑，山中无人应战。',
+    '她把紫气东来横在膝上，一夜没有拔鞘，天亮才起身去敲师兄的房门。',
+  ].join('\n\n').repeat(6);
+  const body = plain() + '\n\n' + custom;
+  const bare = ctx({ chapters: [ch(1, { body })] });
+  const withCustom = ctx({
+    book: { id: 'novel_t', title: '测试书', genre: '玄幻', stylePack: { extraBanned: ['紫气东来'] } },
+    chapters: [ch(1, { body })],
+  });
+  assert.deepEqual(of(NWRules.runRules(bare), 'ai-flavor'), [], '没登记的词不该凭空报');
+  const d = of(NWRules.runRules(withCustom), 'ai-flavor');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'warn');
+  assert.ok(d[0].evidence.basis.some((b) => b.includes('紫气东来×')), d[0].evidence.basis.join(' / '));
+});
+
+test('R22：suppressions 按指纹豁免本章', () => {
+  const c = ctx({ chapters: [ch(1, { body: AI_LINE.repeat(30) })] });
+  const fp = 'ai-flavor:ch-001:-';
+  const run = NWRules.runRules(c, { suppressions: { items: [{ fingerprint: fp, reason: '本书刻意用这种腔调' }] } });
+  const d = of(run, 'ai-flavor')[0];
+  assert.equal(d.suppressedBy, '本书刻意用这种腔调');
+});

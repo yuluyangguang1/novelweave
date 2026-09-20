@@ -277,6 +277,83 @@ test('侧栏每个 tab 都有渲染函数，能新增的都有处理器', () => 
   assert.deepEqual(orphan.sort(), [], '这些视图没有任何 tab 会用到');
 });
 
+/**
+ * 加载表一共四张：Web 壳、离线缓存、测试加载器、CLI 装配器，每张都手写一遍文件名。
+ * 上面那两条静态守卫只覆盖壳（清单与顺序），但 UMD 工厂的实参依赖是**加载期**取的，
+ * 四张表各自都要成立 —— 加一条依赖只改壳、漏改 CLI，表现不是报错而是规则拿到
+ * undefined 后静默不响。这里按文件里真实存在的 factory(root.NWxxx, …) 反推依赖，
+ * 新模块不必回头改测试。
+ *
+ * 刻意不要求「四张表都有全部模块」：draft.js 只给 CLI 与测试、db.js 与 epub.js 等
+ * 只给 Web，那是分工不是疏漏。
+ */
+function loadLists() {
+  const web = [...read('index.html').matchAll(/<script src="(src\/[^"]+\.js)"><\/script>/g)].map((m) => m[1]);
+  const precache = read('sw.js').match(/const PRECACHE = \[([\s\S]*?)\n\];/)?.[1] || '';
+  const cache = [...precache.matchAll(/'(src\/[^']+\.js)'/g)].map((m) => m[1]);
+  const loader = read('tests/_load.mjs');
+  const tests = [...loader.matchAll(/require\('\.\.\/(src\/[^']+\.js)'\)/g)].map((m) => m[1]);
+  const book = read('scripts/lib/book.mjs');
+  const cli = [...book.matchAll(/require\(core\('([^']+\.js)'\)\)/g)].map((m) => `src/core/${m[1]}`);
+  return { web, cache, tests, cli };
+}
+
+/** 全局名 → 文件：UMD 尾部那行 `else root.NWxxx = mod;` 就是它自报的家门。 */
+function globalNames() {
+  const map = new Map();
+  for (const f of readdirSync(repoPath('src', 'core'))) {
+    if (!f.endsWith('.js')) continue;
+    const src = read(`src/core/${f}`);
+    const g = src.match(/else root\.(\w+) = mod;/)?.[1];
+    if (g) map.set(g, `src/core/${f}`);
+  }
+  return map;
+}
+
+/** 工厂实参里出现的 root.NWxxx 就是加载期依赖 —— 它们必须在每张表里先就位。 */
+function umdDeps(file, names) {
+  const call = read(file).match(/const mod = factory\(([^)]*)\)/)?.[1] || '';
+  return [...call.matchAll(/root\.(\w+)/g)].map((m) => m[1]).filter((g) => names.has(g));
+}
+
+test('每张加载表里，UMD 依赖都排在用它的模块之前', () => {
+  const names = globalNames();
+  const lists = loadLists();
+  const bad = [];
+  for (const [tag, list] of Object.entries(lists)) {
+    for (const file of list) {
+      if (!existsSync(repoPath(...file.split('/')))) continue;
+      for (const g of umdDeps(file, names)) {
+        const dep = names.get(g);
+        const i = list.indexOf(dep);
+        if (i === -1) bad.push(`${tag}: ${file} 要 ${g}，但这一张表根本没加载它`);
+        else if (i > list.indexOf(file)) bad.push(`${tag}: ${file} 排在 ${dep} 前面，加载时 ${g} 还是 undefined`);
+      }
+    }
+  }
+  assert.deepEqual(bad, [], `加载顺序有问题：\n${bad.join('\n')}`);
+});
+
+test('新增离线缓存条目必须同时进壳 —— PRECACHE 与 <script> 是同一份表', () => {
+  // 「清单覆盖页面加载的每个文件」那条只查页面向缓存的单向覆盖；反方向（缓存里
+  // 多出一个壳不加载的文件）同样会把两份表越拉越远，且没人会察觉。
+  const { web, cache } = loadLists();
+  assert.ok(web.length >= 15 && cache.length >= 15, `解析出的条数太少：${web.length}/${cache.length}`);
+  assert.deepEqual(cache, web, 'sw.js 的 PRECACHE 与壳的 <script> 表对不上');
+});
+
+test('src/core 下没有孤儿模块，也没有表里写着不存在的文件', () => {
+  const lists = loadLists();
+  const every = new Set([...lists.web, ...lists.cache, ...lists.tests, ...lists.cli]);
+  const onDisk = readdirSync(repoPath('src', 'core')).filter((f) => f.endsWith('.js')).map((f) => `src/core/${f}`);
+  // Web 与 CLI 各自要能独立跑完，所以「只出现在测试加载器里」也算孤儿
+  const reachable = new Set([...lists.web, ...lists.cli]);
+  const stranded = onDisk.filter((f) => !reachable.has(f));
+  const ghost = [...every].filter((f) => f.startsWith('src/core/') && !onDisk.includes(f));
+  assert.deepEqual(stranded.sort(), [], '这些模块只有测试能加载，Web 与 CLI 都跑不到：' + stranded.join('、'));
+  assert.deepEqual(ghost.sort(), [], '这些表引用了不存在的 core 文件：' + ghost.join('、'));
+});
+
 test('信息差表单的每个控件都要被 readSecretForm 读走', () => {
   // 这一族的字段比关系页多（三个章节选择器 + 多选 + 停用开关），
   // 漏读一个字段等于作者填了但从来不落库，而且不会有任何报错。
@@ -290,4 +367,34 @@ test('信息差表单的每个控件都要被 readSecretForm 读走', () => {
   const afterReturn = write.slice(write.indexOf('return {'));
   const missing = ids.filter((k) => !afterReturn.includes(k));
   assert.deepEqual(missing, [], `这些控件的值从来没被读走：${missing.join('、')}`);
+});
+
+/**
+ * 文体面板是「作者能改包」这一条承诺的全部实现，而它横跨四个文件：
+ * 表单在 app.js、键名规则在 stylepack.js 的 optsFrom、过桥在 story.js 的 buildCtx。
+ * 每一处都是字符串级的对接，改错一边不报错，只是作者在界面上勾的东西不再起作用。
+ */
+test('文体规则面板：控件全被读走，存进库的键与包认的键一模一样', () => {
+  const js = read('src/app.js');
+  const form = js.match(/function stylePackFields\([\s\S]*?\n\}/)?.[0] || '';
+  const reader = js.match(/function readStylePackForm\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(form && reader, 'app.js 里找不到文体面板的两个函数');
+  const ids = [...new Set([...form.matchAll(/\$\{prefix\}-([\w-]+)/g)].map((m) => m[1]))];
+  assert.ok(ids.length >= 3, `只解析出 ${ids.length} 个控件，检查匹配式`);
+  const orphan = ids.filter((k) => !reader.includes(`-${k}`));
+  assert.deepEqual(orphan, [], `这些控件的值从来没被读走：${orphan.join('、')}`);
+  // 开关必须是逐组生成的：往 GROUPS 里加一组却漏了面板，表现是那一组永远关不掉
+  assert.match(form, /NWStylePack\.GROUPS\.map/, '词组开关不是从 GROUPS 生成的，加一组就会漏一个');
+
+  const pack = read('src/core/stylepack.js');
+  const optsBody = pack.match(/function optsFrom\([\s\S]*?\n\}/)?.[0] || '';
+  const known = new Set([...optsBody.matchAll(/sp\.(\w+)/g)].map((m) => m[1]));
+  assert.ok(known.size >= 3, `optsFrom 只解析出 ${known.size} 个键，检查匹配式`);
+  const saved = new Set([...reader.matchAll(/^\s{4}(\w+):/gm)].map((m) => m[1]));
+  assert.deepEqual([...saved].filter((k) => !known.has(k)).sort(), [], '面板存了包不认的键，落库也没人读');
+  assert.deepEqual([...known].filter((k) => !saved.has(k)).sort(), [], '这些包开关作者在界面上改不了');
+
+  // 面板写的是 novel.stylePack，buildCtx 读的也是这个名字 —— 拼错是静默失效
+  assert.match(js, /update\(APP\.novel\.id, \{ stylePack \}\)/, '保存按钮没把表单写进 novel.stylePack');
+  assert.match(read('src/core/story.js'), /rows\.novel\.stylePack/, 'buildCtx 没把 stylePack 过桥给 R22 与生成 prompt');
 });

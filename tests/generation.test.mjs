@@ -537,3 +537,32 @@ test('R19：正文正常使用登记称谓 → 不提示', () => {
   const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['relation-contradiction'] });
   assert.equal(diags.filter((d) => d.rule === 'relation-contradiction').length, 0);
 });
+
+// ═══════════════ 去 AI 味清单：写之前的那一半（P1c）═══════════════
+
+const CONT = (over = {}) => NovelLLM.buildContinueContext({
+  ctx: NWStory.buildCtx(rows(over)), chapterId: 'ch-003',
+}).prompt;
+
+test('续写 prompt 带着「去 AI 味」清单，钉在写作要求之后', () => {
+  // 自检那一轮修的是已经成形的句子；把清单前置到 prompt 才能少烧一次 API。
+  // 这条测试盯的是「到底进没进 prompt」，不是清单内容 —— 内容在 stylepack.test.mjs。
+  const prompt = CONT();
+  assert.match(prompt, /去 AI 味/);
+  assert.match(prompt, /比喻引导词[^\n]*仿佛/);
+  assert.match(prompt, /句式：[^\n]*连续多句同一开头/);
+  assert.ok(prompt.indexOf('去 AI 味') > prompt.indexOf('写作要求'), '清单要在写作要求之后');
+  assert.match(prompt, /去 AI 味[\s\S]*$/, '清单要在整份 prompt 末尾，离生成点最近');
+});
+
+test('stylePack.enabled=false：prompt 里一个字都不留', () => {
+  const prompt = CONT({ novel: { id: 'novel_g', title: '问剑', genre: '仙侠', stylePack: { enabled: false } } });
+  assert.ok(!prompt.includes('去 AI 味'), '关了还在 prompt 里，作者会以为没关掉');
+  assert.ok(prompt.includes('写作要求'), '其余部分不受影响');
+});
+
+test('只关掉一组：那一组从 prompt 里消失，别的组还在', () => {
+  const prompt = CONT({ novel: { id: 'novel_g', title: '问剑', genre: '仙侠', stylePack: { disabled: ['simile'] } } });
+  assert.ok(!prompt.includes('比喻引导词'), '关掉的组不该继续占预算');
+  assert.ok(prompt.includes('心理直说'), '没关的组必须还在');
+});

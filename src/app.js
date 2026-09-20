@@ -53,6 +53,7 @@ const TABS = [
   { id: 'relations',  icon: 'thread',   label: '关系',     hasAdd: true,  addTitle: '登记一条关系' },
   { id: 'secrets',    icon: 'target',   label: '信息差',   hasAdd: true,  addTitle: '登记一条信息差' },
   { id: 'notes',      icon: 'note',     label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
+  { id: 'style',      icon: 'ban',      label: '文体规则', hasAdd: false, addTitle: '' },
   { id: 'settings',   icon: 'settings', label: 'AI 设置',  hasAdd: false, addTitle: '' },
 ];
 
@@ -942,6 +943,7 @@ const SIDEBAR_VIEWS = {
   relations: showRelationList,
   secrets: showSecretList,
   notes: showNotesList,
+  style: showStylePack,
   settings: renderWorkspaceSettings,
 };
 
@@ -1900,7 +1902,7 @@ async function showContinuity(host) {
   const visible = diags.filter((d) => !d.suppressedBy);
   if (!visible.length) {
     body.innerHTML = `<div class="diag-clean">${icon('check')}没有发现矛盾（${ctx.chapters.length} 章）</div>
-      <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 ${Object.keys(NWRules.RULES).length} 条规则，不判断文笔与情节好坏。伏笔、时间线、角色状态、外貌区间填得越全，检查越准。</div>`;
+      <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 ${Object.keys(NWRules.RULES).length} 条规则：查的是前后矛盾，外加禁词密度与句式套路这一类「AI 味」，不评价文笔与情节好坏。伏笔、时间线、角色状态、外貌区间填得越全，检查越准。</div>`;
     return;
   }
   body.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">${counts}</div>`
@@ -2541,6 +2543,8 @@ async function importNovelweave() {
     novel = await NovelDB.putRow('novels', {
       id: parsed.book.id, title: parsed.book.title, genre: parsed.book.genre,
       description: parsed.book.description || '', word_count: 0, chapter_count: 0,
+      // 去 AI 味包跟着建档进来：它是本书设定，不在这条路上的话，agent 在磁盘上改的开关导个入就没了
+      stylePack: parsed.book.stylePack || null,
       created_at: NWText.fromISO(parsed.book.created) || Date.now(), updated_at: Date.now(),
     });
   }
@@ -2951,3 +2955,58 @@ async function exportEpub() {
   a.click(); URL.revokeObjectURL(url);
   showToast('EPUB 已导出（' + chapters.length + ' 章）');
 }
+
+// ═══════════════════ 文体规则包（去 AI 味） ═══════════════════
+
+/**
+ * 这一本用哪套「去 AI 味」标准。存进去的 stylePack 是三个消费方的唯一事实源：
+ * 生成时的写作要求（NovelLLM.antiAiRules）、检查器 R22、CLI 的 nw-prose lint，
+ * 三者都只认 book.stylePack —— 这个面板写漏一个键，那三处就各自回到默认包。
+ */
+async function showStylePack(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  host.innerHTML = `<div style="padding:12px;">
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">这一本的「去 AI 味」标准，只影响当前这本书。</div>
+    ${stylePackFields('sty', APP.novel.stylePack || {})}
+    <button class="btn btn-primary" style="width:100%;margin-top:8px;" data-action="style-pack-save">保存</button>
+  </div>`;
+}
+
+/** 组名和词样都从 NWStylePack.GROUPS 现取：包里加一组，这里自动多一个开关，不用两头记。 */
+function stylePackFields(prefix, sp) {
+  const off = new Set(sp.disabled || []);
+  return `
+    <div class="settings-field"><label class="settings-label"><input type="checkbox" id="${prefix}-p-enabled" ${sp.enabled !== false ? 'checked' : ''}> 启用「去 AI 味」检查</label>
+      <div class="settings-hint">连生成时给模型的那份清单一起关掉。只想放过某几类词，用下面的逐组开关。</div></div>
+    <div class="settings-field"><label class="settings-label">逐组开关（勾掉的这一组不再计为问题）</label>
+      ${NWStylePack.GROUPS.map((g) => `
+        <label class="settings-label"><input type="checkbox" id="${prefix}-p-g-${attr(g.id)}" ${off.has(g.id) ? '' : 'checked'}> ${esc(g.label)}</label>
+        <div class="settings-hint">${esc((g.terms || []).slice(0, 4).join('、'))}${(g.terms || []).length > 4 ? ' 等' : ''}</div>`).join('')}
+      <div class="settings-hint">句式套路（同一开头连击、二元对照句等）跟着整包走，不能单独关。</div></div>
+    <div class="settings-field"><label class="settings-label">本书额外禁词（一行一个）</label>
+      <textarea class="settings-input" id="${prefix}-p-extra" rows="3" placeholder="例：紫气东来">${esc((sp.extraBanned || []).join('\n'))}</textarea>
+      <div class="settings-hint">只对这本书生效，与内置词组同样计密度。</div></div>`;
+}
+
+function readStylePackForm(prefix) {
+  // 与 readSecretForm 同一约定：每个控件在 return 里就地取值，守卫按 id 有没有出现判定接没接上。
+  // 控件不在 DOM 里时一律按「开着」算 —— 宁可多查一组，也不要静默把作者的包清空。
+  const checked = (id) => document.getElementById(id)?.checked !== false;
+  return {
+    enabled: checked(`${prefix}-p-enabled`),
+    disabled: NWStylePack.GROUPS.filter((g) => !checked(`${prefix}-p-g-${g.id}`)).map((g) => g.id),
+    extraBanned: val(`${prefix}-p-extra`).split('\n').map((s) => s.trim()).filter(Boolean),
+  };
+}
+
+Object.assign(ACTIONS, {
+  'style-pack-save': async () => {
+    if (!APP.novel) { showToast('先进入一本书'); return; }
+    const stylePack = readStylePackForm('sty');
+    // updateNovel 返回落库后的整行。APP.novel 是界面手里这一份（本面板重渲染、大纲提示词都读它），
+    // 不跟着换就会看到旧勾态；生成那条路走 loadStoryCtx 重新取库，本来就拿的是新值。
+    APP.novel = await NovelDB.novels.update(APP.novel.id, { stylePack });
+    showToast('文体规则已保存');
+  },
+});

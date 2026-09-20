@@ -7,10 +7,10 @@
  * 写出来就崩」无法排查。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWStory, root.NWContext);
+  const mod = factory(root.NWText, root.NWStory, root.NWContext, root.NWStylePack);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NovelLLM = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (NWText, NWStory, NWContext) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (NWText, NWStory, NWContext, StylePack) {
   'use strict';
 
   const NW_LLM_CONFIG_KEY = 'nw_llm_config';
@@ -72,6 +72,16 @@ const NW_LLM_PRESETS = {
 - 只输出小说正文，不要任何解释`;
 
   /**
+   * 「去 AI 味」清单进 prompt。放在写之前而不是只放在生成后自检里，是因为自检那一轮
+   * 修的是已经成形的句子 —— 模型一开始就带着约束写，比事后按诊断改写少烧一次 API。
+   * 开关只有作者那一侧：本书 stylePack.enabled=false 时这里返回空串，一个字都不占预算。
+   */
+  function antiAiRules(book) {
+    const block = StylePack.promptBlock(StylePack.optsFrom(book));
+    return block ? `\n\n${block}` : '';
+  }
+
+  /**
    * 续写上下文。拼装本身在 src/core/context.js —— 那是 Web 与 CLI 共用的唯一实现。
    * 之前这里自己拼了 5 节，比 CLI 少注入了「状态快照」与「未结线索」，
    * 于是作者录进状态矩阵和伏笔表的事实在浏览器里根本没进 prompt。
@@ -84,6 +94,7 @@ const NW_LLM_PRESETS = {
       chapterId: opts.chapterId, budget: opts.budget, style: opts.style, embedHits: opts.embedHits,
     });
     const rules = WRITING_RULES(opts.ctx?.book?.genre)
+      + antiAiRules(opts.ctx?.book)
       + (opts.extraInstructions ? `\n- ${opts.extraInstructions}` : '');
     return { prompt: NWContext.renderPrompt(built, rules), usage: built.usage, sections: built.sections };
   }
@@ -430,6 +441,7 @@ ${String(content || '').slice(0, 6000)}
     getConfig: getLLMConfig, setConfig: setLLMConfig, hasConfig: hasLLMConfig,
     
     buildContinuePrompt, buildContinueContext, buildConsistencyCheckPrompt, buildSummarizePrompt,
+    antiAiRules,
     buildPolishPrompt, buildOutlinePrompt,
     buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS, SHORT_PLATFORMS,
     buildRefinePrompt, buildReviewPrompt,

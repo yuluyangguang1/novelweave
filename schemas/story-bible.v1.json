@@ -66,6 +66,7 @@
         "voice": { "type": "object", "additionalProperties": false, "properties": { "person": { "type": "string" }, "tense": { "type": "string" }, "povDefault": { "type": "string", "nullable": true }, "notes": { "type": "string" } } },
         "created": { "type": "string", "nullable": true },
         "updated": { "type": "string", "nullable": true },
+        "stylePack": { "type": "object", "additionalProperties": false, "properties": { "enabled": { "type": "boolean" }, "disabled": { "type": "array", "items": { "type": "string" } }, "extraBanned": { "type": "array", "items": { "type": "string" } } }, "description": "去 AI 味规则包（NWStylePack）的本书开关。整包停用写 enabled=false；关掉某个词组写 disabled（组 id 见 stylepack.js 的 GROUPS）；extraBanned 是作者自己加的禁词。缺省即默认包全开" },
         "_derived": { "type": "object" }
       }
     },

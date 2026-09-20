@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NWStory, NWProject, NWRules, NWText, NWBible, NWContext, repoRoot } from './_load.mjs';
+import { NWStory, NWProject, NWRules, NWText, NWBible, NWContext, NWStylePack, repoRoot } from './_load.mjs';
 
 /**
  * 阶段三的契约核心：Web 导出的 .novelweave/ 目录，CLI 必须原样读得懂。
@@ -30,7 +30,9 @@ function rowsFixture() {
   ];
   const totalWords = chapters.reduce((s, c) => s + c.word_count, 0);
   return {
-    novel: { id: 'novel_bridge', title: '桥接测试', genre: '仙侠', description: '验证导出契约', word_count: totalWords, chapter_count: 2, created_at: 1700000000000, updated_at: 1700000001000 },
+    novel: { id: 'novel_bridge', title: '桥接测试', genre: '仙侠', description: '验证导出契约', word_count: totalWords, chapter_count: 2, created_at: 1700000000000, updated_at: 1700000001000,
+      // 作者在文体面板上关过一组、加过禁词：这份开关是本作品的设定，导出必须带着走
+      stylePack: { enabled: true, disabled: ['simile'], extraBanned: ['紫气东来'] } },
     chapters, characters,
     world: [{ id: 'wb_qing', name: '青雾山', type: 'location', description: '终年大雾，山门三千阶。' },
             { id: 'wb_rule', name: '灵气九境', type: 'rule', description: '不可逾越。' }],
@@ -130,6 +132,28 @@ test('导出是幂等的：导出→解析→再导出，文件内容逐字节�
     }
     assert.equal(second[key], first[key], `${key} 第二次导出不一致`);
   }
+});
+
+/**
+ * 文体包是本书设定，不是本机设定：作者在侧栏关掉哪几组、加了哪些禁词，
+ * 必须能跟着 book.json 走到 agent 那边再走回来。导出侧的 pick 白名单和 schema
+ * 属性是两处独立的声明，漏任何一处的表现都是「静默回到默认包」。
+ */
+test('文体包开关一路走通：库行 → book.json → 读回来还是同一份', async () => {
+  const ctx = NWStory.buildCtx(rowsFixture());
+  const tree = await NWProject.buildProjectTree(ctx);
+  const key = Object.keys(tree).find((k) => k.endsWith('book.json'));
+  const bookJson = JSON.parse(tree[key]);
+  assert.deepEqual(bookJson.stylePack, { enabled: true, disabled: ['simile'], extraBanned: ['紫气东来'] },
+    'stylePack 没进导出文件（pick 白名单或 buildCtx 断了一头）');
+
+  const parsed = NWProject.parseFileMap(tree);
+  assert.deepEqual(parsed.book.stylePack, ctx.book.stylePack, 'parseFileMap 丢了 stylePack');
+  const ctx2 = NWStory.buildCtx({ novel: { ...parsed.book, created_at: 1, updated_at: 2 }, chapters: [], characters: [] });
+  assert.deepEqual(ctx2.book.stylePack, ctx.book.stylePack, '导入后重新装配的 ctx 拿不到作者的开关');
+  // 开关最终落到包参数上：这一份 {enabled,disabled,extraBanned} 若与 optsFrom 认的形状不合，
+  // 三处消费方会各自退回默认值，而界面上看着是保存成功的
+  assert.deepEqual(NWStylePack.optsFrom(ctx2.book), { enabled: true, disabled: ['simile'], extraBanned: ['紫气东来'] });
 });
 
 test('冲突判定不许静默丢任何一侧的修改', () => {
