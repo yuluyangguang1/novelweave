@@ -51,6 +51,7 @@ const TABS = [
   { id: 'continuity', icon: 'search',   label: '连续性',   hasAdd: false, addTitle: '' },
   { id: 'decisions',  icon: 'bank',     label: '决策',     hasAdd: true,  addTitle: '记一条创作决策' },
   { id: 'relations',  icon: 'thread',   label: '关系',     hasAdd: true,  addTitle: '登记一条关系' },
+  { id: 'secrets',    icon: 'target',   label: '信息差',   hasAdd: true,  addTitle: '登记一条信息差' },
   { id: 'notes',      icon: 'note',     label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
   { id: 'settings',   icon: 'settings', label: 'AI 设置',  hasAdd: false, addTitle: '' },
 ];
@@ -166,6 +167,7 @@ const ACTIONS = {
   'edit-note':     (id) => editNote(id),
   'edit-decision': (id) => editDecision(id),
   'edit-relation': (id) => editRelation(id),
+  'edit-secret':   (id) => editSecret(id),
   'save-chapter':  () => saveChapter(),
   'edit-cast':     () => showCastPanel(),
   'edit-summary':  () => showSummaryEditor(),
@@ -915,6 +917,7 @@ const ADD_ACTIONS = {
   'nav-add-notes': () => showCreateNote(),
   'nav-add-decisions': () => showCreateDecision(),
   'nav-add-relations': () => showCreateRelation(),
+  'nav-add-secrets': () => showCreateSecret(),
 };
 Object.assign(ACTIONS, ADD_ACTIONS);
 Object.assign(ACTIONS, {
@@ -937,6 +940,7 @@ const SIDEBAR_VIEWS = {
   continuity: showContinuity,
   decisions: showDecisionList,
   relations: showRelationList,
+  secrets: showSecretList,
   notes: showNotesList,
   settings: renderWorkspaceSettings,
 };
@@ -2551,6 +2555,7 @@ async function importNovelweave() {
     // 本地改过的直接被文件版盖掉。planMerge 的 buckets 列了它们，取的却没人给。
     relations: await NovelDB.relations.list(novel.id),
     decisions: await NovelDB.decisions.list(novel.id),
+    secrets: await NovelDB.secrets.list(novel.id),
   };
   const plan = await NWProject.planMerge(parsed, current);
   const conflicts = plan.filter((p) => p.action === 'conflict');
@@ -2817,6 +2822,116 @@ function editRelation(id) {
   NovelDB.relations.list(APP.novel.id).then((list) => {
     const e = list.find((x) => x.id === id);
     if (e) showCreateRelation(e);
+  });
+}
+
+// ═══════════════════ 信息差账本(Secrets) ═══════════════════
+// 一行 = 一条「谁、什么时候可以知道什么」。R20 提前点破、R21 排期未揭、
+// 以及生成时硬禁令里的「本章不得点破」三处都读这张表 —— 不登记，三处一起静默。
+
+async function showSecretList(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const rows = await NovelDB.secrets.list(APP.novel.id);
+  const [chars, chapters] = await Promise.all([
+    NovelDB.characters.list(APP.novel.id), NovelDB.chapters.list(APP.novel.id),
+  ]);
+  if (!rows.length) { host.innerHTML = emptyHint('点击 + 登记一条信息差：哪句话现在还不能写出来'); return; }
+  const num = new Map(chapters.map((c) => [c.id, c.order]));
+  const lastNum = chapters.reduce((m, c) => Math.max(m, c.order || 0), 0);
+  const label = (id) => (id ? (num.has(id) ? `第 ${num.get(id)} 章` : id) : '未定');
+  const nameOf = (id) => (chars.find((c) => c.id === id) || {}).name || id;
+  const stateOf = (s) => {
+    if (s.revealed_at) return `已揭示 · ${label(s.revealed_at)}`;
+    if (!s.reveal_chapter) return '未排期（R20 只能提示，判不了提前）';
+    const n = num.get(s.reveal_chapter);
+    return `排在 ${label(s.reveal_chapter)}` + (n != null && lastNum > n ? ' · 已过期未揭' : '');
+  };
+  host.innerHTML = '<div class="char-list">'
+    + rows.map((s) => `
+      <div class="char-card" data-action="edit-secret" data-id="${attr(s.id)}">
+        <div class="char-card-name">${esc(s.term)}${s.enabled === false ? ' <span class="novel-card-upgrade">已停用</span>' : ''}</div>
+        <div class="char-card-desc">${esc(stateOf(s))}${s.truth ? '<br>' + esc(s.truth.slice(0, 60)) : ''}${(s.informed || []).length ? '<br>已知情：' + esc(s.informed.map(nameOf).join('、')) : ''}</div>
+      </div>`).join('')
+    + '</div>';
+}
+
+function secretFields(prefix, s, chars, proms) {
+  s = s || {};
+  const opt = (list, sel, text) => list.map((x) => `<option value="${attr(x.id)}" ${sel === x.id ? 'selected' : ''}>${esc(text(x))}</option>`).join('');
+  const chosen = new Set(s.informed || []);
+  return `
+    <div class="settings-field"><label class="settings-label">这条信息的名称 *</label>
+      <input class="settings-input" id="${prefix}-s-term" value="${attr(s.term || '')}" placeholder="读者在正文里看到的那个词，例：玄冰令" maxlength="40">
+      <div class="settings-hint">检查器按这个词在正文里字面查找。填「掌门害死林父的信物」这类描述永远匹配不到。</div></div>
+    <div class="settings-field"><label class="settings-label">事实本身</label>
+      <textarea class="settings-input" id="${prefix}-s-truth" rows="2" placeholder="真相是什么，写上下文时会连着排期一起给模型看">${esc(s.truth || '')}</textarea></div>
+    <div class="settings-field"><label class="settings-label">可以从哪一章开始铺垫（可选）</label>${chapterSelect(`${prefix}-s-first`, s.first_chapter)}</div>
+    <div class="settings-field"><label class="settings-label">计划揭示章</label>${chapterSelect(`${prefix}-s-reveal`, s.reveal_chapter)}</div>
+    <div class="settings-field"><label class="settings-label">实际揭示于哪一章（写完回填）</label>${chapterSelect(`${prefix}-s-revealed`, s.revealed_at)}</div>
+    <div class="settings-field"><label class="settings-label">已知情的角色（可多选）</label>
+      <select class="settings-select" id="${prefix}-s-informed" multiple size="4">
+        ${chars.map((c) => `<option value="${attr(c.id)}" ${chosen.has(c.id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">（还没有角色卡）</option>'}
+      </select>
+      <div class="settings-hint">列在这里的角色不该再对这条信息表现出惊讶。</div></div>
+    <div class="settings-field"><label class="settings-label">关联伏笔（可选）</label>
+      <select class="settings-select" id="${prefix}-s-promise"><option value="">（不关联）</option>
+        ${opt(proms, s.promise_id, (p) => p.title)}</select></div>
+    <div class="settings-field"><label class="settings-label">备注</label>
+      <textarea class="settings-input" id="${prefix}-s-notes" rows="2">${esc(s.notes || '')}</textarea></div>
+    <div class="settings-field"><label class="settings-label"><input type="checkbox" id="${prefix}-s-enabled" ${s.enabled !== false ? 'checked' : ''}> 参与连续性检查</label></div>`;
+}
+
+function readSecretForm(prefix) {
+  // 每个控件都在 return 里就地取值：守卫按「return 之后有没有出现这个 id」判定接没接上
+  return {
+    term: val(`${prefix}-s-term`),
+    truth: val(`${prefix}-s-truth`),
+    first_chapter: val(`${prefix}-s-first`) || null,
+    reveal_chapter: val(`${prefix}-s-reveal`) || null,
+    revealed_at: val(`${prefix}-s-revealed`) || null,
+    informed: [...(document.getElementById(`${prefix}-s-informed`)?.selectedOptions || [])]
+      .map((o) => o.value).filter(Boolean),
+    promise_id: val(`${prefix}-s-promise`) || null,
+    notes: val(`${prefix}-s-notes`),
+    enabled: document.getElementById(`${prefix}-s-enabled`)?.checked !== false,
+  };
+}
+
+function showCreateSecret(existing) {
+  if (!APP.novel) { showToast('先进入一本书'); return; }
+  const isEdit = !!existing;
+  Promise.all([
+    NovelDB.characters.list(APP.novel.id), NovelDB.promises.list(APP.novel.id),
+  ]).then(([chars, proms]) => {
+    const save = async () => {
+      const data = readSecretForm('sec');
+      if (!data.term) { showToast('名称不能为空'); return; }
+      try {
+        await NovelDB.secrets.save(APP.novel.id, isEdit ? { ...existing, ...data } : data);
+      } catch (e) {
+        // saveSecret 会因重名/缺名称抛错；不接住就是点保存没反应
+        showToast(e.message);
+        return;
+      }
+      closeModal();
+      showToast(isEdit ? '信息差已更新' : '信息差已登记');
+      await renderSidebarPanel();
+    };
+    const del = isEdit ? async () => {
+      if (!confirm('删除这条信息差登记？')) return;
+      await NovelDB.secrets.delete(existing.id);
+      closeModal();
+      await renderSidebarPanel();
+    } : null;
+    showModal(isEdit ? '编辑信息差' : '登记一条信息差', secretFields('sec', existing, chars, proms), save, del);
+  });
+}
+
+function editSecret(id) {
+  NovelDB.secrets.list(APP.novel.id).then((list) => {
+    const s = list.find((x) => x.id === id);
+    if (s) showCreateSecret(s);
   });
 }
 

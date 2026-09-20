@@ -257,3 +257,37 @@ test('导入比较要的每张表，app.js 都必须真的取出来', () => {
   const missing = needed.filter((k) => !keys.has(k));
   assert.deepEqual(missing, [], `导入时这些表没有取本地值，会被整表判成 new：${missing.join('、')}`);
 });
+
+test('侧栏每个 tab 都有渲染函数，能新增的都有处理器', () => {
+  // 旧版定义了四个列表函数却从不调用，四个 tab 永远空白；反过来定义了没人调的
+  // 视图同样是死代码。两个方向一起查，tab 表才是唯一事实源。
+  const js = read('src/app.js');
+  const tabs = [...js.matchAll(/\{ id: '([\w-]+)',[^\n]*?hasAdd: (true|false)/g)]
+    .map((m) => ({ id: m[1], hasAdd: m[2] === 'true' }));
+  assert.ok(tabs.length >= 10, `TABS 只解析出 ${tabs.length} 项，检查匹配式`);
+  const views = new Set([...(js.match(/const SIDEBAR_VIEWS = \{([\s\S]*?)\n\};/)?.[1] || '')
+    .matchAll(/^\s*(\w+):/gm)].map((m) => m[1]));
+  const adds = new Set([...(js.match(/const ADD_ACTIONS = \{([\s\S]*?)\n\};/)?.[1] || '')
+    .matchAll(/'nav-add-([\w-]+)'/g)].map((m) => m[1]));
+  const noView = tabs.filter((t) => !views.has(t.id)).map((t) => t.id);
+  const noAdd = tabs.filter((t) => t.hasAdd && !adds.has(t.id)).map((t) => t.id);
+  const orphan = [...views].filter((v) => !tabs.some((t) => t.id === v));
+  assert.deepEqual(noView, [], '这些 tab 点开是空的');
+  assert.deepEqual(noAdd, [], '这些 tab 的 + 按钮点了没反应');
+  assert.deepEqual(orphan.sort(), [], '这些视图没有任何 tab 会用到');
+});
+
+test('信息差表单的每个控件都要被 readSecretForm 读走', () => {
+  // 这一族的字段比关系页多（三个章节选择器 + 多选 + 停用开关），
+  // 漏读一个字段等于作者填了但从来不落库，而且不会有任何报错。
+  const js = read('src/app.js');
+  const form = js.match(/function secretFields\([\s\S]*?\n\}/)?.[0] || '';
+  const write = js.match(/function readSecretForm\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(form && write, 'app.js 里找不到信息差表单的两个函数');
+  const ids = [...new Set([...form.matchAll(/\$\{prefix\}-([\w-]+)/g)].map((m) => m[1]))];
+  assert.ok(ids.length >= 8, `只解析出 ${ids.length} 个控件，检查匹配式`);
+  // 只看 return 之后：光在函数里 getElementById 一下又不用它，等于没读
+  const afterReturn = write.slice(write.indexOf('return {'));
+  const missing = ids.filter((k) => !afterReturn.includes(k));
+  assert.deepEqual(missing, [], `这些控件的值从来没被读走：${missing.join('、')}`);
+});

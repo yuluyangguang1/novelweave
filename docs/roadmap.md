@@ -441,7 +441,7 @@ README 只写已经能用的一切；这个文件写还没做的。
 - 测试:`tests/export-bridge.test.mjs` 两条(未改动不判 new / 单边改动取那一边、双边算冲突)。
   `current` 取数那一侧只有静态守卫覆盖,浏览器里的端到端未跑过。
 
-## H. 信息差账本(P0/P1 已落地 —— 借自竞品 bookflow 的「谁知道什么」)
+## H. 信息差账本(P0–P3 已落地 —— 借自竞品 bookflow 的「谁知道什么」)
 
 来源是 2026-09-20 那两个竞品仓库对比里排到 S 的一条:bookflow 把「读者已知 / 角色已知 /
 尚未揭穿」当成一张表来管,而织文只有伏笔(promise)这一维 —— 伏笔管的是"这事后来交代没有",
@@ -469,9 +469,40 @@ README 只写已经能用的一切；这个文件写还没做的。
 反验:把 `rules.js`+`story.js` 换回 HEAD,13 项新测试红 6 项(正向断言那几条;
 "不该报"那 7 项在规则不存在时恒绿,是刻意的下界)。
 
-**仍未做**:侧栏没有账本 UI(现在只能在控制台调 `NovelDB.secrets.save`,校验在函数里、不在界面里);
-`secrets` 不进生成上下文(写之前看不到排期,R20 是事后检查);
-导出/导入与 CLI 的 `loadBook` 都还没有 `secrets.json` —— 见待办清单。
+**P2 账本进链路**:
+
+- **进生成上下文**(`context.js`):未揭的信息差按排期分三桶,并进**硬禁令**那一节(有预算保护,
+  不会被别的段挤掉)——排期在后面且没到铺垫点 → `不得点破`;排期就是目标章 → 允许正面写;
+  已过 `first_chapter` → `只能铺垫、不可点破`。没有排期的条目不进这里(那是 R20 的 warn 该管的),
+  已回填 `revealed_at` 的也不进(写出来了就不再约束)。最多列 8 条,余下折成一句计数。
+  因为 `runSelfCheck` 是 `{...ctx}` 透传,草稿自检也顺带拿到了 R20 —— 事前约束与事后检查同一份数据。
+- **`.novelweave/` 往返 + CLI**(`project.js`、`scripts/lib/book.mjs`):
+  `continuity/secrets.json` 导出、`Story.fromSecret` 把文件版转回库行(ISO→毫秒,和 relations 一样两种口径都吃)、
+  `authorProjection` 补 `case 'secret'`、`planMerge` 加一个桶、`sync.json` 按条记账。
+  缺 `secrets.json` 不报错,只当作者没登记。**这条路是被真跑通验的**:测试把 Web 导出的目录树写到临时目录,
+  再调 `nw-continuity.mjs --rules premature-reveal --json`,断言 CLI 侧读得到那条 R20。
+
+**P3 侧栏 UI**(`app.js`):「信息差」tab,列表按 已揭示 / 已过期未揭 / 未排期 三种状态给文案,
+停用条目带徽标,已知情角色显示姓名;新增与编辑共用一张表单(`term` 输入框下明写"要填读者实际看到的词,
+规则是字面匹配")。`NovelDB.secrets.save` 的校验(缺 term、同书重名)在保存按钮里 catch 成 toast,不静默失败。
+
+反验:`falsify-guards.cjs` 六处变异各点亮对应守卫(视图/新增处理器/卡片处理器/form 两处读取/`current` 取数);
+`falsify-lines.cjs` 四处删行(硬禁令注入、铺垫分支、`secrets.json` 导出、`planMerge` 桶、CLI `loadBook`)各报红。
+
+浏览器里真跑过一遍(静态服务器 + 示例书,`node --check` 与守卫测试都覆盖不到的那段):
+新增表单 9 个控件全渲染、章节下拉给的是示例书四章;空名称保存 → toast「名称不能为空」且不落库;
+同名重复登记 → 库里那条 `saveSecret` 的重名错被 catch 成 toast(不接住就是点了没反应),模态框留着让用户改;
+编辑回填正确、`created_at` 不被覆写、列表文案跟着变成「排在 第 2 章 · 已过期未揭」;
+勾掉「参与连续性检查」后 R20 从 error 变 0 条;删除走确认后进空态。
+同一条数据往下游验:R20 在 ctx 里如实报出 ch-001(填了 `first_chapter` → info,清空 → error)、
+R21 对全书没出现过的「墨骨扇」报 warn、续写 prompt 的**硬禁令**一节里真的出现
+「『墨骨扇』不得点破(揭示排在第 2 章):……」、导出树里 `continuity/secrets.json` 与
+`meta/sync.json` 的 `secret:<id>` 指纹都在、`parseFileMap` 把 ISO `created` 转回毫秒 `created_at`。
+控制台零报错。
+
+浏览器这条路能通,靠的是 `src/core/llm.js:83` 的 `buildContinueContext` —— Web 与 CLI 共用
+`NWContext.buildSections`,所以注入只需要改一处;早期版本在 llm.js 里自己拼过 5 节,那种重复没了才不会
+「CLI 注入了、Web 没注入」。
 
 ## 待办清单(2026-09-19 汇总 —— 合并两份桌面规划文档)
 
@@ -482,9 +513,6 @@ README 只写已经能用的一切；这个文件写还没做的。
 
 ### 一致性工程主线
 
-- **信息差账本剩下的三件事**(H 节的 P2/P3):①侧栏账本 UI(登记/编辑/揭示回填);
-  ②把未揭与已排期的秘密注入生成上下文(写之前让模型看到排期,R20 才从事后检查变成事前约束);
-  ③导出/导入与 CLI `loadBook` 补 `secrets.json`(否则 agent 那条路看不见账本,换浏览器也会丢)。
 - **关系可视化(力导向图)**:全仓无 force/graph 相关实现(`grep 可视化|force-graph` 空)。
   P0-2 的关系边目前只有侧栏列表一种视图,20+ 角色的书看不出结构。
 - **跨章瞬移 / 称谓越界**(原 P2-1):两条都还缺前置建模,不是"只差写条规则"。
