@@ -162,6 +162,8 @@ export function loadBook(bookDir, opts = {}) {
     suppressions: readJson(path.join(bookDir, 'continuity', 'suppressions.json'), { items: [] }),
     // 决策文件只在 Web 导出过之后才存在；没有就是没有，不补空文件
     decisions: readJson(path.join(bookDir, 'continuity', 'decisions.json'), { items: [] }).items || [],
+    // 信息差账本同上：没有这个文件 = 作者没登记，R20/R21 静默，不报错
+    secrets: readJson(path.join(bookDir, 'continuity', 'secrets.json'), { items: [] }).items || [],
     pending: readJson(path.join(bookDir, 'continuity', 'pending.json'), { items: [] }),
     sync: readJson(path.join(bookDir, 'meta', 'sync.json'), { records: {} }),
     schema: opts.schema === false ? null : readSchema(),

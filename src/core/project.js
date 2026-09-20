@@ -124,6 +124,17 @@
       syncRecords[tagFor('decision', d.id)] = { hash: await hashRecord('decision', d), source: 'web' };
     }
 
+    // 信息差账本：R20/R21 的全部判据都在这些字段里，导出漏一个就等于换台机器规则全线静默
+    const secretsOut = (ctx.secrets || []).map((s) => ({
+      ...pick(s, ['id', 'term', 'truth', 'first_chapter', 'reveal_chapter', 'revealed_at', 'informed', 'promise_id', 'notes']),
+      enabled: s.enabled !== false,
+      created: s.created || T.toISO(s.created_at),
+    }));
+    files[p('continuity/secrets.json')] = JSON.stringify({ schemaVersion: Bible.SCHEMA_VERSION, items: secretsOut }, null, 2) + '\n';
+    for (const s of secretsOut) {
+      syncRecords[tagFor('secret', s.id)] = { hash: await hashRecord('secret', s), source: 'web' };
+    }
+
     const tl = ctx.timeline || Bible.emptyTimeline();
     const cleanAnchor = (a) => pick(a, ['id', 'chapter', 'label', 'at', 'thread', 'kind', 'entities', 'confidence', 'evidence']);
     const tlOut = {
@@ -236,6 +247,15 @@
           supersededBy: row.supersededBy ?? null,
         };
       }
+      case 'secret': {
+        return {
+          id: row.id, term: row.term || '', truth: row.truth || '',
+          first_chapter: row.first_chapter ?? null, reveal_chapter: row.reveal_chapter ?? null,
+          revealed_at: row.revealed_at ?? null,
+          informed: Array.isArray(row.informed) ? row.informed : [],
+          promise_id: row.promise_id ?? null, notes: row.notes || '', enabled: row.enabled !== false,
+        };
+      }
       default: throw new Error(`未知投影类型 ${kind}`);
     }
   }
@@ -295,6 +315,7 @@
       // 而不是库行，落库后 stableSort 与「最近编辑」全部失序 —— 现在统一走 from*
       relations: (json(files, `${slug}/bible/relations.json`)?.edges || []).map((e) => Story.fromRelation(e)),
       decisions: (json(files, `${slug}/continuity/decisions.json`)?.items || []).map((d) => Story.fromDecision(d)),
+      secrets: (json(files, `${slug}/continuity/secrets.json`)?.items || []).map((s) => Story.fromSecret(s)),
       sync: json(files, `${slug}/meta/sync.json`),
     };
   }
@@ -332,6 +353,7 @@
       ['states', 'state', parsed.states || [], currentRows.states || []],
       ['relations', 'relation', parsed.relations || [], currentRows.relations || []],
       ['decisions', 'decision', parsed.decisions || [], currentRows.decisions || []],
+      ['secrets', 'secret', parsed.secrets || [], currentRows.secrets || []],
     ];
     for (const [store, kind, fileRows, localRows] of buckets) {
       const localById = new Map((localRows || []).map((r) => [r.id, r]));

@@ -317,13 +317,17 @@ test('Web 写的多行摘要，CLI 读得懂、上下文也带得动（一条链
 async function mergedFixture() {
   const edges = [{ id: 'rel_1', from: 'char_ming', to: 'char_lin', kind: '师徒', address: '师父', created_at: 1700000000000 }];
   const decisions = [{ id: 'dec_1', title: '不让主角换城', reason: '保持主线紧凑', risk: '', supersededBy: null, created_at: 1700000000000 }];
-  const ctx = NWStory.buildCtx({ ...rowsFixture(), relations: { edges }, decisions });
+  const secrets = [{ id: 'sec_1', term: '玄冰令', truth: '掌门害死林父的信物', first_chapter: null,
+    reveal_chapter: 'ch_a2', revealed_at: null, informed: ['char_lin'], promise_id: null, notes: '',
+    enabled: true, created_at: 1700000000000 }];
+  const ctx = NWStory.buildCtx({ ...rowsFixture(), relations: { edges }, decisions, secrets });
   const tree = await NWProject.buildProjectTree(ctx);
   // local 就是 Web 导入时交给比较器的那份「库里的现在值」，键名与 app.js 一致
   const local = {
-    ...rowsFixture(), worldbuilding: rowsFixture().world, relations: edges.map((e) => ({ ...e })), decisions,
+    ...rowsFixture(), worldbuilding: rowsFixture().world, relations: edges.map((e) => ({ ...e })),
+    decisions, secrets: secrets.map((s) => ({ ...s })),
   };
-  return { parsed: NWProject.parseFileMap(tree), local };
+  return { parsed: NWProject.parseFileMap(tree), local, tree };
 }
 
 test('导出的关系边与决策能被比较器吃下：未改动的一条也不判 new', async () => {
@@ -332,11 +336,13 @@ test('导出的关系边与决策能被比较器吃下：未改动的一条也�
   assert.equal(typeof parsed.decisions[0].created_at, 'number', '决策落回库行时丢了 created_at');
   assert.equal(parsed.decisions[0].created, undefined, 'ISO 字段不该混进库行');
   assert.equal(parsed.relations[0].id, 'rel_1');
+  assert.equal(typeof parsed.secrets[0].created_at, 'number', '信息差落回库行时丢了 created_at');
+  assert.deepEqual(parsed.secrets[0].informed, ['char_lin']);
 
   const acts = (await NWProject.planMerge(parsed, local))
-    .filter((p) => ['relation', 'decision'].includes(p.kind))
+    .filter((p) => ['relation', 'decision', 'secret'].includes(p.kind))
     .map((p) => `${p.kind}:${p.action}`);
-  assert.deepEqual(acts.sort(), ['decision:same', 'relation:same'],
+  assert.deepEqual(acts.sort(), ['decision:same', 'relation:same', 'secret:same'],
     '判成 new 就意味着导入会用文件版静默盖掉本地记录');
 });
 
@@ -357,4 +363,47 @@ test('关系边只有一边动过取那一边，两边都动过算冲突', async
   const both = structuredClone(parsed);
   both.relations[0].kind = '父子';
   assert.equal(of(await NWProject.planMerge(both, localChanged), 'relation'), 'conflict');
+});
+
+test('信息差的三方比较：本地回填 revealed_at 不被文件版盖掉', async () => {
+  const { parsed, local } = await mergedFixture();
+  const of = (plan) => plan.find((p) => p.kind === 'secret').action;
+
+  const fileChanged = structuredClone(parsed);
+  fileChanged.secrets[0].notes = 'agent 在目录里补的注';
+  assert.equal(of(await NWProject.planMerge(fileChanged, local)), 'take-file');
+
+  // 作者在网页上把揭示章回填了 —— 这是导入时最常见的本地改动
+  const localChanged = { ...local, secrets: [{ ...local.secrets[0], revealed_at: 'ch_a2' }] };
+  assert.equal(of(await NWProject.planMerge(parsed, localChanged)), 'take-local');
+
+  const localAlso = { ...local, secrets: [{ ...local.secrets[0], revealed_at: 'ch_a2', notes: '本地也改了注' }] };
+  assert.equal(of(await NWProject.planMerge(fileChanged, localAlso)), 'conflict');
+});
+
+test('Web 导出的信息差，CLI 侧的 R20 读得到（agent 那条路不是断的）', async () => {
+  const base = rowsFixture();
+  const ctx = NWStory.buildCtx({
+    ...base,
+    chapters: base.chapters.map((c, i) => ({ ...c, content: i === 0 ? c.content + '他袖口露出半枚玄冰令。' : c.content })),
+    secrets: [{ id: 'sec_1', term: '玄冰令', truth: '掌门害死林父的信物', first_chapter: null,
+      reveal_chapter: 'ch_a2', revealed_at: null, informed: [], enabled: true, created_at: 1700000000000 }],
+  });
+  const tree = await NWProject.buildProjectTree(ctx);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-secret-'));
+  try {
+    for (const [rel, text] of Object.entries(tree)) {
+      const f = path.join(tmp, '.novelweave', rel);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, text, 'utf8');
+    }
+    const bookDir = path.join(tmp, '.novelweave', '桥接测试');
+    const r = run('nw-continuity.mjs', [bookDir, '--rules', 'premature-reveal', '--json']);
+    const diags = JSON.parse(r.stdout).diagnostics;
+    assert.equal(diags.length, 1, `CLI 应当抓到这一条剧透，实际：${r.stdout || r.stderr}`);
+    assert.equal(diags[0].chapter, 'ch_a1');
+    assert.equal(diags[0].entity, 'sec_1');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

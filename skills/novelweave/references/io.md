@@ -93,7 +93,7 @@ node scripts/nw-io.mjs export --book <bookDir> --out ./exports
 .novelweave/<slug>/manuscript/chapters/ch-001-<slug>.md
 .novelweave/<slug>/bible/{characters,world}/*.json + _index.json
 .novelweave/<slug>/bible/{promises,states,timeline,lexicon,relations}.json
-.novelweave/<slug>/continuity/{snapshot,suppressions,pending}.json + reports/
+.novelweave/<slug>/continuity/{decisions,secrets,snapshot,suppressions,pending}.json + reports/
 .novelweave/<slug>/meta/{sync.json,changelog.jsonl}
 ```
 

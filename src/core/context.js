@@ -199,6 +199,43 @@
     }).join('\n');
   }
 
+  // ═══════════════ 信息差账本:未揭的秘密是硬约束,到期的是任务 ═══════════════
+  // R20 是事后机检；这一节让它变成事前约束 —— 模型写之前就该知道「玄冰令」不能在这一章点破。
+  // 只喂账本里真登记过的排期，没登记的不猜（宁缺勿错，错一次模型就学会无视这一节）。
+  const SECRET_LINES = 8;
+
+  function secretLines(ctx, chapters, targetN) {
+    const rows = (ctx.secrets || []).filter((s) => s && s.enabled !== false && String(s.term || '').trim());
+    if (!rows.length || targetN == null) return [];
+    const num = (id) => {
+      const c = chapters.find((x) => x.id === id);
+      return c ? (c.number ?? c.order) : ctx.chapterNumbers?.get(id);
+    };
+    const byId = new Map((ctx.characters || []).map((c) => [c.id, c.name]));
+    const cut = (t, n = 60) => {
+      const s = String(t || '').replace(/\s+/g, ' ').trim();
+      return s.length > n ? s.slice(0, n) + '…' : s;
+    };
+    const hide = [], hint = [], due = [];
+    for (const s of rows) {
+      if (s.revealed_at) continue; // 已经写出来了，不再约束
+      const planN = s.reveal_chapter ? num(s.reveal_chapter) : null;
+      if (planN == null || planN < targetN) continue; // 无排期交给 R20 催；排期已过不约束当下
+      const firstN = s.first_chapter ? num(s.first_chapter) : null;
+      const truth = cut(s.truth);
+      const tail = `${truth ? `：${truth}` : ''}${(s.informed || []).length
+        ? `（已知情：${s.informed.slice(0, 6).map((id) => byId.get(id) || id).join('、')}）` : ''}`;
+      if (planN === targetN) due.push(`「${s.term}」是本章的计划揭示内容，可以正面写出来${tail}`);
+      else if (firstN != null && targetN >= firstN) hint.push(`「${s.term}」本章只能铺垫、不可点破（揭示排在第 ${planN} 章）${tail}`);
+      else hide.push(`「${s.term}」不得点破（揭示排在第 ${planN} 章）${tail}`);
+    }
+    const ordered = [...hide, ...due, ...hint];
+    if (!ordered.length) return [];
+    const shown = ordered.slice(0, SECRET_LINES).map((t) => `  · ${t}`);
+    if (ordered.length > SECRET_LINES) shown.push(`  · …另有 ${ordered.length - SECRET_LINES} 条信息差登记未列出`);
+    return ['- 信息差账本（以作者登记的揭示排期为准，与本节冲突的写法一律算剧透）：', ...shown];
+  }
+
   function hardBanBlock(ctx, chapters, targetN, current) {
     const lines = [];
     const dead = (ctx.characters || []).filter((c) => c.status === 'deceased' && c.enabled !== false);
@@ -223,6 +260,7 @@
       if (ic.mustHide) lines.push(`- 【必须隐瞒】本章不得揭示：${ic.mustHide}`);
       if (ic.onlyHint) lines.push(`- 【只能暗示】本章可暗示但不可点破：${ic.onlyHint}`);
     }
+    lines.push(...secretLines(ctx, chapters, targetN));
     return lines.length ? lines.join('\n') : null;
   }
 

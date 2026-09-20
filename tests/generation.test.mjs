@@ -57,6 +57,73 @@ test('硬禁令：没有死者与到期伏笔时不占预算（节直接不存�
   assert.ok(!sectionNames(built).includes('硬禁令'));
 });
 
+// ═══════════════ 硬禁令 · 信息差账本（R20 的事前那一半）═══════════════
+
+const sec = (over = {}) => ({
+  id: 'sec_1', term: '玄冰令', truth: '玄冰令是掌门害死林父的信物',
+  first_chapter: null, reveal_chapter: 'ch-003', revealed_at: null, informed: [], enabled: true, ...over,
+});
+const banOf = (chapterId, rowsOver) => {
+  const built = NWContext.buildSections(NWStory.buildCtx(rows(rowsOver)), { chapterId });
+  const sec2 = built.sections.find((s) => s.name === '硬禁令');
+  return { text: sec2 ? sec2.text : null, first: sectionNames(built)[0] };
+};
+
+test('信息差：揭示排在后面时进硬禁令，写明不得点破与排在哪一章', () => {
+  const { text, first } = banOf('ch-002', {
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }], promises: [],
+    secrets: [sec()],
+  });
+  assert.equal(first, '硬禁令', '信息差要钉在第一节，不是资料节');
+  assert.match(text, /「玄冰令」不得点破（揭示排在第 3 章）/);
+  assert.match(text, /掌门害死林父的信物/, '真相要给模型看，否则它不知道自己正在剧透');
+});
+
+test('信息差：写到的正是揭示章 → 从禁令翻成「本章可以正面写出来」', () => {
+  const { text } = banOf('ch-003', {
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }], promises: [],
+    secrets: [sec()],
+  });
+  assert.match(text, /「玄冰令」是本章的计划揭示内容/);
+  assert.doesNotMatch(text, /不得点破（揭示排在第 3 章）/);
+});
+
+test('信息差：登记了铺垫起点（first_chapter）时改口为「只能铺垫、不可点破」', () => {
+  const { text } = banOf('ch-002', {
+    characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }], promises: [],
+    secrets: [sec({ first_chapter: 'ch-002' })],
+  });
+  assert.match(text, /只能铺垫、不可点破/);
+});
+
+test('信息差：已回填 revealed_at / enabled:false / 无排期 三种都不占预算', () => {
+  const clean = { characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }], promises: [] };
+  assert.equal(banOf('ch-002', { ...clean, secrets: [sec({ revealed_at: 'ch-001' })] }).text, null);
+  assert.equal(banOf('ch-002', { ...clean, secrets: [sec({ enabled: false })] }).text, null);
+  assert.equal(banOf('ch-002', { ...clean, secrets: [sec({ reveal_chapter: null })] }).text, null,
+    '没排期就不该在 prompt 里猜这是不是秘密');
+});
+
+test('信息差：已知情人写角色名而不是 id，条数超上限时如实截断', () => {
+  const r = { characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }], promises: [],
+    secrets: [sec({ informed: ['c_lin', 'who-knows-what'] })] };
+  assert.match(banOf('ch-002', r).text, /已知情：林烟火、who-knows-what/, '查不到的 id 原样给出，不静默丢');
+  const many = { ...r, secrets: Array.from({ length: 10 }, (_, i) => sec({ id: `sec_${i}`, term: `秘密${i}` })) };
+  const text = banOf('ch-002', many).text;
+  assert.match(text, /另有 2 条信息差登记未列出/);
+  assert.equal((text.match(/· 「/g) || []).length, 8);
+});
+
+test('信息差：草稿提前点破会被生成后自检抓到，并进入自修清单', () => {
+  const r = { characters: [{ id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' }], promises: [],
+    secrets: [sec()] };
+  const ctx = NWStory.buildCtx(rows(r));
+  const dirty = NWSelfCheck.runSelfCheck(ctx, { chapterId: 'ch-002', draft: '他把玄冰令的来历说了出来。' });
+  assert.ok(dirty.actionable.some((d) => d.rule === 'premature-reveal'), '草稿引入的剧透要算 actionable');
+  const clean = NWSelfCheck.runSelfCheck(ctx, { chapterId: 'ch-002', draft: '山道尽头亮起火把。' });
+  assert.ok(!clean.actionable.some((d) => d.rule === 'premature-reveal'));
+});
+
 // ═══════════════ 风格样例 ═══════════════
 
 test('风格样例：opts.style 开启时注入，从上一章中段节选并带章名', () => {

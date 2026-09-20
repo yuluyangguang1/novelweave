@@ -97,6 +97,19 @@
     };
   }
 
+  /** 信息差登记：文件侧 created 是 ISO，库侧 created_at 是毫秒（缺省时由 saveSecret 补）。 */
+  function fromSecret(s) {
+    return {
+      id: s.id, novel_id: null, term: s.term || '', truth: s.truth || '',
+      first_chapter: s.first_chapter ?? null, reveal_chapter: s.reveal_chapter ?? null,
+      revealed_at: s.revealed_at ?? null,
+      informed: Array.isArray(s.informed) ? s.informed : [],
+      promise_id: s.promise_id ?? null, notes: s.notes || '',
+      enabled: s.enabled !== false,
+      created_at: T.fromISO(s.created) ?? s.created_at ?? null, updated_at: s.updated_at ?? null,
+    };
+  }
+
   function toWorld(w) {
     const keys = (w.keys && w.keys.length ? w.keys : [w.name]).filter(Boolean);
     const type = w.type || 'custom';
@@ -339,6 +352,6 @@
   }
 
   return { LORE_BUDGET: DEFAULT_BUDGET, toCharacter, fromCharacter, toWorld, fromWorld, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
-    fromDecision, fromRelation,
+    fromDecision, fromRelation, fromSecret,
     toTimeline, toSuppressions, statesFromRows, stateRowsFromFile, dimsOf, toLines, buildCtx, zhRole };
 });
