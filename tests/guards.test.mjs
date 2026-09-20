@@ -186,6 +186,22 @@ test('界面与 README 里写死的机器规则条数必须等于实际实现数
   assert.deepEqual(stale, [], `实际 ${actual} 条，这些声明过期：\n${stale.map((s) => `${s.file}:${s.line} 写 ${s.claimed} — ${s.text}`).join('\n')}`);
 });
 
+test('CLI 的 R 编号别名表覆盖每一条已实现规则（--rules R23 不能静默解析成空）', () => {
+  // ALIAS 少一条时 resolveRuleNames 直接把它 filter 掉，--rules R22 变成「一条都没选」，
+  // 于是使用者拿到一份空报告还以为没问题。别名表必须与规则表逐条对上。
+  const src = read('scripts/nw-continuity.mjs');
+  const body = src.match(/const ALIAS = \{([\s\S]*?)\n\};/)?.[1] || '';
+  const mapped = new Map([...body.matchAll(/(R\d+b?):\s*'([\w-]+)'/g)].map((m) => [m[1], m[2]]));
+  const missing = [], wrong = [];
+  for (const [slug, rule] of Object.entries(NWRules.RULES)) {
+    if (!rule.code) continue;
+    if (!mapped.has(rule.code)) missing.push(`${rule.code}→${slug}`);
+    else if (mapped.get(rule.code) !== slug) wrong.push(`${rule.code} 指向 ${mapped.get(rule.code)}，应为 ${slug}`);
+  }
+  assert.deepEqual(missing, [], `这些规则在 CLI 里按编号选不到：${missing.join('、')}`);
+  assert.deepEqual(wrong, [], `别名指错了规则：${wrong.join('；')}`);
+});
+
 test('app.js 用到的每个 NovelDB 门面成员都必须真的存在', () => {
   // 实测事故：db.js 顶层的 `window.NovelDB = { decisions: { list: listDecisions, … },
   // usage: { list: listUsage, record: recordUsage } }` 引用了六个从未定义过的函数，

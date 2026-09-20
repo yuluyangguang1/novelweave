@@ -8,10 +8,10 @@
  * 每条规则都必须自带误报控制。误报的检查器会被作者关掉，等于没有。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStylePack);
+  const mod = factory(root.NWText, root.NWBible, root.NWStylePack, root.NWTension);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWRules = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack, Tension) {
   'use strict';
 
   const ENGINE_VERSION = '1.0.0';
@@ -161,6 +161,21 @@
       if (best == null || ch.number < best.n) best = { chapter: ch.id, n: ch.number, quote: quoteAt(body, at, term.length).quote };
     }
     return best;
+  }
+
+  /**
+   * 状态维度比较：列表维度（伤势/持有/所知）去空去重后按行比，标量按字符串比。
+   * 只在 R24 里用来回答「这一章有没有真的改变谁的处境」。
+   */
+  function dimValue(dims, name) {
+    const v = dims?.[name];
+    if (Array.isArray(v)) return T.uniq(v.map(String).map((s) => s.trim()).filter(Boolean)).join('\n');
+    return v == null ? '' : String(v).trim();
+  }
+
+  function dimsChanged(before, after) {
+    const dims = Bible ? Bible.STATE_DIMS : ['loc', 'alive', 'injury', 'items', 'knows', 'goal'];
+    return dims.some((d) => dimValue(before, d) !== dimValue(after, d));
   }
 
   function diag(rule, hit) {
@@ -951,6 +966,142 @@
               '确属本书用词习惯的，可在侧栏「文体规则」里关掉对应词组，或豁免本章。',
           }));
         }
+        return out;
+      },
+    },
+
+    'dialogue-ratio': {
+      code: 'R23',
+      defaultSeverity: 'info',
+      scope: 'chapter',
+      summary: '整章几乎没有人开口，或有一大段连续纯叙述没有一句台词。',
+      detail:
+        '对话字数按成对引号（“”/「」/『』）内的正文计，占比 = 对话字数 / 全章字数；' +
+        '另一路判据是最长纯叙述连段（按段落累计，跨段不清零）。占比低于配额或连段超阈值才报。' +
+        '正文不足门槛字数的章、带 flashback/dream/quoted/offscreen 标记的章不评。' +
+        '恒为 info：整章没台词可能是战斗、可能是独角戏，让自修补写轮去凑对话只会塞出假台词。' +
+        '一处漏掉的后引号会让它后面的叙述被当成对话，方向是少报不是多报。',
+      run(ctx) {
+        const out = [];
+        const q = Tension.quotaFor(ctx.book);
+        for (const ch of ctx.chapters) {
+          const body = (ch.body || '').trim();
+          if (!body || isExempt(ch)) continue;
+          const s = Tension.stats(body);
+          if (s.words < q.minWords) continue;
+          const dry = s.ratio < q.ratioLow;
+          const longRun = s.plainRuns.words >= q.plainInfo;
+          if (!dry && !longRun) continue;
+          const basis = [];
+          if (dry) basis.push(`对话占比 ${(s.ratio * 100).toFixed(0)}%（配额 ${Math.round(q.ratioLow * 100)}%）`);
+          if (longRun) basis.push(`最长 ${s.plainRuns.words} 字连续纯叙述（阈值 ${q.plainInfo}）`);
+          out.push(diag('dialogue-ratio', {
+            chapter: ch.id,
+            severity: 'info',
+            confidence: 0.6,
+            evidence: { basis: [`全章 ${s.words} 字`, ...basis], quote: s.sample, ratio: s.ratio, plainRun: s.plainRuns.words },
+            message: dry
+              ? `${ch.id} 全章 ${s.words} 字，对话只占 ${(s.ratio * 100).toFixed(0)}%。`
+              : `${ch.id} 有连续 ${s.plainRuns.words} 字没有一句台词。`,
+            suggestion: dry
+              ? '把一段说明改成两个人各执一词：立场不同的角色开口，比叙述更能把信息递到读者手里。'
+              : '连着几百字都是叙述时，让一个人打断另一个人，或者把这段说明压进一句台词里。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'chapter-no-change': {
+      code: 'R24',
+      defaultSeverity: 'info',
+      scope: 'chapter',
+      summary: '本章在账本上没有任何变化点：没埋伏笔、没收伏笔、状态没动、信息没揭。',
+      detail:
+        '只看作者登记得了的事实：①伏笔表里 setup/payoff 指向本章；②状态矩阵里本章某实体相对' +
+        '它上一次记录的维度有变（首次记录不算变化，那多半是补账）；③信息差账本的揭示章落在本章。' +
+        '三者皆无才报。**全书一条登记都没有时整条规则闭嘴** —— 惩罚不记账的作者只会换来关检查器。' +
+        '恒为 info：没登记不等于没发生，这规则查的是账本漏记与平章同一种形状，处置权在作者。',
+      run(ctx) {
+        const items = ctx.promises?.items || [];
+        const byChapter = ctx.states?.byChapter || {};
+        const secrets = (ctx.secrets || []).filter((s) => s.enabled !== false);
+        if (!items.length && !Object.keys(byChapter).length && !secrets.length) return [];
+        const q = Tension.quotaFor(ctx.book);
+        const sorted = [...ctx.chapters].sort((a, b) => (a.number || 0) - (b.number || 0));
+        const prevDims = new Map();
+        const flat = [];
+        const flatByNumber = new Set();
+        for (const ch of sorted) {
+          const body = (ch.body || '').trim();
+          if (!body || T.countWords(body) < q.minBody) continue;
+          const setups = items.filter((i) => i.type === 'promise' && i.status !== 'cancelled' && i.setup?.chapter === ch.id);
+          const payoffs = items.filter((i) => i.type === 'promise' && i.payoff?.chapter === ch.id);
+          const reveals = secrets.filter((s) => s.revealed_at === ch.id || s.reveal_chapter === ch.id);
+          let stateMoves = 0;
+          for (const [ent, dims] of Object.entries(byChapter[ch.id] || {})) {
+            const before = prevDims.get(ent);
+            if (before && dimsChanged(before, dims)) stateMoves += 1;
+            prevDims.set(ent, dims);
+          }
+          if (setups.length || payoffs.length || reveals.length || stateMoves) continue;
+          flat.push({ ch, backToBack: flatByNumber.has((ch.number || 0) - 1) });
+          flatByNumber.add(ch.number || 0);
+        }
+        return flat.map(({ ch, backToBack }) => diag('chapter-no-change', {
+          chapter: ch.id,
+          severity: 'info',
+          confidence: 0.5,
+          evidence: { basis: ['伏笔表无 setup/payoff 指向本章', '状态矩阵本章无维度变化', '信息差账本本章无揭示'] },
+          message: `${ch.id} 在账本上是一个平章：没有任何登记在册的变化。${backToBack ? '上一章同样如此。' : ''}`,
+          suggestion: backToBack
+            ? '连着两章什么都没改变，读者就没有翻页的理由了：本章确实推进了什么就去补登记，否则把它并进前后章。'
+            : '若本章确实推进了剧情，去伏笔表／状态矩阵／信息差账本补一条；若它是过渡章，忽略即可。',
+        }));
+      },
+    },
+
+    'same-hook-streak': {
+      code: 'R25',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '连续几章用同一种结尾钩子（每章都是问句收尾，或每章都是突转收尾）。',
+      detail:
+        '只认两类判据确凿的钩子：结尾窗口内有问号 = 问句收尾，命中突转词表 = 突转收尾，其余不分类。' +
+        '同一类连续达到配额章数才报，一段只报一条，落在这段的首章上（这样 --from/--to 能筛到）。' +
+        '恒为 info：钩子写得好不好机器看不出来，这规则说的是「连着三章用同一个动作」。',
+      run(ctx) {
+        const q = Tension.quotaFor(ctx.book);
+        const sorted = [...ctx.chapters]
+          .filter((ch) => !isExempt(ch) && T.countWords((ch.body || '').trim()) >= q.minBody)
+          .sort((a, b) => (a.number || 0) - (b.number || 0));
+        const out = [];
+        let streak = [];
+        const flush = () => {
+          if (streak.length >= q.hookRun) {
+            const kind = streak[0].kind;
+            const first = streak[0].ch, last = streak[streak.length - 1].ch;
+            out.push(diag('same-hook-streak', {
+              chapter: first.id,
+              entity: kind,
+              severity: 'info',
+              confidence: 0.6,
+              evidence: {
+                basis: [`连续 ${streak.length} 章`, `第 ${first.number}–${last.number} 章`, `同类钩子：${Tension.HOOK_LABEL[kind]}`],
+                quote: Tension.tailOf(last.body).slice(-40),
+              },
+              message: `第 ${first.number}–${last.number} 章连续 ${streak.length} 章都是${Tension.HOOK_LABEL[kind]}。`,
+              suggestion: '换一种收尾：上一章留问句，这一章就把问题答在一个动作上。同质钩子的代价是读者学会忽略它。',
+            }));
+          }
+          streak = [];
+        };
+        for (const ch of sorted) {
+          const kind = Tension.hookKind(Tension.tailOf(ch.body));
+          if (kind && (!streak.length || streak[0].kind === kind)) streak.push({ ch, kind });
+          else { flush(); if (kind) streak.push({ ch, kind }); }
+        }
+        flush();
         return out;
       },
     },

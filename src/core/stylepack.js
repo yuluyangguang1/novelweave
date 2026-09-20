@@ -105,7 +105,7 @@
     return text.slice(from, to).replace(/\s+/g, ' ');
   }
 
-  /** 段落切分，带原文偏移 —— 证据要能定位回去，不然作者点不开。 */
+  /** 段落切分，带原文偏移 —— 证据要能定位回去，不然作者点不开。tension.js 共用这一份。 */
   function paragraphs(text) {
     const s = String(text || '');
     const out = [];
@@ -326,6 +326,6 @@
 
   return {
     PACK_VERSION, GROUPS, PATTERNS,
-    lint, verdict, promptBlock, optsFrom, activeGroups, groupMeta,
+    lint, verdict, promptBlock, optsFrom, activeGroups, groupMeta, paragraphs,
   };
 });

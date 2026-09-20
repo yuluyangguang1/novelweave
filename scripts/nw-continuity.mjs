@@ -23,7 +23,9 @@ const ALIAS = {
   R3b: 'promise-overdue', R4: 'payoff-before-setup', R6: 'timeline-regression',
   R7: 'appearance-token-violation',
   R9: 'unregistered-entity', R14: 'structure-invalid', R15: 'dangling-reference',
-  R16: 'derived-field-touched',
+  R16: 'derived-field-touched', R17: 'chapter-end-hook', R18: 'item-reappear',
+  R19: 'relation-contradiction', R20: 'premature-reveal', R21: 'unresolved-secret',
+  R22: 'ai-flavor', R23: 'dialogue-ratio', R24: 'chapter-no-change', R25: 'same-hook-streak',
 };
 
 function resolveRuleNames(list) {

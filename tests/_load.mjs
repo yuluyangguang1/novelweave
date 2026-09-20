@@ -18,6 +18,7 @@ export const NWText = (globalThis.NWText = require('../src/core/text.js'));
 export const NWBible = (globalThis.NWBible = require('../src/core/bible.js'));
 // 顺序有依赖：rules.js 的 UMD 工厂在加载时就要拿到 NWStylePack（R22 用它）
 export const NWStylePack = (globalThis.NWStylePack = require('../src/core/stylepack.js'));
+export const NWTension = (globalThis.NWTension = require('../src/core/tension.js'));
 export const NWRules = (globalThis.NWRules = require('../src/core/rules.js'));
 export const NWStory = (globalThis.NWStory = require('../src/core/story.js'));
 export const NWProject = (globalThis.NWProject = require('../src/core/project.js'));

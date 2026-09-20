@@ -566,3 +566,26 @@ test('只关掉一组：那一组从 prompt 里消失，别的组还在', () => 
   assert.ok(!prompt.includes('比喻引导词'), '关掉的组不该继续占预算');
   assert.ok(prompt.includes('心理直说'), '没关的组必须还在');
 });
+
+// ═══════════════ 节奏配额：写之前的那一半（正向张力 P2）═══════════════
+
+test('续写 prompt 带着节奏配额块，排在去 AI 味之前', () => {
+  const prompt = CONT();
+  assert.match(prompt, /节奏配额/);
+  assert.ok(prompt.indexOf('节奏配额') > prompt.indexOf('写作要求'), '配额要在写作要求之后');
+  assert.ok(prompt.indexOf('节奏配额') < prompt.indexOf('去 AI 味'), '去 AI 味那份清单要留在最末尾');
+});
+
+test('配额块里的伏笔数字是真从账本算出来的，不是写死的口号', () => {
+  // 夹具：p_seal 埋在 ch-002、期限也是 ch-002，全书写到第 3 章 → 未收 1 条、逾期 1 条、最久 1 章
+  assert.match(CONT(), /当前未收伏笔 1 条，其中 1 条已过你自设的回收期限，最久的一条已经 1 章/);
+  const empty = CONT({ promises: [] });
+  assert.ok(!empty.includes('未收伏笔'), '一条伏笔都没有还催偿旧，模型会去编一条');
+  assert.match(empty, /节奏配额/, '动态那行没了，配额本身还在');
+});
+
+test('短篇版式用的是短篇那一档门槛', () => {
+  const prompt = CONT({ novel: { id: 'novel_g', title: '问剑', genre: '仙侠', format: 'short' } });
+  assert.match(prompt, /对话占到 10% 以上，连续 600 字/);
+  assert.ok(!prompt.includes('连续 800 字'), '长篇的门槛串进了短篇');
+});

@@ -23,6 +23,7 @@ export const NWText = (globalThis.NWText = require(core('text.js')));
 export const NWBible = (globalThis.NWBible = require(core('bible.js')));
 // 顺序有依赖：rules.js 的工厂在加载时就取 NWStylePack（R22 用它），先立全局再 require rules
 export const NWStylePack = (globalThis.NWStylePack = require(core('stylepack.js')));
+export const NWTension = (globalThis.NWTension = require(core('tension.js')));
 export const NWRules = (globalThis.NWRules = require(core('rules.js')));
 export const NWStory = (globalThis.NWStory = require(core('story.js')));
 export const NWProject = (globalThis.NWProject = require(core('project.js')));

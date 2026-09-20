@@ -7,10 +7,10 @@
  * 写出来就崩」无法排查。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWStory, root.NWContext, root.NWStylePack);
+  const mod = factory(root.NWText, root.NWStory, root.NWContext, root.NWStylePack, root.NWTension);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NovelLLM = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (NWText, NWStory, NWContext, StylePack) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (NWText, NWStory, NWContext, StylePack, Tension) {
   'use strict';
 
   const NW_LLM_CONFIG_KEY = 'nw_llm_config';
@@ -82,6 +82,16 @@ const NW_LLM_PRESETS = {
   }
 
   /**
+   * 「该有而没有」的配额块，排在去 AI 味之前：那一串禁词清单要留在最末尾，
+   * 因为它是离生成点最近的一段约束（现有测试钉着这条）。
+   * 没有 ctx 就没有账本可查，这时整块不写 —— 编一句「你有伏笔没收」比不写更糟。
+   */
+  function tensionRules(ctx) {
+    if (!ctx || !Tension) return '';
+    return `\n\n${Tension.promptBlock(ctx.book, Tension.tally(ctx))}`;
+  }
+
+  /**
    * 续写上下文。拼装本身在 src/core/context.js —— 那是 Web 与 CLI 共用的唯一实现。
    * 之前这里自己拼了 5 节，比 CLI 少注入了「状态快照」与「未结线索」，
    * 于是作者录进状态矩阵和伏笔表的事实在浏览器里根本没进 prompt。
@@ -94,6 +104,7 @@ const NW_LLM_PRESETS = {
       chapterId: opts.chapterId, budget: opts.budget, style: opts.style, embedHits: opts.embedHits,
     });
     const rules = WRITING_RULES(opts.ctx?.book?.genre)
+      + tensionRules(opts.ctx)
       + antiAiRules(opts.ctx?.book)
       + (opts.extraInstructions ? `\n- ${opts.extraInstructions}` : '');
     return { prompt: NWContext.renderPrompt(built, rules), usage: built.usage, sections: built.sections };

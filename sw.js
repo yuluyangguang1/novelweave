@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v4'; // v4: 加 stylepack.js —— 旧 shell 缓存里没有它，离线打开会静默缺一条规则
+const VERSION = 'nw-v5'; // v5: 加 tension.js —— 与 v4 同一个道理，旧壳里没有它就静默少一组规则
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 
@@ -22,6 +22,7 @@ const PRECACHE = [
   'src/core/text.js',
   'src/core/bible.js',
   'src/core/stylepack.js',
+  'src/core/tension.js',
   'src/core/rules.js',
   'src/core/story.js',
   'src/core/context.js',
