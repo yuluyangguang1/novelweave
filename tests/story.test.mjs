@@ -156,3 +156,19 @@ test('旧库（v1 行，缺全部新字段）归一化后仍可跑', () => {
   assert.equal(ctx.characters[0].role, 'deuteragonist');
   assert.deepEqual(ctx.characters[0].appearance, { summary: '', tokens: [] });
 });
+
+test('buildCtx 必须把 rows.secrets 透传进 ctx，否则 R20/R21 在 Web 端全线静默', () => {
+  // 「决策不进上下文」就是断在这一行似的透传上：规则实现对了，数据没送到，检查器永远绿。
+  const r = {
+    ...rows,
+    chapters: rows.chapters.map((c, i) => ({ ...c, content: i === 0 ? '他怀里揣着那枚玄冰令。' + c.content : c.content })),
+    secrets: [{ id: 'sec_1', novel_id: 'novel_1', term: '玄冰令', truth: '', first_chapter: null,
+      reveal_chapter: 'ch_3', revealed_at: null, informed: [], enabled: true }],
+  };
+  const ctx = NWStory.buildCtx(r);
+  assert.equal(ctx.secrets.length, 1);
+  const hit = NWRules.runRules(ctx).filter((d) => d.rule === 'premature-reveal');
+  assert.equal(hit.length, 1, '第 1 章正文已点破，排期在第 3 章，该报');
+  assert.equal(hit[0].chapter, 'ch_1');
+  assert.deepEqual(NWStory.buildCtx(rows).secrets, [], '没登记时该是空数组，不是 undefined');
+});

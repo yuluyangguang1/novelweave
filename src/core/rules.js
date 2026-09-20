@@ -144,6 +144,25 @@
     return (chapter.flags || []).some((f) => EXEMPT_FLAGS.has(f));
   }
 
+  /**
+   * term 在正文里最早出现的位置（只认字面命中，跳过回忆类标记章）。
+   * @param fromN 只看第 fromN 章及之后；默认全书
+   * @returns null 表示从未出现
+   */
+  function firstAppearance(ctx, term, fromN = 0) {
+    if (!term) return null;
+    let best = null;
+    for (const ch of ctx.chapters) {
+      if (isExempt(ch)) continue;
+      if (!Number.isFinite(ch.number) || ch.number < fromN) continue;
+      const body = ch.body || '';
+      const at = occurrences(body, term)[0];
+      if (at == null) continue;
+      if (best == null || ch.number < best.n) best = { chapter: ch.id, n: ch.number, quote: quoteAt(body, at, term.length).quote };
+    }
+    return best;
+  }
+
   function diag(rule, hit) {
     const chapter = hit.chapter || null;
     const entity = hit.entity || null;
@@ -809,6 +828,90 @@
     },
   },
 
+    'premature-reveal': {
+      code: 'R20',
+      defaultSeverity: 'error',
+      scope: 'chapter',
+      summary: '信息差账本里登记的秘密，在计划揭示章之前就被正文点破了。',
+      detail:
+        '逐条检查启用的登记：以 revealed_at（已回填的实际揭示章）优先、否则 reveal_chapter（排期章）' +
+        '为揭示基线，在基线之前的章节正文里字面检索 term，命中即 error。' +
+        '误报控制三道：①flashback/dream/quoted/offscreen 标记章整章豁免（与 R1 同一套标记）；' +
+        '②作者登记过 first_chapter（允许开始铺垫的章）且命中章不早于它 → 降为 info；' +
+        '③既无排期也没回填时不猜剧透，只报 warn 催登记。引用了不存在的章 id 直接跳过，那是 R15 的活。',
+      run(ctx) {
+        const out = [];
+        for (const s of ctx.secrets || []) {
+          if (s.enabled === false) continue;
+          const term = String(s.term || '').trim();
+          if (!term) continue;
+          const planId = s.revealed_at || s.reveal_chapter;
+          const planN = planId ? ctx.chapterNumbers.get(planId) : null;
+          if (planId && planN == null) continue;
+          const first = firstAppearance(ctx, term);
+          if (!first) continue;
+          if (planN == null) {
+            out.push(diag('premature-reveal', {
+              chapter: first.chapter,
+              entity: s.id,
+              severity: 'warn',
+              evidence: { quote: first.quote, basis: [`term「${term}」首现于第 ${first.n} 章`, '这条登记没有揭示章'] },
+              message: `信息差「${term}」已在第 ${first.n} 章出现，但这条登记没写揭示排期。`,
+              suggestion: '补 reveal_chapter（计划）或 revealed_at（已揭示的实际章节），否则无从判断是否提前。',
+            }));
+            continue;
+          }
+          if (first.n >= planN) continue;
+          const sanctioned = s.first_chapter ? ctx.chapterNumbers.get(s.first_chapter) : null;
+          const allowed = sanctioned != null && first.n >= sanctioned;
+          const basis = [`term「${term}」首现于第 ${first.n} 章`, `揭示基线 ${planId}（第 ${planN} 章）`];
+          if (sanctioned != null) basis.push(`first_chapter 第 ${sanctioned} 章`);
+          out.push(diag('premature-reveal', {
+            chapter: first.chapter,
+            entity: s.id,
+            severity: allowed ? 'info' : 'error',
+            evidence: { quote: first.quote, basis },
+            message: `信息差「${term}」在第 ${first.n} 章就被点破，揭示排期在第 ${planN} 章。`,
+            suggestion: allowed
+              ? '与登记的铺垫起点一致：确认这是有意的，或把揭示章改到实际点破的这一章。'
+              : '把这段改成不点破的写法，或把揭示排期提前；确属有意铺垫就登记 first_chapter。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'unresolved-secret': {
+      code: 'R21',
+      defaultSeverity: 'warn',
+      scope: 'book',
+      summary: '排了期的揭示章已经过去，这条信息在正文里从未出现。',
+      detail:
+        '启用的登记设了 reveal_chapter、没回填 revealed_at，最新章号已超过排期章，而 term 在全部' +
+        '正文里一次都没出现过 → warn。漏写揭示、或揭示时换了别的说法（登记的 term 与正文用词不符）' +
+        '都会命中，具体是哪种由作者判断。正文里出现过就不报 —— 那属于 R20 的范围。',
+      run(ctx) {
+        const out = [];
+        const last = ctx.chapters.reduce((m, c) => Math.max(m, c.number || 0), 0);
+        for (const s of ctx.secrets || []) {
+          if (s.enabled === false) continue;
+          const term = String(s.term || '').trim();
+          if (!term || !s.reveal_chapter || s.revealed_at) continue;
+          const n = ctx.chapterNumbers.get(s.reveal_chapter);
+          if (n == null || last <= n) continue;
+          if (firstAppearance(ctx, term)) continue;
+          out.push(diag('unresolved-secret', {
+            entity: s.id,
+            severity: 'warn',
+            evidence: { basis: [`排期 ${s.reveal_chapter}（第 ${n} 章）`, `已写到第 ${last} 章`, `「${term}」在正文里从未出现`] },
+            message: `信息差「${term}」排在第 ${n} 章揭示，但到第 ${last} 章正文里从没出现过，revealed_at 也仍为空。`,
+            suggestion: '补写揭示并回填 revealed_at；若已经用别的说法揭过，把 term 改成读者实际看到的那个词。',
+          }));
+        }
+        return out;
+      },
+    },
+
   };
 
 
@@ -853,6 +956,7 @@
     c.states = c.states || { byChapter: {} };
     c.timeline = c.timeline || { anchors: [], backstory: [] };
     c.lexicon = c.lexicon || { names: {} };
+    c.secrets = c.secrets || [];
     c.chapterNumbers = chapterNumberMap(c);
     return c;
   }

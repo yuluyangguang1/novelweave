@@ -278,3 +278,117 @@ test('干净的书不该产出任何 error（否则检查器会被作者关掉�
   const diags = NWRules.runRules(c);
   assert.deepEqual(diags.filter((d) => d.severity === 'error' || d.severity === 'warn'), [], JSON.stringify(diags, null, 2));
 });
+
+// ═══════════════ R20 提前点破 / R21 排期未揭 ═══════════════
+// 数据来自信息差账本（secrets 表）。账本没登记时两条规则全线静默 ——
+// 机器无法凭空知道哪句话算剧透。
+
+const secret = (over = {}) => ({
+  id: 'sec_1', term: '玄冰令', truth: '玄冰令是掌门害死林父的信物',
+  first_chapter: null, reveal_chapter: 'ch-005', revealed_at: null,
+  informed: [], enabled: true, ...over,
+});
+const six = (bodies = {}) => [1, 2, 3, 4, 5, 6].map((n) => ch(n, { body: bodies[n] || `第${n}章正文。` }));
+
+test('R20：登记的秘密在揭示章之前就出现 → error，定位到点破的那一章', () => {
+  const c = ctx({ chapters: six({ 3: '他认得这枚玄冰令，指尖一抖。' }), secrets: [secret()] });
+  const d = of(NWRules.runRules(c), 'premature-reveal');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'error');
+  assert.equal(d[0].chapter, 'ch-003');
+  assert.equal(d[0].entity, 'sec_1');
+  assert.ok(d[0].evidence.quote.includes('玄冰令'));
+  assert.ok(d[0].fingerprint.includes('ch-003'));
+});
+
+test('R20：按计划揭示 → 不报', () => {
+  const c = ctx({ chapters: six({ 5: '她把玄冰令的来历说了出来。' }), secrets: [secret()] });
+  assert.deepEqual(of(NWRules.runRules(c), 'premature-reveal'), []);
+});
+
+test('R20：账本为空或正文没出现该 term → 不报（没登记就没有这条）', () => {
+  assert.deepEqual(of(NWRules.runRules(ctx({ chapters: six() })), 'premature-reveal'), []);
+  assert.deepEqual(of(NWRules.runRules(ctx({ chapters: six(), secrets: [secret()] })), 'premature-reveal'), []);
+});
+
+test('R20：enabled:false 的登记不参与检查', () => {
+  const c = ctx({ chapters: six({ 3: '这枚玄冰令他见过。' }), secrets: [secret({ enabled: false })] });
+  assert.deepEqual(of(NWRules.runRules(c), 'premature-reveal'), []);
+});
+
+test('R20：登记了 first_chapter（铺垫起点）→ 降为 info 而不是 error', () => {
+  const c = ctx({ chapters: six({ 3: '这枚玄冰令他见过。' }), secrets: [secret({ first_chapter: 'ch-002' })] });
+  const d = of(NWRules.runRules(c), 'premature-reveal');
+  assert.equal(d[0].severity, 'info');
+  // 命中章早于铺垫起点时仍然是 error
+  const earlier = of(NWRules.runRules(ctx({
+    chapters: six({ 1: '袖中露出一角玄冰令。' }), secrets: [secret({ first_chapter: 'ch-002' })],
+  })), 'premature-reveal');
+  assert.equal(earlier[0].severity, 'error');
+});
+
+test('R20：flashback / dream / quoted 章的命中豁免，与 R1 同一套标记', () => {
+  const c = ctx({
+    chapters: [1, 2, 3, 4, 5, 6].map((n) => ch(n, {
+      body: n === 3 ? '当年，师父把玄冰令交给了他。' : `第${n}章正文。`,
+      flags: n === 3 ? ['flashback'] : [],
+    })),
+    secrets: [secret()],
+  });
+  assert.deepEqual(of(NWRules.runRules(c), 'premature-reveal'), []);
+});
+
+test('R20：基线取 revealed_at（已回填的实际揭示章）', () => {
+  const c = ctx({
+    chapters: six({ 2: '玄冰令的事他早有耳闻。', 4: '她把玄冰令的来历说了出来。' }),
+    secrets: [secret({ revealed_at: 'ch-004' })],
+  });
+  const d = of(NWRules.runRules(c), 'premature-reveal');
+  assert.equal(d[0].chapter, 'ch-002');
+  assert.ok(d[0].evidence.basis.join().includes('revealed') || d[0].evidence.basis.join().includes('ch-004'));
+});
+
+test('R20：既无排期也无回填、但正文已出现 → warn 催登记，不断言剧透', () => {
+  const c = ctx({ chapters: six({ 2: '玄冰令就在他怀里。' }), secrets: [secret({ reveal_chapter: null })] });
+  const d = of(NWRules.runRules(c), 'premature-reveal');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'warn');
+  assert.ok(d[0].suggestion.includes('reveal_chapter'));
+});
+
+test('R20：揭示章 id 指向不存在的章 → 跳过（错引由 R15 负责，不重复报）', () => {
+  const c = ctx({ chapters: six({ 3: '玄冰令就在桌上。' }), secrets: [secret({ reveal_chapter: 'ch-999' })] });
+  assert.deepEqual(of(NWRules.runRules(c), 'premature-reveal'), []);
+});
+
+test('R21：排期已过、正文从未出现 → warn', () => {
+  const c = ctx({ chapters: six(), secrets: [secret({ reveal_chapter: 'ch-002' })] });
+  const d = of(NWRules.runRules(c), 'unresolved-secret');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'warn');
+  assert.equal(d[0].entity, 'sec_1');
+  assert.equal(d[0].chapter, null, '书级诊断不该定位到某一章');
+  assert.equal(d[0].fingerprint, 'unresolved-secret:-:sec_1');
+});
+
+test('R21：尚未到期、已回填、正文已出现 → 三种情况都不报', () => {
+  const sixBodies = six();
+  const notDue = ctx({ chapters: sixBodies, secrets: [secret({ reveal_chapter: 'ch-006' })] });
+  assert.deepEqual(of(NWRules.runRules(notDue), 'unresolved-secret'), []);
+  const backfilled = ctx({
+    chapters: six({ 2: '她把玄冰令的来历说了出来。' }),
+    secrets: [secret({ reveal_chapter: 'ch-002', revealed_at: 'ch-002' })],
+  });
+  assert.deepEqual(of(NWRules.runRules(backfilled), 'unresolved-secret'), []);
+  // 排期章之后才出现：账本没回填，但信息确实揭了 —— 归 R20/作者补记，不该由 R21 喊"从未出现"
+  const appeared = ctx({
+    chapters: six({ 4: '她把玄冰令的来历说了出来。' }),
+    secrets: [secret({ reveal_chapter: 'ch-002' })],
+  });
+  assert.deepEqual(of(NWRules.runRules(appeared), 'unresolved-secret'), []);
+});
+
+test('R21：enabled:false 与缺 term 的行不参与检查', () => {
+  const c = ctx({ chapters: six(), secrets: [secret({ reveal_chapter: 'ch-002', enabled: false }), secret({ id: 'sec_2', term: '  ', reveal_chapter: 'ch-002' })] });
+  assert.deepEqual(of(NWRules.runRules(c), 'unresolved-secret'), []);
+});

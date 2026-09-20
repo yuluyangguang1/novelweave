@@ -1864,14 +1864,15 @@ async function showStateEditor(chapterId, entityId) {
 /** 读全库装配 ctx。与 CLI 唯一的差别是不跑 schema 校验（浏览器里没有那份 JSON）。 */
 async function loadStoryCtx() {
   const novelId = APP.novel.id;
-  const [novel, chapters, characters, world, promises, timeline, suppressions, states, relations, decisions] = await Promise.all([
+  const [novel, chapters, characters, world, promises, timeline, suppressions, states, relations, decisions, secrets] = await Promise.all([
     NovelDB.novels.get(novelId), NovelDB.chapters.list(novelId), NovelDB.characters.list(novelId),
     NovelDB.worldbuilding.list(novelId), NovelDB.promises.list(novelId),
     NovelDB.timeline.list(novelId), NovelDB.suppressions.list(novelId), NovelDB.states.list(novelId),
-    NovelDB.relations.list(novelId), NovelDB.decisions.list(novelId),
+    NovelDB.relations.list(novelId), NovelDB.decisions.list(novelId), NovelDB.secrets.list(novelId),
   ]);
   APP.chaptersCache = chapters;
-  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states, relations: { edges: relations }, decisions });
+  return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states,
+    relations: { edges: relations }, decisions, secrets });
 }
 
 async function showContinuity(host) {
