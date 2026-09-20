@@ -309,3 +309,52 @@ test('Web 写的多行摘要，CLI 读得懂、上下文也带得动（一条链
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+/**
+ * 关系边与决策的三方比较。这一整块此前是不可达的：planMerge 一遇到非空的
+ * relations.json 就抛「未知投影类型 relation」，而它跑在派发器里，于是点导入什么都不发生。
+ */
+async function mergedFixture() {
+  const edges = [{ id: 'rel_1', from: 'char_ming', to: 'char_lin', kind: '师徒', address: '师父', created_at: 1700000000000 }];
+  const decisions = [{ id: 'dec_1', title: '不让主角换城', reason: '保持主线紧凑', risk: '', supersededBy: null, created_at: 1700000000000 }];
+  const ctx = NWStory.buildCtx({ ...rowsFixture(), relations: { edges }, decisions });
+  const tree = await NWProject.buildProjectTree(ctx);
+  // local 就是 Web 导入时交给比较器的那份「库里的现在值」，键名与 app.js 一致
+  const local = {
+    ...rowsFixture(), worldbuilding: rowsFixture().world, relations: edges.map((e) => ({ ...e })), decisions,
+  };
+  return { parsed: NWProject.parseFileMap(tree), local };
+}
+
+test('导出的关系边与决策能被比较器吃下：未改动的一条也不判 new', async () => {
+  const { parsed, local } = await mergedFixture();
+  // parseFileMap 的契约是「交出去的就是库行」：时间戳必须是毫秒，不能留 ISO
+  assert.equal(typeof parsed.decisions[0].created_at, 'number', '决策落回库行时丢了 created_at');
+  assert.equal(parsed.decisions[0].created, undefined, 'ISO 字段不该混进库行');
+  assert.equal(parsed.relations[0].id, 'rel_1');
+
+  const acts = (await NWProject.planMerge(parsed, local))
+    .filter((p) => ['relation', 'decision'].includes(p.kind))
+    .map((p) => `${p.kind}:${p.action}`);
+  assert.deepEqual(acts.sort(), ['decision:same', 'relation:same'],
+    '判成 new 就意味着导入会用文件版静默盖掉本地记录');
+});
+
+test('关系边只有一边动过取那一边，两边都动过算冲突', async () => {
+  const { parsed, local } = await mergedFixture();
+  const of = (plan, kind) => plan.find((p) => p.kind === kind).action;
+
+  // 只有文件被改（agent 在目录里编辑过）→ 取文件版
+  const fileOnly = structuredClone(parsed);
+  fileOnly.relations[0].kind = '父子';
+  assert.equal(of(await NWProject.planMerge(fileOnly, local), 'relation'), 'take-file');
+
+  // 只有本地被改 → 取本地版，不许被覆盖
+  const localChanged = { ...local, relations: [{ ...local.relations[0], kind: '叔侄' }] };
+  assert.equal(of(await NWProject.planMerge(parsed, localChanged), 'relation'), 'take-local');
+
+  // 两边都改 → 谁都不许被静默盖掉
+  const both = structuredClone(parsed);
+  both.relations[0].kind = '父子';
+  assert.equal(of(await NWProject.planMerge(both, localChanged), 'relation'), 'conflict');
+});

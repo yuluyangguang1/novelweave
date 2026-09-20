@@ -2508,38 +2508,9 @@ async function exportNovelweave() {
 }
 
 /**
- * 逐条比较：file = 目录里的现在值，local = 库里的现在值，base = 上次导出时 sync.json 记的值。
- * 库里没有这条 → new；只有一边动过 → 取那一边；两边都动过 → conflict，绝不自动选边。
+ * 逐条比较的逻辑在 NWProject.planMerge（数据层，可测）。
+ * 这里只负责取库里的现在值 —— 少取一张表就等于把那张表全判成 new。
  */
-async function buildMergePlan(parsed, currentRows) {
-  const base = parsed.sync?.records || {};
-  const plan = [];
-  const buckets = [
-    ['chapters', 'chapter', parsed.chapters, currentRows.chapters],
-    ['characters', 'character', parsed.characters, currentRows.characters],
-    ['worldbuilding', 'world', parsed.world, currentRows.worldbuilding],
-    ['promises', 'promise', parsed.promises, currentRows.promises],
-    ['timeline', 'anchor', parsed.timeline, currentRows.timeline],
-    ['states', 'state', parsed.states || [], currentRows.states || []],
-    ['relations', 'relation', parsed.relations?.edges || [], currentRows.relations || []],
-  ];
-  for (const [store, kind, fileRows, localRows] of buckets) {
-    const localById = new Map(localRows.map((r) => [r.id, r]));
-    for (const fr of fileRows) {
-      const lr = localById.get(fr.id);
-      const tag = NWProject.tagFor(kind, fr.id);
-      const fileHash = await NWProject.hashRecord(kind, fr);
-      if (!lr) { plan.push({ tag, kind, store, id: fr.id, action: 'new', fileRow: fr, localRow: null }); continue; }
-      const localHash = await NWProject.hashRecord(kind, lr);
-      plan.push({
-        tag, kind, store, id: fr.id,
-        action: NWProject.classify(base[tag]?.hash ?? null, fileHash, localHash),
-        fileRow: fr, localRow: lr,
-      });
-    }
-  }
-  return plan;
-}
 
 async function importNovelweave() {
   let files;
@@ -2575,8 +2546,12 @@ async function importNovelweave() {
     promises: await NovelDB.promises.list(novel.id),
     timeline: await NovelDB.timeline.list(novel.id),
     states: await NovelDB.states.list(novel.id),
+    // 少了这两行，关系边与决策在比较器眼里就是「库里没有」→ 每条都判 new，
+    // 本地改过的直接被文件版盖掉。planMerge 的 buckets 列了它们，取的却没人给。
+    relations: await NovelDB.relations.list(novel.id),
+    decisions: await NovelDB.decisions.list(novel.id),
   };
-  const plan = await buildMergePlan(parsed, current);
+  const plan = await NWProject.planMerge(parsed, current);
   const conflicts = plan.filter((p) => p.action === 'conflict');
   const apply = plan.filter((p) => ['new', 'take-file'].includes(p.action));
 

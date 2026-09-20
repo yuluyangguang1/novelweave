@@ -78,6 +78,25 @@
     };
   }
 
+  function fromDecision(d) {
+    return {
+      id: d.id, title: d.title || '', reason: d.reason || '', risk: d.risk || '',
+      supersededBy: d.supersededBy ?? null,
+      created_at: T.fromISO(d.created), updated_at: null,
+    };
+  }
+
+  /** 关系边：relations.json 一直是把库行原样写出去的（没有 ISO 化），
+   *  所以两种口径都得能吃 —— 老文件里是毫秒 created_at，新写的可能带 ISO created。 */
+  function fromRelation(e) {
+    return {
+      id: e.id, from: e.from, to: e.to, kind: e.kind || '',
+      address: e.address || '', since: e.since ?? null, until: e.until ?? null,
+      notes: e.notes || '',
+      created_at: T.fromISO(e.created) ?? e.created_at ?? null, updated_at: e.updated_at ?? null,
+    };
+  }
+
   function toWorld(w) {
     const keys = (w.keys && w.keys.length ? w.keys : [w.name]).filter(Boolean);
     const type = w.type || 'custom';
@@ -318,5 +337,6 @@
   }
 
   return { LORE_BUDGET: DEFAULT_BUDGET, toCharacter, fromCharacter, toWorld, fromWorld, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
+    fromDecision, fromRelation,
     toTimeline, toSuppressions, statesFromRows, stateRowsFromFile, dimsOf, toLines, buildCtx, zhRole };
 });

@@ -415,6 +415,32 @@ README 只写已经能用的一切；这个文件写还没做的。
   每个 `s-*`/`ws-*` 表单控件必须有读取者(`providerFormFrom` 拼出来的 id 会展开核对)。
   拿 HEAD 版 app.js 反验过:两条分别报出 8 处与 6 处,不是摆设。
 
+## G. 导入侧的决策与关系边(已落地 —— 顺手挖出一个更严重的崩)
+
+原待办写的是「关系边永远判 `new` 盖掉本地」。核对代码后真相更糟:
+
+- `authorProjection` 根本没有 `relation`/`decision` 两个分支,所以比较器一碰到
+  非空的 `relations.json` 就抛 `未知投影类型 relation`(`node -e` 探过,改前三者全抛)。
+  这句 `await buildMergePlan(...)` 没有在 `importNovelweave` 的 try 里,而它在
+  `ACTIONS` 派发器里是条没人接的 promise —— **于是「导入 .novelweave/」对任何
+  登记过关系的书都是点下去毫无反应**,不是覆盖错数据,是压根没跑完。
+- `current` 只组装了 6 个 store,`relations`/`decisions` 恒空:即便不抛,也是整表判 `new`。
+- 两条 bucket 与取数分散在 app.js 与 project.js 两处、且 app.js 无法在 Node 里执行,
+  所以 195 项测试全绿也照不出来。
+
+修法(全部落在可测的一层):
+
+- 比较器搬进 `NWProject.planMerge`,投影补齐 `relation`/`decision`,且**不含时间戳与
+  `novel_id`** —— 库里毫秒、文件里 ISO,带上就是给每条记录造假冲突。
+- 导出侧逐条写 `meta/sync.json` 基线(此前 relations/decisions 只有整份文件、没有逐条哈希,
+  三方比较无 base 可用)。
+- `parseFileMap` 按它自己注释的契约交还**库行**(新增 `NWStory.fromRelation`/`fromDecision`),
+  此前是把文件记录原样递出去,落库后 `created_at` 为空、排序与「最近编辑」全失序。
+- **新守卫**:planMerge 引用的每个 `currentRows.X` 必须出现在 app.js 的 `current` 里
+  (删掉那两行即反验报红,报出 `decisions、relations`)。
+- 测试:`tests/export-bridge.test.mjs` 两条(未改动不判 new / 单边改动取那一边、双边算冲突)。
+  `current` 取数那一侧只有静态守卫覆盖,浏览器里的端到端未跑过。
+
 ## 待办清单(2026-09-19 汇总 —— 合并两份桌面规划文档)
 
 来源是 `织文升级路线图.md`(2026-09-02 代码审计版)与 `织文前端排版评审.md`
@@ -444,15 +470,6 @@ README 只写已经能用的一切；这个文件写还没做的。
 
 - **P1-2 工作流 / 模板分享**:`.novelweave/workflows/*.json` 的导出导入未做
   (`schemas/` 下仍只有 `story-bible.v1.json`)。
-- **导入侧没把决策与关系读回库**:两条都在「导出写了、导入不接」这条链上。
-  决策:`parseFileMap` 产出 `parsed.decisions`,但 `app.js` 里没有任何消费者
-  (`grep parsed.decisions` 零命中,`buildMergePlan` 的 bucket 也没有它),换浏览器
-  或重建库后决策整批丢失;它无逐条合并意义,按「文件版直接覆盖」补即可。
-  关系边:bucket 有(`app.js:2433`),但 `importNovelweave` 组装的 `current`
-  只查了 6 个 store、不含 relations(`app.js:2481-2487`),于是 localRows 恒空,
-  文件侧永远判成 `new` 直接盖掉本地 —— 上面 D 节写的「关系边走逐条三方合并、
-  冲突不自动选边」目前拿不到本地值.验证:导出一本书 → 只在库里改关系边/决策 →
-  再导入同一目录,看本地改动是否被无声覆盖.
 - **冲突解决界面**:导入时冲突仍只能落到 `conflicts/` 由作者在文件或 git 里手工处理
   (`app.js` 的 conflict 分支只写盘 + 下载,无解决 UI)。
 - **P2-3 协作与云同步**(远期,用户自带存储形态)。

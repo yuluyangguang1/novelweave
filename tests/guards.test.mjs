@@ -238,3 +238,22 @@ test('设置页的每个表单控件都有人读 —— 填了没人接等于没
   const orphan = [...ids].filter((id) => !readIds.has(id)).sort();
   assert.deepEqual(orphan, [], `这些输入框的值从来没被读过：${orphan.join('、')}`);
 });
+
+/**
+ * planMerge 少要一张表不会报错，只会把那张表的每条记录都判成 new，
+ * 于是导入时用文件版静默盖掉本地改动 —— 关系边与决策就是这么丢过的。
+ * 比较器在 core、取数在 app.js，两边只靠一份键名对齐，所以拿静态核对钉住。
+ */
+test('导入比较要的每张表，app.js 都必须真的取出来', () => {
+  const project = read('src/core/project.js');
+  const body = project.match(/async function planMerge[\s\S]*?\n  \}/)?.[0];
+  assert.ok(body, 'project.js 里找不到 planMerge');
+  const needed = [...new Set([...body.matchAll(/currentRows\.(\w+)/g)].map((m) => m[1]))].sort();
+  assert.ok(needed.length >= 8, `planMerge 的表名单看着不完整：${needed.join('、')}`);
+
+  const app = read('src/app.js');
+  const given = app.match(/const current = \{([\s\S]*?)\n  \};/)?.[1] || '';
+  const keys = new Set([...given.matchAll(/^\s*(\w+):/gm)].map((m) => m[1]));
+  const missing = needed.filter((k) => !keys.has(k));
+  assert.deepEqual(missing, [], `导入时这些表没有取本地值，会被整表判成 new：${missing.join('、')}`);
+});

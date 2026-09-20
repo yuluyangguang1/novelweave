@@ -107,6 +107,11 @@
       syncRecords[tagFor('state', row.id)] = { hash: await hashRecord('state', row), source: 'web' };
     }
     files[p('bible/relations.json')] = JSON.stringify(ctx.relations || { schemaVersion: Bible.SCHEMA_VERSION, edges: [] }, null, 2) + '\n';
+    // 关系边逐条记基线：整份文件只有一个哈希的话，改一条边就等于全书关系都变了，
+    // 三方比较失去意义。
+    for (const e of (ctx.relations?.edges || [])) {
+      syncRecords[tagFor('relation', e.id)] = { hash: await hashRecord('relation', e), source: 'web' };
+    }
 
     // 创作决策记录:决策本来就该进 git —— 推翻留痕也要导出
     // created 与 book/chapter 同一口径：库里存 created_at 毫秒，文件里是 ISO
@@ -115,6 +120,9 @@
       created: d.created || T.toISO(d.created_at),
     }));
     files[p('continuity/decisions.json')] = JSON.stringify({ schemaVersion: Bible.SCHEMA_VERSION, items: decisions }, null, 2) + '\n';
+    for (const d of decisions) {
+      syncRecords[tagFor('decision', d.id)] = { hash: await hashRecord('decision', d), source: 'web' };
+    }
 
     const tl = ctx.timeline || Bible.emptyTimeline();
     const cleanAnchor = (a) => pick(a, ['id', 'chapter', 'label', 'at', 'thread', 'kind', 'entities', 'confidence', 'evidence']);
@@ -211,6 +219,23 @@
       case 'state': {
         return { id: row.id, chapter: row.chapter ?? null, entity: row.entity ?? null, dims: Story.dimsOf(row) };
       }
+      // 关系边与决策此前没有投影：planMerge 一遇到非空的 relations.json 就抛
+      // 「未知投影类型 relation」，导入直接在派发器里静默死掉。
+      // 投影一律不含时间戳与 novel_id —— 库里是 created_at 毫秒、文件里是 ISO，
+      // 带上就会给每条记录造出假冲突。
+      case 'relation': {
+        return {
+          id: row.id, from: row.from ?? null, to: row.to ?? null, kind: row.kind ?? '',
+          address: row.address || '', since: row.since ?? null, until: row.until ?? null,
+          notes: row.notes || '',
+        };
+      }
+      case 'decision': {
+        return {
+          id: row.id, title: row.title || '', reason: row.reason || '', risk: row.risk || '',
+          supersededBy: row.supersededBy ?? null,
+        };
+      }
       default: throw new Error(`未知投影类型 ${kind}`);
     }
   }
@@ -266,8 +291,10 @@
       states: Story.stateRowsFromFile(json(files, `${slug}/bible/states.json`), novelId),
       timeline: (json(files, `${slug}/bible/timeline.json`)?.anchors || []).map((rec) => Story.fromAnchor(rec)),
       suppressions: json(files, `${slug}/continuity/suppressions.json`)?.items || [],
-      relations: json(files, `${slug}/bible/relations.json`) || { schemaVersion: Bible.SCHEMA_VERSION, edges: [] },
-      decisions: json(files, `${slug}/continuity/decisions.json`)?.items || [],
+      // 这两张表以前是「原样把文件记录递出去」，调用方拿到的是文件形制（ISO created）
+      // 而不是库行，落库后 stableSort 与「最近编辑」全部失序 —— 现在统一走 from*
+      relations: (json(files, `${slug}/bible/relations.json`)?.edges || []).map((e) => Story.fromRelation(e)),
+      decisions: (json(files, `${slug}/continuity/decisions.json`)?.items || []).map((d) => Story.fromDecision(d)),
       sync: json(files, `${slug}/meta/sync.json`),
     };
   }
@@ -285,6 +312,45 @@
     return 'conflict';
   }
 
-  return { buildFileMap, buildProjectTree, parseFileMap, classify, hashOf, hashRecord,
+  /**
+   * 逐条比较，产出导入计划：file = 目录里的现在值，local = 库里的现在值，
+   * base = 上次导出时 sync.json 记的值。库里没有这条 → new；只有一边动过 → 取那一边；
+   * 两边都动过 → conflict，绝不自动选边。
+   *
+   * currentRows 必须给全 buckets 里每一张表。少给一张不等于「那张没有变化」，
+   * 而是等于「库里全空」→ 每一条都被判成 new，本地改过的记录会被文件版静默盖掉。
+   */
+  async function planMerge(parsed, currentRows = {}) {
+    const base = parsed.sync?.records || {};
+    const plan = [];
+    const buckets = [
+      ['chapters', 'chapter', parsed.chapters, currentRows.chapters],
+      ['characters', 'character', parsed.characters, currentRows.characters],
+      ['worldbuilding', 'world', parsed.world, currentRows.worldbuilding],
+      ['promises', 'promise', parsed.promises, currentRows.promises],
+      ['timeline', 'anchor', parsed.timeline, currentRows.timeline],
+      ['states', 'state', parsed.states || [], currentRows.states || []],
+      ['relations', 'relation', parsed.relations || [], currentRows.relations || []],
+      ['decisions', 'decision', parsed.decisions || [], currentRows.decisions || []],
+    ];
+    for (const [store, kind, fileRows, localRows] of buckets) {
+      const localById = new Map((localRows || []).map((r) => [r.id, r]));
+      for (const fr of fileRows || []) {
+        const lr = localById.get(fr.id);
+        const tag = tagFor(kind, fr.id);
+        const fileHash = await hashRecord(kind, fr);
+        if (!lr) { plan.push({ tag, kind, store, id: fr.id, action: 'new', fileRow: fr, localRow: null }); continue; }
+        const localHash = await hashRecord(kind, lr);
+        plan.push({
+          tag, kind, store, id: fr.id,
+          action: classify(base[tag]?.hash ?? null, fileHash, localHash),
+          fileRow: fr, localRow: lr,
+        });
+      }
+    }
+    return plan;
+  }
+
+  return { buildFileMap, buildProjectTree, parseFileMap, classify, planMerge, hashOf, hashRecord,
     authorProjection, KIND_OF_STORE, tagFor, chapterFrontmatter };
 });
