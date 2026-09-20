@@ -12,7 +12,7 @@
  */
 
 const DB_NAME = 'novelweave_db';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 let _dbPromise = null;
 
@@ -63,6 +63,14 @@ function openDB() {
         const s = db.createObjectStore('revisions', { keyPath: 'id' });
         s.createIndex('novel_id', 'novel_id', { unique: false });
         s.createIndex('chapter_id', 'chapter_id', { unique: false });
+      }
+      // v6：信息差账本。一行 = 一条「谁知道什么、读者何时被告知」的登记。
+      // promises 管情节要不要回收，states 管世界是什么样，这一维此前没人管：
+      // 提前剧透与该揭不揭都没有可判定的依据。
+      if (!db.objectStoreNames.contains('secrets')) {
+        const s = db.createObjectStore('secrets', { keyPath: 'id' });
+        s.createIndex('novel_id', 'novel_id', { unique: false });
+        s.createIndex('reveal_chapter', 'reveal_chapter', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -200,7 +208,7 @@ async function updateNovel(id, updates) {
 }
 
 /** 删书必须一起清掉的从属表；漏一个就会留下再也查不到的孤儿数据。 */
-const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions', 'decisions', 'usage', 'relations'];
+const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions', 'decisions', 'usage', 'relations', 'secrets'];
 
 async function deleteNovel(id) {
   for (const store of CASCADE_STORES) {
@@ -512,8 +520,9 @@ window.NovelDB = {
   /**
    * 按原样写入一行。导入 .novelweave/ 专用：必须尊重文件里的 id 与时间戳，
    * 而各 create()/save() 会重新生成主键或补默认值，不能用于导入。
+   * 表名校验的失败统一走 rejection（标了 async），别让调用方还得同时防同步抛出。
    */
-  putRow: (store, row) => {
+  putRow: async (store, row) => {
     // 复用 CASCADE_STORES 作为「全部从属表」的唯一清单，避免两处名单各说各话
     if (!['novels', ...CASCADE_STORES].includes(store)) {
       throw new Error(`未知 store：${store}`);
@@ -545,6 +554,7 @@ window.NovelDB = {
     clearChapter: clearChapterRevisions, keep: REVISION_KEEP,
   },
   usage:        { list: listUsage, record: recordUsage },
+  secrets:      { list: listSecrets, get: (id) => get('secrets', id), save: saveSecret, update: updateSecret, delete: deleteSecret },
 };
 
 
@@ -622,3 +632,43 @@ async function listUsage(novelId, limit = USAGE_KEEP) {
   const rows = await getByIndex('usage', 'novel_id', novelId);
   return rows.sort((a, b) => b.at - a.at).slice(0, limit);
 }
+
+// ═══════════ 信息差账本（secrets） ═══════════
+
+async function listSecrets(novelId) {
+  return stableSort(await getByIndex('secrets', 'novel_id', novelId));
+}
+
+/**
+ * term 是 R20 拿去正文里比对的字符串，也是这本书内这条登记的唯一称呼，
+ * 所以同书不许重名：两条同名让规则无法判断该信哪条，也比事后合并便宜。
+ * 主键仍走 newId —— 按 term 派生主键看着好，slug 撞车就成了静默覆盖（纪律 2）。
+ */
+async function saveSecret(novelId, data) {
+  const term = String(data.term || '').trim();
+  if (!term) throw new Error('信息差登记缺少 term（这条信息的名称）');
+  const id = data.id || newId('sec');
+  const dup = (await listSecrets(novelId)).find((s) => s.id !== id && String(s.term).trim() === term);
+  if (dup) throw new Error(`这条信息已经登记过了：${term}`);
+  const now = Date.now();
+  return put('secrets', {
+    id, novel_id: novelId, term,
+    truth: data.truth || '',
+    first_chapter: data.first_chapter || null,
+    reveal_chapter: data.reveal_chapter || null,
+    revealed_at: data.revealed_at || null,
+    informed: Array.isArray(data.informed) ? data.informed : [],
+    promise_id: data.promise_id || null,
+    notes: data.notes || '',
+    enabled: data.enabled !== false,
+    created_at: data.created_at || now, updated_at: now,
+  });
+}
+
+async function updateSecret(id, updates) {
+  const s = await get('secrets', id);
+  if (!s) throw new Error('信息差登记不存在');
+  return put('secrets', { ...s, ...updates, updated_at: Date.now() });
+}
+
+async function deleteSecret(id) { await del('secrets', id); }
