@@ -477,3 +477,242 @@ test('R22：suppressions 按指纹豁免本章', () => {
   const d = of(run, 'ai-flavor')[0];
   assert.equal(d.suppressedBy, '本书刻意用这种腔调');
 });
+
+// ═════════════════ R26 整句重复 ═════════════════
+// 模型续写最典型的两种毛病都在这里：改写时没删掉旧句（同章两遍），
+// 以及拿原句复述上一章来「承接」（跨章一字不差）。判据是逐字比对，不做主观评价。
+
+const SENT_A = '他沿着石阶往上走，雾贴着脚背流动，山门还在很远的地方。';
+const SENT_B = '林中的光线一寸一寸暗下去，风从谷口灌进来，吹得衣袍猎猎作响。';
+const SENT_C = '他停下脚步回头看去，来路已经被雾填满，看不出是第几道弯。';
+
+test('R26 同一章里整句重复两遍 → warn，证据指向第二处', () => {
+  const body = `${SENT_A}\n\n${SENT_B}\n\n${SENT_A}`;
+  const d = of(NWRules.runRules(ctx({ chapters: [ch(1, { body })] })), 'repeated-sentence');
+  assert.equal(d.length, 1, '一句重复只报一条');
+  assert.equal(d[0].severity, 'warn');
+  assert.equal(d[0].chapter, 'ch-001');
+  assert.ok(d[0].evidence.basis[0].includes('2 次'), d[0].evidence.basis.join(' / '));
+  const [from, to] = d[0].evidence.offset;
+  assert.equal(from, body.indexOf(SENT_A, 1), 'offset 应落在第二处句首');
+  const sent = SENT_A.replace(/。$/, '');   // 句切分不含 terminator，证据长度按这一句本身算
+  assert.equal(to - from, sent.length);
+  assert.equal(body.slice(from, to), sent);
+});
+
+test('R26 跨章一字不差地复述 → info，且落在后一章上（--from/--to 才筛得到）', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: `${SENT_A}\n\n${SENT_B}` }), ch(2, { body: `${SENT_C}\n\n${SENT_A}` })],
+  })), 'repeated-sentence');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'info', '跨章复述不该触发同章那种改写');
+  assert.equal(d[0].chapter, 'ch-002');
+  assert.ok(d[0].message.includes('第 1 章') && d[0].message.includes('第 2 章'), d[0].message);
+});
+
+test('R26 同一句在三章以上重复：只报一条，并说它像固定用语', () => {
+  const d = of(NWRules.runRules(ctx({ chapters: [
+    ch(1, { body: SENT_A }), ch(2, { body: `${SENT_B}\n\n${SENT_A}` }), ch(3, { body: `${SENT_C}\n\n${SENT_A}` }),
+  ] })), 'repeated-sentence');
+  assert.equal(d.length, 1);
+  assert.ok(d[0].evidence.basis.some((b) => b.includes('共 3 章')), d[0].evidence.basis.join(' / '));
+});
+
+test('R26 台词重复不算：对白里的整句一律不参与比对', () => {
+  const spoken = SENT_A.slice(0, -1);
+  const d = of(NWRules.runRules(ctx({ chapters: [
+    ch(1, { body: `“${spoken}”\n\n${SENT_B}` }), ch(2, { body: `“${spoken}”\n\n${SENT_C}` }),
+  ] })), 'repeated-sentence');
+  assert.deepEqual(d, [], '复沓式台词是有意为之，机器分不开就别报');
+  // 切分器不认引号：这句会被切成「他说：“……」+「”」，前一段是带说话人前缀的，
+  // 所以判据只能是"含开引号"，不是"以引号开头"。
+  const said = of(NWRules.runRules(ctx({ chapters: [
+    ch(1, { body: `他说：“${spoken}”\n\n${SENT_B}` }), ch(2, { body: `她说：“${spoken}”\n\n${SENT_C}` }),
+  ] })), 'repeated-sentence');
+  assert.deepEqual(said, [], '带说话人前缀的台词同样是台词');
+});
+
+test('R26 回忆章整章不参与（旧场景本来就该重演）', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body: SENT_A, flags: ['flashback'] })],
+  })), 'repeated-sentence');
+  assert.deepEqual(d, []);
+});
+
+test('R26 比对忽略标点与空白：改了标点没改字仍然算重复', () => {
+  const d = of(NWRules.runRules(ctx({ chapters: [
+    ch(1, { body: '他沿着石阶往上走雾贴着脚背流动山门还在很远的地方' }), ch(2, { body: SENT_A }),
+  ] })), 'repeated-sentence');
+  assert.equal(d.length, 1);
+  assert.ok(d[0].evidence.quote.includes('他沿着石阶'), d[0].evidence.quote);
+});
+
+test('R26 短句不参与：称呼与常见四字格重复不是毛病', () => {
+  const d = of(NWRules.runRules(ctx({ chapters: [
+    ch(1, { body: '他来了。\n\n他来了。' }), ch(2, { body: '他来了。\n\n他来了。' }),
+  ] })), 'repeated-sentence');
+  assert.deepEqual(d, []);
+});
+
+// ═════════════════ R27 依据回查 ═════════════════
+
+const prom = (over = {}) => ({
+  id: 'p-1', type: 'promise', title: '半枚铜印', status: 'planted', weight: 'minor',
+  setup: { chapter: 'ch-001', evidence: SENT_A }, payoff: { chapter: null, evidence: '' },
+  characters: [], notes: '', ...over,
+});
+
+test('R27 依据就在标的那一章 → 不报', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: `${SENT_A}\n\n${SENT_B}` }), ch(2)], promises: { items: [prom()] },
+  })), 'evidence-mismatch');
+  assert.deepEqual(d, []);
+});
+
+test('R27 依据其实在别的章：报「章标错了」，并把作者送到那一章', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_B }), ch(2, { body: SENT_A })], promises: { items: [prom()] },
+  })), 'evidence-mismatch');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].chapter, 'ch-002');
+  assert.equal(d[0].severity, 'info');
+  assert.ok(d[0].message.includes('不在第 1 章') && d[0].message.includes('第 2 章里找得到'), d[0].message);
+});
+
+test('R27 全书都找不到：落在埋设章上，说清可能是改写冲掉了依据', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_B }), ch(2, { body: SENT_C })], promises: { items: [prom()] },
+  })), 'evidence-mismatch');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].chapter, 'ch-001');
+  assert.ok(d[0].suggestion.includes('R3'), d[0].suggestion);
+});
+
+test('R27 不查这些：依据太短、那一章还没写正文、登记已作废', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_B }), ch(2), ch(3, { body: SENT_C })],
+    promises: { items: [
+      prom({ id: 'short', setup: { chapter: 'ch-001', evidence: '半枚铜印' } }),
+      prom({ id: 'unwritten', setup: { chapter: 'ch-002', evidence: SENT_A } }),
+      prom({ id: 'void', status: 'cancelled', setup: { chapter: 'ch-001', evidence: SENT_A } }),
+    ] },
+  })), 'evidence-mismatch');
+  assert.deepEqual(d.map((x) => x.entity), [], d.map((x) => x.message).join(' / '));
+});
+
+test('R26/R27/R28 遇到边界输入不许崩：崩了只剩一条 rule-crashed，其余诊断全丢', () => {
+  const c = ctx({
+    chapters: [ch(1, { body: SENT_B }), ch(2), ch(3, { body: SENT_C }), ch(4, { body: SENT_A })],
+    promises: { items: [
+      prom({ id: 'ghost', setup: { chapter: 'ch-999', evidence: SENT_A } }),
+      prom({ id: 'nochapter', setup: { chapter: null, evidence: SENT_A } }),
+      prom({ id: 'noev', setup: { chapter: 'ch-001', evidence: '' } }),
+      prom({ id: 'q', type: 'question', setup: { chapter: 'ch-001', evidence: SENT_C } }),
+    ] },
+    world: [
+      wb({ lifecycle: { 'destroyed-in': 'ch-999' } }),
+      wb({ id: 'wb-null', lifecycle: { 'destroyed-in': null } }),
+      wb({ id: 'wb-nokey', name: '山', keys: [] }),
+      wb({ id: 'wb-off', enabled: false, lifecycle: { 'destroyed-in': 'ch-001' } }),
+    ],
+  });
+  const all = NWRules.runRules(c);
+  assert.deepEqual(all.filter((d) => d.rule === 'rule-crashed'), [],
+    all.filter((d) => d.rule === 'rule-crashed').map((d) => d.message).join(' / '));
+  // 关掉的、名字太短的、销毁章是幽灵章的，都不该报
+  assert.deepEqual(of(all, 'world-destroyed-after').map((d) => d.entity), []);
+});
+
+test('R27 只有 payoff 回填了依据 → 不去当埋设依据查', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_B }), ch(2, { body: SENT_C })],
+    promises: { items: [prom({ setup: { chapter: 'ch-001', evidence: '' }, payoff: { chapter: 'ch-002', evidence: SENT_A } })] },
+  })), 'evidence-mismatch');
+  assert.deepEqual(d, []);
+});
+
+// ═════════════════ R28 世界设定生命周期 ═════════════════
+
+const wb = (over = {}) => ({
+  id: 'wb-1', name: '青冥山', type: 'location', keys: ['青冥山'], enabled: true,
+  lifecycle: { 'destroyed-in': 'ch-001', 'revealed-in': null }, ...over,
+});
+
+test('R28 登记毁灭之后正文还原样点名 → info，offset 指到那一处', () => {
+  // 两个称呼都在同一章出现，且**别名在前**：offset 必须指到全书最早撞见的那一个，不是列表里第一个
+  const body = '路过时听人说起，那座山曾经很高；他在青冥山的废墟前站住。';
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body })], world: [wb({ keys: ['青冥山', '那座山'] })],
+  })), 'world-destroyed-after');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'info', '写废墟与忘了它已毁掉机器分不开，所以不给 warn');
+  assert.equal(d[0].chapter, 'ch-002');
+  assert.equal(body.slice(d[0].evidence.offset[0], d[0].evidence.offset[1]), '那座山',
+    d[0].evidence.basis.join(' / '));
+});
+
+test('R28 销毁章本身与它之前的正文不报', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '青冥山在这一剑之下塌了。' }), ch(2, { body: SENT_A })], world: [wb()],
+  })), 'world-destroyed-after');
+  assert.deepEqual(d, []);
+});
+
+test('R28 回忆/引文标记章跳过；一条设定只在最早撞见的那一章报一次', () => {
+  const flashback = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body: '他想起青冥山的雪。', flags: ['flashback'] })], world: [wb()],
+  })), 'world-destroyed-after');
+  assert.deepEqual(flashback, []);
+  const many = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body: '青冥山的风很大。' }), ch(3, { body: '青冥山的雪很冷。' })], world: [wb()],
+  })), 'world-destroyed-after');
+  assert.equal(many.length, 1);
+  assert.equal(many[0].chapter, 'ch-002');
+});
+
+test('R28 没登记 lifecycle 的书整条静默（零登记 ≠ 一堆问题）', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body: '青冥山的雪落了一夜。' })],
+    world: [wb({ lifecycle: {} }), wb({ id: 'wb-2', lifecycle: { 'destroyed-in': 'ch-999' } })],
+  })), 'world-destroyed-after');
+  assert.deepEqual(d, [], '没写销毁章、或销毁章 id 不存在（那是 R15 的活）都不该报');
+  const off = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body: '他在青冥山的废墟前站住。' })],
+    world: [wb({ enabled: false })],
+  })), 'world-destroyed-after');
+  assert.deepEqual(off, [], '作者关掉的设定不再参与检查，与 R22／信息差那几条同口径');
+});
+
+test('R28 单字称呼不参与比对，别名（keys）参与', () => {
+  const short = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body: '山上的雪很冷。' })], world: [wb({ keys: ['山'] })],
+  })), 'world-destroyed-after');
+  assert.deepEqual(short, []);
+  const alias = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: SENT_A }), ch(2, { body: '东宗已经没了。' })],
+    world: [wb({ name: '青冥山', keys: ['青冥山', '东宗'] })],
+  })), 'world-destroyed-after');
+  assert.equal(alias.length, 1);
+  assert.ok(alias[0].evidence.basis[0].includes('东宗'), alias[0].evidence.basis.join(' / '));
+});
+
+test('R26/R27/R28 都不产出 error，指纹各占一位（豁免不会连带关掉另一条）', () => {
+  const c = ctx({
+    chapters: [
+      ch(1, { body: `${SENT_A}\n\n${SENT_A}` }),
+      ch(2, { body: `${SENT_A}\n\n他在青冥山的废墟前站住。` }),
+    ],
+    world: [wb()], promises: { items: [prom({ setup: { chapter: 'ch-001', evidence: SENT_C } })] },
+  });
+  const picked = (x) => NWRules.runRules(x)
+    .filter((d) => ['repeated-sentence', 'evidence-mismatch', 'world-destroyed-after'].includes(d.rule));
+  const d = picked(c);
+  assert.equal(d.length, 3, d.map((x) => `${x.rule}@${x.chapter}`).join(' / '));
+  assert.ok(d.every((x) => x.severity !== 'error'), '这批只做提示，不做门禁');
+  assert.ok(d.every((x) => x.source === 'machine' && x.confidence > 0 && x.confidence <= 1));
+  const fps = d.map((x) => x.fingerprint);
+  assert.deepEqual(fps, [...new Set(fps)], `指纹必须互不相同：${fps.join(' / ')}`);
+  const sameChapter = d.filter((x) => x.chapter === 'ch-002');
+  assert.equal(new Set(sameChapter.map((x) => x.fingerprint)).size, sameChapter.length);
+  assert.deepEqual(picked(c).map((x) => x.fingerprint), fps, '同一输入两次跑，指纹必须一模一样');
+});

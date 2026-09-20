@@ -589,3 +589,9 @@ test('短篇版式用的是短篇那一档门槛', () => {
   assert.match(prompt, /对话占到 10% 以上，连续 600 字/);
   assert.ok(!prompt.includes('连续 800 字'), '长篇的门槛串进了短篇');
 });
+
+test('复述约束在写作要求那一串里（R26 的预防那一半，不只事后报）', () => {
+  const prompt = CONT();
+  assert.match(prompt, /承接上一章要用自己的话重述/);
+  assert.ok(prompt.indexOf('不要照抄前文整句') < prompt.indexOf('字数要求'), '它是写作要求的一条，不是补在末尾的孤儿');
+});

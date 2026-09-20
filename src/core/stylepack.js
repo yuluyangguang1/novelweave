@@ -123,7 +123,7 @@
     return out;
   }
 
-  /** 句切分（偏移相对整篇正文，证据要能定位回去）。 */
+  /** 句切分（偏移相对整篇正文，证据要能定位回去）。R26 的整句重复比对共用这一份。 */
   function sentences(para) {
     const out = [];
     let from = 0;
@@ -326,6 +326,6 @@
 
   return {
     PACK_VERSION, GROUPS, PATTERNS,
-    lint, verdict, promptBlock, optsFrom, activeGroups, groupMeta, paragraphs,
+    lint, verdict, promptBlock, optsFrom, activeGroups, groupMeta, paragraphs, sentences,
   };
 });

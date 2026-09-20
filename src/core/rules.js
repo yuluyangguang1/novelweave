@@ -178,6 +178,15 @@
     return dims.some((d) => dimValue(before, d) !== dimValue(after, d));
   }
 
+  /**
+   * 文本归一化：只留汉字、字母与数字。标点、空白、引号全去掉，
+   * 所以「改了标点没改字」和「登记依据时顺手省了逗号」都不算对不上。
+   * R26 的整句比对与 R27 的依据回查共用这一份。
+   */
+  function normText(s) {
+    return String(s || '').replace(/[^0-9A-Za-z\u4e00-\u9fff]/g, '');
+  }
+
   function diag(rule, hit) {
     const chapter = hit.chapter || null;
     const entity = hit.entity || null;
@@ -1102,6 +1111,176 @@
           else { flush(); if (kind) streak.push({ ch, kind }); }
         }
         flush();
+        return out;
+      },
+    },
+
+    'repeated-sentence': {
+      code: 'R26',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '同一个长句被逐字写了两遍：本章内重复，或后面的章节原样复述上一章的句子。',
+      detail:
+        '句子取自 NWStylePack 的切分器（与 R22 同一份），去掉标点空白后 ≥18 字才参与比对，' +
+        '短句、称呼、成语不算。含开引号的片段一律不参与 —— 切分器不认引号（它在引号内的句号上' +
+        '也会断句），所以台词可能带着「她说：」这个前缀，只能按"含有引号"判；台词重复多半是有意的' +
+        '复沓，机器分不开「口头禅」与「回声」，宁可少报。带 flashback/dream/quoted/offscreen ' +
+        '标记的章整章不参与：' +
+        '回忆章本来就该重演旧场景。同章内重复为 warn（到这一步几乎只能是粘贴或模型回声），' +
+        '跨章重复为 info；同一句在 ≥3 章重复时只报一条，并按「固定用语」的说法写。',
+      run(ctx) {
+        const MIN = 18;
+        const groups = new Map();
+        const sorted = [...ctx.chapters].sort((a, b) => (a.number || 0) - (b.number || 0));
+        for (const ch of sorted) {
+          if (isExempt(ch)) continue;
+          for (const para of StylePack.paragraphs(ch.body || '')) {
+            for (const s of StylePack.sentences(para)) {
+              if (/[「『“]/.test(s.text)) continue;
+              const key = normText(s.text);
+              if (key.length < MIN) continue;
+              let g = groups.get(key);
+              if (!g) { g = { text: s.text, hits: [] }; groups.set(key, g); }
+              g.hits.push({ ch, start: s.start });
+            }
+          }
+        }
+        const out = [];
+        for (const [key, g] of groups) {
+          if (g.hits.length < 2) continue;
+          const ids = T.uniq(g.hits.map((h) => h.ch.id));
+          const first = g.hits[0], second = g.hits[1];
+          const same = ids.length === 1;
+          const clip = g.text.length > 40 ? `${g.text.slice(0, 40)}……` : g.text;
+          const chapters = g.hits.map((h) => h.ch.number);
+          const where = [...new Set(chapters)].slice(0, 4).join('、');
+          out.push(diag('repeated-sentence', {
+            chapter: second.ch.id,
+            entity: key.slice(0, 16),
+            severity: same ? 'warn' : 'info',
+            confidence: same ? 0.8 : 0.6,
+            evidence: {
+              basis: same
+                ? [`本章内原样出现 ${g.hits.length} 次`]
+                : [`首现第 ${first.ch.number} 章`, `又在第 ${second.ch.number} 章原样出现`,
+                  ...(ids.length >= 3 ? [`共 ${ids.length} 章：第 ${where} 章`] : [])],
+              quote: clip,
+              offset: [second.start, second.start + g.text.length],
+            },
+            message: same
+              ? `第 ${second.ch.number} 章里这一句原样出现了 ${g.hits.length} 次：「${clip}」`
+              : ids.length >= 3
+                ? `「${clip}」在第 ${where} 等 ${ids.length} 个章节里一字不差地重复。`
+                : `第 ${first.ch.number} 章写过的这一句，在第 ${second.ch.number} 章一字不差地又出现了一次：「${clip}」`,
+            suggestion: same
+              ? '删掉多余的那一份，或把第二次出现换个说法 —— 同一章里重复整句基本是粘贴或改写时没删干净。'
+              : '承接上一章请用自己的话重述；若这是固定的系统提示语或人物口头禅，豁免这一条即可。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'evidence-mismatch': {
+      code: 'R27',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '伏笔登记的「原文依据」在它标的那一章正文里找不到。',
+      detail:
+        '把 setup.evidence 归一化（去标点空白）后在 setup.chapter 的正文里字面找。找不到再扫全书：' +
+        '在别的章找得到 → 依据没记错、章标错了；全书都没有 → 这句多半被后来的改写冲掉了。' +
+        '不查这些情形：依据不足 8 字（太短，找不到也不说明问题）、那一章还没写正文、' +
+        '章 id 不存在（那是 R15 的活）、已作废的登记。' +
+        '恒为 info：账本与正文对不上是真问题，但「凭记忆摘了一句」也长这样，不该替作者断定。',
+      run(ctx) {
+        const items = (ctx.promises?.items || [])
+          .filter((i) => i.type === 'promise' && i.status !== 'cancelled');
+        const bodies = ctx.chapters.map((ch) => ({ ch, norm: normText(ch.body || '') }));
+        const out = [];
+        for (const p of items) {
+          const ev = String(p.setup?.evidence || '').trim();
+          const chId = p.setup?.chapter;
+          if (!ev || !chId) continue;
+          const key = normText(ev);
+          if (key.length < 8) continue;
+          const target = bodies.find((b) => b.ch.id === chId);
+          if (!target || !target.norm) continue;      // 章不存在或还没写正文
+          if (target.norm.includes(key)) continue;
+          const hit = bodies.find((b) => b.ch.id !== chId && b.norm.includes(key));
+          const clip = ev.length > 40 ? `${ev.slice(0, 40)}……` : ev;
+          out.push(diag('evidence-mismatch', {
+            chapter: hit ? hit.ch.id : chId,
+            entity: p.id,
+            severity: 'info',
+            confidence: 0.7,
+            evidence: {
+              basis: hit
+                ? [`登记的埋设章：第 ${target.ch.number} 章`, `实际找得到：第 ${hit.ch.number} 章`]
+                : [`登记的埋设章：第 ${target.ch.number} 章`, '全书正文里都没有这句'],
+              quote: clip,
+            },
+            message: hit
+              ? `伏笔「${p.title}」的原文依据不在第 ${target.ch.number} 章，倒是在第 ${hit.ch.number} 章里找得到。`
+              : `伏笔「${p.title}」登记的原文依据在第 ${target.ch.number} 章正文里找不到，全书也没有。`,
+            suggestion: hit
+              ? `把 setup.chapter 改成第 ${hit.ch.number} 章，或换成第 ${target.ch.number} 章里真正埋它的那句。`
+              : '多半是改正文时把这句删了：重新贴一句现在还在正文里的依据 —— 将来判有没有回收（R3/R3b）全靠它。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'world-destroyed-after': {
+      code: 'R28',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '设定在它登记「毁灭于」的那一章之后，还被正文原样点名。',
+      detail:
+        '只读 lifecycle["destroyed-in"]：这个字段由 nw-changes 的 world.destroy 算子写入，' +
+        '导出导入一路带着走，此前没有任何规则读它 —— 记了不查等于没记。' +
+        '取条目本名与 keys 里 ≥2 字的称呼，在销毁章**之后**的正文字面检索，一条设定只报最早撞见的那一章，' +
+        '带 flashback/dream/quoted/offscreen 标记的章跳过。' +
+        '恒为 info：写废墟、旧地重提与忘了它已经毁掉，机器分不开。' +
+        'lifecycle["revealed-in"] 不查 —— 它没有任何生产者，而世界条目的名字天然早于正式解释出现，' +
+        '这条判据按构造就是噪声。',
+      run(ctx) {
+        const out = [];
+        const sorted = [...ctx.chapters].sort((a, b) => (a.number || 0) - (b.number || 0));
+        for (const w of ctx.world || []) {
+          if (w.enabled === false) continue;
+          const deadId = w.lifecycle?.['destroyed-in'];
+          if (!deadId) continue;
+          const deadN = ctx.chapterNumbers.get(deadId);
+          if (deadN == null) continue;                 // 引了不存在的章：R15 的活
+          const terms = T.uniq([w.name, ...(w.keys || [])]
+            .filter((t) => typeof t === 'string' && t.trim().length >= 2)
+            .map((t) => t.trim()));
+          if (!terms.length) continue;
+          for (const ch of sorted) {
+            if (isExempt(ch) || !Number.isFinite(ch.number) || ch.number <= deadN) continue;
+            const body = ch.body || '';
+            let at = null, term = '';
+            for (const t of terms) {
+              const i = occurrences(body, t)[0];
+              if (i != null && (at == null || i < at)) { at = i; term = t; }
+            }
+            if (at == null) continue;
+            out.push(diag('world-destroyed-after', {
+              chapter: ch.id,
+              entity: w.id,
+              severity: 'info',
+              confidence: 0.6,
+              evidence: {
+                basis: [`「${term}」首现于销毁之后`, `destroyed-in=${deadId}（第 ${deadN} 章）`, `本条只在第 ${ch.number} 章报一次`],
+                ...quoteAt(body, at, term.length),
+              },
+              message: `设定「${w.name}」登记在第 ${deadN} 章毁灭，第 ${ch.number} 章的正文又把它当作还在的东西点了名。`,
+              suggestion: '若写的是废墟、遗迹或旧事重提，忽略或豁免本章即可；若是忘了它已经毁掉，把这句改成毁灭之后的说法。',
+            }));
+            break;
+          }
+        }
         return out;
       },
     },

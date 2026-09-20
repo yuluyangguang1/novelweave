@@ -182,3 +182,14 @@ test('包里的词不重复、组 id 唯一，且都是能在正文里字面找�
   assert.ok(P.GROUPS.length >= 8);
   assert.equal(P.PATTERNS.length, 5);
 });
+
+test('paragraphs 与 sentences 是导出的：R23/R26 复用同一把刀，不再造第二个切分器', () => {
+  assert.equal(typeof P.paragraphs, 'function');
+  assert.equal(typeof P.sentences, 'function');
+  const body = '他来了。\n\n她转身往外走，雾还没有散。\n\n山门很远。';
+  const paras = P.paragraphs(body);
+  assert.equal(paras.length, 3);
+  const sents = paras.flatMap((p) => P.sentences(p));
+  assert.deepEqual(sents.map((s) => s.text), ['他来了', '她转身往外走，雾还没有散', '山门很远']);
+  for (const s of sents) assert.equal(body.slice(s.start, s.start + s.text.length), s.text, '偏移必须能回查原文');
+});

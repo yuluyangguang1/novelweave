@@ -19,7 +19,7 @@
 (function (root) {
   'use strict';
   const DEMO_ID = 'novel_demo';
-  const DEMO_VERSION = 4; // 内容升级时 +1：旧版本示例书会被整本重置（级联删除后重种）
+  const DEMO_VERSION = 5; // 内容升级时 +1：旧版本示例书会被整本重置（级联删除后重种）
   const isDemo = (id) => id === DEMO_ID;
 
   async function seed() {
@@ -298,7 +298,7 @@
     await DB.putRow('promises', {
       id: 'p-yin', novel_id: DEMO_ID, type: 'promise', title: '半枚铜印',
       status: 'planted', weight: 'major',
-      setup: { chapter: 'ch-001', evidence: '师父塞给我；火漆对上的那一天，你再来问我' },
+      setup: { chapter: 'ch-001', evidence: '「火漆对上的那一天，你再来问我。」' },
       payoff: { chapter: null, due: 'ch-004' }, characters: ['char-lin'],
       notes: '', created_at: now, updated_at: now,
     });

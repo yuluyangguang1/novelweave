@@ -26,6 +26,7 @@ const ALIAS = {
   R16: 'derived-field-touched', R17: 'chapter-end-hook', R18: 'item-reappear',
   R19: 'relation-contradiction', R20: 'premature-reveal', R21: 'unresolved-secret',
   R22: 'ai-flavor', R23: 'dialogue-ratio', R24: 'chapter-no-change', R25: 'same-hook-streak',
+  R26: 'repeated-sentence', R27: 'evidence-mismatch', R28: 'world-destroyed-after',
 };
 
 function resolveRuleNames(list) {
