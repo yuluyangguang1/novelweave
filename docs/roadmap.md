@@ -677,7 +677,7 @@ K 族查「记了又被改写冲掉」,这一族查另一半:**记了,正文里�
 它们防的是「下一道判据被改掉」,不是当前判据 —— 也如实记在这里,不当成已验证。
 上一批学到的规矩这次直接用上了:凡是断言「不该报」的测试,同时断言结果里没有 `rule-crashed`。
 
-测试:`tests/rules.test.mjs` 76 项(本批 +14),`tests/generation.test.mjs` +1,全量 322 项全绿。
+测试:`tests/rules.test.mjs` 76 项(本批 +14),`tests/generation.test.mjs` +1,全量 323 项全绿。
 真跑:仓库外用 `scaffoldBook` 造了一本书(`char-lin` first 写晚、`char-ghost` 从未露面、`wb-sect` 从未提到、
 一条师徒边从未同框),`node scripts/nw-continuity.mjs <dir> --rules R29,R30,R31` 四条 info、退出码 0,
 `explain --rule R31` 打得开规格;浏览器另起端口(旧端口的静态服务器已死,且旧标签页里还是 23 条规则),
