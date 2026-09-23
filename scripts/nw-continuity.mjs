@@ -27,6 +27,7 @@ const ALIAS = {
   R19: 'relation-contradiction', R20: 'premature-reveal', R21: 'unresolved-secret',
   R22: 'ai-flavor', R23: 'dialogue-ratio', R24: 'chapter-no-change', R25: 'same-hook-streak',
   R26: 'repeated-sentence', R27: 'evidence-mismatch', R28: 'world-destroyed-after',
+  R29: 'first-appearance-mismatch', R30: 'entry-never-mentioned', R31: 'relation-pair-never-together',
 };
 
 function resolveRuleNames(list) {

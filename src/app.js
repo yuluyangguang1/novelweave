@@ -1902,7 +1902,7 @@ async function showContinuity(host) {
   const visible = diags.filter((d) => !d.suppressedBy);
   if (!visible.length) {
     body.innerHTML = `<div class="diag-clean">${icon('check')}没有发现矛盾（${ctx.chapters.length} 章）</div>
-      <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 ${Object.keys(NWRules.RULES).length} 条规则：查的是前后矛盾、禁词密度与句式套路这一类「AI 味」，对话占比／平章／同质钩子这类「该有而没有」的节奏配额，外加整句重复与登记依据回查这一类「账本与正文对不上」。不评价文笔，也不替你判定情节精不精彩。伏笔、时间线、角色状态、外貌区间填得越全，检查越准。</div>`;
+      <div class="settings-hint" style="margin-top:8px;">只检查机器可判的 ${Object.keys(NWRules.RULES).length} 条规则：查的是前后矛盾、禁词密度与句式套路这一类「AI 味」，对话占比／平章／同质钩子这类「该有而没有」的节奏配额，外加整句重复、登记依据回查、建档却从未点名这一类「账本与正文对不上」。不评价文笔，也不替你判定情节精不精彩。伏笔、时间线、角色状态、外貌区间填得越全，检查越准。</div>`;
     return;
   }
   body.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">${counts}</div>`

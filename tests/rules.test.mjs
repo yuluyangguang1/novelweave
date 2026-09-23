@@ -716,3 +716,176 @@ test('R26/R27/R28 都不产出 error，指纹各占一位（豁免不会连带�
   assert.equal(new Set(sameChapter.map((x) => x.fingerprint)).size, sameChapter.length);
   assert.deepEqual(picked(c).map((x) => x.fingerprint), fps, '同一输入两次跑，指纹必须一模一样');
 });
+
+// ─────────────── L 族：账本登记了、正文从没配合（R29/R30/R31）───────────────
+
+const rel = (over = {}) => ({ id: 'rel-1', from: 'char-lin', to: 'char-ming', kind: '师徒', address: '', ...over });
+
+test('R29 first 写早了：登记那一章没点到名，正文里更后面才露面', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '他挑着水桶上了井台。' }), ch(2, { body: '井绳冻得硬邦邦。' }),
+      ch(3, { body: '他数着石阶。' }), ch(4, { body: '林烟火终于下山了。' })],
+    characters: [char('char-lin', { name: '林烟火', first: 'ch-002' })],
+  })), 'first-appearance-mismatch');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'info');
+  assert.equal(d[0].chapter, 'ch-002', '要把作者送到他登记错的那一章');
+  assert.ok(d[0].message.includes('最早露面是在第 4 章'), d[0].message);
+});
+
+test('R29 first 写晚了：第 2 章就露面、卡上却写第 4 章 → 落在实际那一章，offset 指到称呼', () => {
+  const body = '林烟火把药布递过去。';
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '鸡叫头遍。' }), ch(2, { body }), ch(3, { body: '火起三千阶。' }), ch(4, { body: '他站在门口。' })],
+    characters: [char('char-lin', { name: '林烟火', first: 'ch-004' })],
+  })), 'first-appearance-mismatch');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].chapter, 'ch-002');
+  assert.equal(body.slice(d[0].evidence.offset[0], d[0].evidence.offset[1]), '林烟火');
+  assert.ok(d[0].message.includes('正文里他早在第 2 章就露面'), d[0].message);
+});
+
+test('R29 对得上就不报，且不许靠崩来对得上', () => {
+  const all = NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }), ch(3, { body: '林烟火下山。' })],
+    characters: [char('char-lin', { name: '林烟火', first: 'ch-003' })],
+  }));
+  assert.deepEqual(of(all, 'first-appearance-mismatch'), []);
+  assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed'), [], '抛错会让整条规则静默消失');
+});
+
+test('R29 回忆章里的称呼不算露面（旧场景重演说明不了出场次序）', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '林烟火三岁时上了山。', flags: ['flashback'] }),
+      ch(3, { body: '别的谁。' }), ch(4, { body: '林烟火推开门。' })],
+    characters: [char('char-lin', { name: '林烟火', first: 'ch-004' })],
+  })), 'first-appearance-mismatch');
+  assert.deepEqual(d, [], '第 4 章才是第一次「现在时」出场，卡上填对了');
+});
+
+test('R29 不查这些：没填 first、章不存在、只有单字称呼、卡已关掉', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }), ch(3, { body: '林烟火下山。' })],
+    characters: [
+      char('char-none', { name: '秦叔', aliases: [] }),
+      char('char-ghost', { name: '苏晚', first: 'ch-999' }),
+      char('char-one', { name: '山', first: 'ch-001' }),
+      char('char-off', { name: '明长老', first: 'ch-001', enabled: false }),
+    ],
+  })), 'first-appearance-mismatch');
+  assert.deepEqual(d.map((x) => x.entity), [], d.map((x) => x.message).join(' / '));
+});
+
+test('R29 全书没露面的角色不在这里报（那是 R30 的活，免得一件事说两遍）', () => {
+  const c = ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }), ch(3, { body: '他挑水。' })],
+    characters: [char('char-lin', { name: '林烟火', first: 'ch-002' })],
+  });
+  const all = NWRules.runRules(c);
+  assert.deepEqual(of(all, 'first-appearance-mismatch'), []);
+  assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed'), [],
+    '不许靠抛错来"不报"：崩了整条规则对这本书就永久失明');
+  assert.equal(of(all, 'entry-never-mentioned').length, 1);
+});
+
+test('R30 角色建了档、三章正文里一个称呼都没出现 → info，且不指向任何一章', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '苏晚来了。' }), ch(3, { body: '他挑水。' })],
+    characters: [
+      char('char-ghost', { name: '无名者', aliases: [{ text: '那个外乡人' }] }),
+      char('char-seen', { name: '苏晚' }),
+    ],
+  })), 'entry-never-mentioned');
+  assert.deepEqual(d.map((x) => x.entity), ['char-ghost'], '露过面的角色必须被 seen 挡掉');
+  assert.equal(d[0].chapter, null, '没有哪一章可跳，指向某一章反而误导');
+  assert.equal(d[0].severity, 'info');
+  assert.ok(d[0].evidence.basis.join('、').includes('那个外乡人'), d[0].evidence.basis.join(' / '));
+});
+
+test('R30 世界条目同理：keys 或 secondary_keys 里任一称呼被写到就不报', () => {
+  const run = (body3) => of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }), ch(3, { body: body3 })],
+    world: [{ id: 'wb-1', name: '青冥山', keys: ['青冥'], secondary_keys: ['北宗'], enabled: true }],
+  })), 'entry-never-mentioned');
+  assert.deepEqual(run('他去了别处。').map((x) => x.entity), ['wb-1']);
+  assert.deepEqual(run('北宗的人来了。'), [], 'secondary_keys 也是正文里的称呼');
+});
+
+test('R30 已写正文不足 3 章整条静默（新书期卡片先建、正文后写）', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }), ch(3, { body: '' })],
+    characters: [char('char-ghost', { name: '无名者' })],
+  })), 'entry-never-mentioned');
+  assert.deepEqual(d, []);
+});
+
+test('R30 误报控制：关掉的卡不查、单字称呼不查、回忆章里点过名就算露面', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }),
+      ch(3, { body: '他想起旧人。', flags: ['flashback'] })],
+    characters: [
+      char('char-off', { name: '已废弃', enabled: false }),
+      char('char-one', { name: '山' }),
+      char('char-past', { name: '明长老', aliases: ['明长老'] }),
+    ],
+    world: [{ id: 'wb-past', name: '青冥山', keys: ['青冥山'], enabled: true }],
+  })), 'entry-never-mentioned');
+  // 明长老与青冥山在第 3 章（回忆章）都没被点名，所以仍该报 —— 关键是别报「已废弃」和单字的「山」
+  assert.deepEqual(d.map((x) => x.entity).sort(), ['char-past', 'wb-past'], d.map((x) => x.entity).join(' / '));
+});
+
+test('R31 登记的边两端各自露面，却从未同章出现', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '林烟火挑水。' }), ch(2, { body: '明长老咳了两声。' }), ch(3, { body: '火起了。' })],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+    relations: { edges: [rel()] },
+  })), 'relation-pair-never-together');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].entity, 'rel-1');
+  assert.equal(d[0].severity, 'info');
+  assert.ok(d[0].message.includes('师徒'), d[0].message);
+  assert.ok(d[0].evidence.basis.join('、').includes('两人同框 0 章'), d[0].evidence.basis.join(' / '));
+});
+
+test('R31 同过框就闭嘴 —— 回忆章里同框也算同框', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '林烟火挑水。' }),
+      ch(2, { body: '明长老牵着小林烟火。', flags: ['flashback'] }), ch(3, { body: '火起了。' })],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+    relations: { edges: [rel()] },
+  })), 'relation-pair-never-together');
+  assert.deepEqual(d, []);
+});
+
+test('R31 不查这些：有一端从未露面（那是 R30）、角色 id 解析不到（R15）、自环边、没有关系的书', () => {
+  const two = (edges, chars) => of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '林烟火挑水。' }), ch(2, { body: '他咳了两声。' }), ch(3, { body: '火起了。' })],
+    characters: chars, relations: { edges },
+  })), 'relation-pair-never-together');
+  const lin = [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })];
+  assert.deepEqual(two([rel()], lin).map((x) => x.entity), [], '明长老从未露面，交给 R30');
+  assert.deepEqual(two([rel({ to: 'char-ghost' })], lin), [], '边指向没建档的角色');
+  assert.deepEqual(two([rel({ to: 'char-lin' })], lin), [], '自环边不是关系');
+  assert.deepEqual(of(NWRules.runRules(ctx({ chapters: [ch(1, { body: '林烟火挑水。' })] })),
+    'relation-pair-never-together'), [], '没有 relations 的老书必须整条静默');
+});
+
+test('R29/R30/R31 遇到边界输入不许崩，且都不产出 error', () => {
+  const c = ctx({
+    chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }), ch(3, { body: '林烟火与明长老同框。' })],
+    characters: [
+      char('char-lin', { name: '林烟火', first: 'ch-001' }),
+      char('char-ming', { name: '明长老', first: 'ch-009' }),
+      char('char-empty', { name: '', aliases: [null, 12, '好'] }),
+    ],
+    world: [{ id: 'wb-x', name: '', keys: [null, '夜袭'], enabled: true }, { id: 'wb-y' }],
+    relations: { edges: [rel({ id: 'rel-a' }), rel({ id: 'rel-b', from: null, to: undefined }), null, {}] },
+  });
+  const all = NWRules.runRules(c);
+  assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed'), [],
+    all.filter((x) => x.rule === 'rule-crashed').map((x) => x.message).join(' / '));
+  const picked = all.filter((x) => ['first-appearance-mismatch', 'entry-never-mentioned', 'relation-pair-never-together'].includes(x.rule));
+  assert.ok(picked.every((x) => x.severity === 'info'), '这批只做提示，不做门禁');
+  assert.deepEqual(picked.map((x) => x.fingerprint), [...new Set(picked.map((x) => x.fingerprint))],
+    picked.map((x) => x.fingerprint).join(' / '));
+});

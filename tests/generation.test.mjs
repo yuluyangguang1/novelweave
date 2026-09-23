@@ -595,3 +595,10 @@ test('复述约束在写作要求那一串里（R26 的预防那一半，不只�
   assert.match(prompt, /承接上一章要用自己的话重述/);
   assert.ok(prompt.indexOf('不要照抄前文整句') < prompt.indexOf('字数要求'), '它是写作要求的一条，不是补在末尾的孤儿');
 });
+
+test('点名约束也在写作要求里（R29/R30/R31 的预防那一半）', () => {
+  const prompt = CONT();
+  assert.match(prompt, /第一次写到时要点名/);
+  assert.ok(prompt.indexOf('登记在册的人物、地点与设定') < prompt.indexOf('承接上一章要用自己的话重述'),
+    '出场在前、复述在后：与规则编号同序');
+});

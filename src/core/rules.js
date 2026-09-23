@@ -80,7 +80,9 @@
 
   /** 角色的可检索称呼：本名 + 别名。单字词噪声太大，一律要求两字以上。 */
   function nameForms(c) {
-    const forms = [c.name, ...((c.aliases || []).map((a) => (typeof a === 'string' ? a : a.text)))];
+    // 别名既可能是字符串也可能是 {text}（导入侧两种都见过），非对象要认下来而不是抛错：
+    // 一条规则抛错会被 rule-crashed 吞掉整条输出，等于这条规则对那本书永久失明。
+    const forms = [c.name, ...((c.aliases || []).map((a) => (typeof a === 'string' ? a : a?.text)))];
     return T.uniq(forms.filter((s) => typeof s === 'string' && s.trim().length >= 2));
   }
 
@@ -185,6 +187,32 @@
    */
   function normText(s) {
     return String(s || '').replace(/[^0-9A-Za-z\u4e00-\u9fff]/g, '');
+  }
+
+  /** 一段正文里最早出现的称呼及其引证位置；一个都没有则返回 null。 */
+  function earliestMention(body, forms) {
+    let best = null;
+    for (const f of forms || []) {
+      const i = occurrences(body, f)[0];
+      if (i != null && (best == null || i < best.i)) best = { i, term: f };
+    }
+    return best ? { term: best.term, ...quoteAt(body, best.i, best.term.length) } : null;
+  }
+
+  /**
+   * 一组称呼在正文里最早露面的一次。跳过回忆类标记章，口径与 firstAppearance 一致 ——
+   * R29/R30/R31 都只问「这个人、这个设定，正文里到底有没有出现过」，
+   * 判据不一致就会出现「角色页看得见、连续性页看不见」的自相矛盾。
+   */
+  function firstAppearanceOfForms(ctx, forms) {
+    let best = null;
+    for (const ch of ctx.chapters || []) {
+      if (isExempt(ch) || !Number.isFinite(ch.number)) continue;
+      const at = earliestMention(ch.body || '', forms);
+      if (!at) continue;
+      if (best == null || ch.number < best.n) best = { chapter: ch.id, n: ch.number, ...at };
+    }
+    return best;
   }
 
   function diag(rule, hit) {
@@ -1285,6 +1313,154 @@
       },
     },
 
+    'first-appearance-mismatch': {
+      code: 'R29',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '角色卡上的「首次出场章」与正文对不上。',
+      detail:
+        '把 character.first 与正文里最早的实称命中比对：登记的章更早就出现 → 「first 写晚了」；' +
+        '登记的章里没有该角色任何一个称呼、最早出现在更后面 → 「first 写早了，或那一章只用代称带过」。' +
+        '只认字面称呼（本名 + 别名，≥2 字），跳过 flashback/dream/quoted/offscreen 标记章 —— ' +
+        '回忆章里点不点名说明不了出场次序。角色全书从未露面不在这里报（那是 entry-never-mentioned 的活），' +
+        'first 指向不存在的章也不在这里报（那是 dangling-reference 的活）。' +
+        '恒为 info：「先声后人」是正当写法 —— 第 1 章提到那个人、第 5 章他才登场，卡上填第 5 章没错。',
+      run(ctx) {
+        const out = [];
+        for (const c of ctx.characters || []) {
+          if (c.enabled === false) continue;
+          const declaredId = c.first;
+          if (!declaredId) continue;
+          const forms = nameForms(c);
+          if (!forms.length) continue;
+          const declared = ctx.chapters.find((ch) => ch.id === declaredId);
+          if (!declared || !Number.isFinite(declared.number)) continue;   // 章不存在：R15 的活
+          const actual = firstAppearanceOfForms(ctx, forms);
+          if (!actual || actual.n === declared.number) continue;          // 全书没露面：R30 的活
+          const late = actual.n < declared.number;
+          out.push(diag('first-appearance-mismatch', {
+            chapter: late ? actual.chapter : declaredId,
+            entity: c.id,
+            severity: 'info',
+            confidence: 0.65,
+            evidence: {
+              basis: [`登记的 first=${declaredId}（第 ${declared.number} 章）`,
+                `正文里最早：第 ${actual.n} 章，称呼「${actual.term}」`],
+              quote: actual.quote,
+              offset: actual.offset,
+            },
+            message: late
+              ? `角色「${c.name}」的卡上写着首次出场在第 ${declared.number} 章，正文里他早在第 ${actual.n} 章就露面了。`
+              : `角色「${c.name}」登记首次出场在第 ${declared.number} 章，可那一章没有出现他的任何称呼；最早露面是在第 ${actual.n} 章。`,
+            suggestion: late
+              ? '把卡上的首次出场章改成实际那一章；若那次只是被提到、没有出场，忽略即可。'
+              : '改卡上的首次出场章，或在登记的那一章把他的称呼写出来 —— 全程用「他」「那少年」带过，机器与读者都认不出是谁。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'entry-never-mentioned': {
+      code: 'R30',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '建了档的角色与世界设定，其任何称呼在全书正文里一次都没出现。',
+      detail:
+        '与 unregistered-entity 正好反向：那条查「正文里有名字、账上没档案」，这条查「账上有档案、正文里没名字」。' +
+        '称呼取 nameForms（本名 + 别名）与世界条目的 name/keys/secondary_keys，一律 ≥2 字；' +
+        '回忆/引文章同样算正文，在旧场景里被点过名就算露过面。' +
+        '已写正文不足 3 章时整条不输出 —— 新书期角色卡先建、正文后写，这时候报出来全是催命。' +
+        '关掉的条目（enabled=false）不查。恒为 info：侧面描写、只用代称指代、留到以后才出场，' +
+        '机器分不开，僵尸卡与伏笔中的暗桩长得一模一样。',
+      run(ctx) {
+        const written = (ctx.chapters || []).filter((ch) => String(ch.body || '').trim());
+        if (written.length < 3) return [];
+        const out = [];
+        const seen = (forms) => written.some((ch) => forms.some((f) => ch.body.includes(f)));
+        for (const c of ctx.characters || []) {
+          if (c.enabled === false) continue;
+          const forms = nameForms(c);
+          if (!forms.length || seen(forms)) continue;
+          out.push(diag('entry-never-mentioned', {
+            chapter: null,
+            entity: c.id,
+            severity: 'info',
+            confidence: 0.6,
+            evidence: { basis: [`角色卡「${c.name}」`, `称呼：${forms.join('、')}`, `已写正文 ${written.length} 章`] },
+            message: `角色「${c.name}」建了档，${written.length} 章正文里却没有一处出现他的称呼（${forms.join('、')}）。`,
+            suggestion: '若他还没轮到出场，忽略即可；若正文一直用「他」「那少年」指代，给他一个称呼；若这张卡已废弃，删掉或关掉。',
+          }));
+        }
+        for (const w of ctx.world || []) {
+          if (w.enabled === false) continue;
+          const forms = T.uniq([w.name, ...(w.keys || []), ...(w.secondary_keys || [])]
+            .filter((t) => typeof t === 'string' && t.trim().length >= 2)
+            .map((t) => t.trim()));
+          if (!forms.length || seen(forms)) continue;
+          out.push(diag('entry-never-mentioned', {
+            chapter: null,
+            entity: w.id,
+            severity: 'info',
+            confidence: 0.6,
+            evidence: { basis: [`世界条目「${w.name}」`, `称呼：${forms.join('、')}`, `已写正文 ${written.length} 章`] },
+            message: `设定「${w.name}」登记在案，${written.length} 章正文里一次也没提到（称呼：${forms.join('、')}）。`,
+            suggestion: '设定没写进正文不算错，但读者也就无从得知；确实用不上的条目可以关掉。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'relation-pair-never-together': {
+      code: 'R31',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '登记的关系边，两端角色从未在同一章正文里同时出现。',
+      detail:
+        '同框的判据很宽：某一章正文里两方各自的称呼都出现过一次就算，回忆/引文章也算 —— ' +
+        '旧场景里两人说过话同样是正文支撑。只查两端都已建档、且各自都在正文里露过面的边：' +
+        '从没露面的归 entry-never-mentioned，角色 id 解析不到的归 dangling-reference。' +
+        'from===to 的自环边不查。恒为 info：转述式关系（师父只在他人口中出现）、' +
+        '通信、隔空指令都是正当写法，这条只负责把「账本里亲密、正文里陌生」的边挑出来让人看一眼。',
+      run(ctx) {
+        const edges = ctx.relations?.edges || [];
+        if (!edges.length) return [];
+        const byId = new Map((ctx.characters || []).filter((c) => c.enabled !== false).map((c) => [c.id, c]));
+        const written = (ctx.chapters || []).filter((ch) => String(ch.body || '').trim());
+        if (!written.length) return [];
+        const presence = written.map((ch) => {
+          const hit = new Set();
+          for (const [id, c] of byId) if (nameForms(c).some((f) => ch.body.includes(f))) hit.add(id);
+          return hit;
+        });
+        const out = [];
+        for (const e of edges) {
+          if (!e || !e.from || !e.to || e.from === e.to) continue;
+          const a = byId.get(e.from), b = byId.get(e.to);
+          if (!a || !b) continue;                                   // 建档缺失：R15 的活
+          if (!presence.some((set) => set.has(e.from))) continue;   // 从未露面：R30 的活
+          if (!presence.some((set) => set.has(e.to))) continue;
+          if (presence.some((set) => set.has(e.from) && set.has(e.to))) continue;
+          const label = `${a.name}—${b.name}`;
+          out.push(diag('relation-pair-never-together', {
+            chapter: null,
+            entity: e.id,
+            severity: 'info',
+            confidence: 0.55,
+            evidence: {
+              basis: [`边 ${e.from}→${e.to}（${e.kind || '未写关系类型'}${e.address ? '，称谓：' + e.address : ''}）`,
+                `${a.name} 露面 ${presence.filter((s) => s.has(e.from)).length} 章`,
+                `${b.name} 露面 ${presence.filter((s) => s.has(e.to)).length} 章`,
+                '两人同框 0 章'],
+            },
+            message: `登记的「${label}」${e.kind || '关系'}边，两端角色在正文里从未同章出现。`,
+            suggestion: '若这段关系本来就靠转述成立，忽略即可；若写错了角色或称谓，改这条边；若想让读者看见它，安排两人同场。',
+          }));
+        }
+        return out;
+      },
+    },
   };
 
 
