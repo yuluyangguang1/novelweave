@@ -92,7 +92,7 @@
     }
     files[p('bible/world/_index.json')] = JSON.stringify({
       schemaVersion: Bible.SCHEMA_VERSION, ids: ctx.world.map((w) => w.id), order: ctx.world.map((_, i) => i),
-      scan_depth: 6, token_budget: 1400, recursive_scanning: true,
+      ...Story.loreIndexConfig(),
     }, null, 2) + '\n';
 
     const promises = { schemaVersion: Bible.SCHEMA_VERSION, items: ctx.promises.items.map((i) => pick(i,

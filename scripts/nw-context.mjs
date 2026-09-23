@@ -34,10 +34,15 @@ const budgetBytes = Number(flags.budget) || NWContext.DEFAULTS.contextBytes;
 // 只看世界书触发效果，不出整份文档
 if (flags.lore) {
   const r = NWStory.loreTrigger(flags.text || '', ctx.world, { loreBytes: budgetBytes });
+  // 第几层、被谁带出来都要说：递归触发最容易变成「这条哪来的」
+  const tag = (e) => (e.draggedBy ? `（第 ${e.loreRound} 层，由「${e.draggedBy.join('、')}」的设定带出）` : '');
   emit(json, {
-    included: r.entries.map((e) => ({ id: e.id, name: e.name, bytes: NWText.bytesOf(e.content) })),
+    included: r.entries.map((e) => ({
+      id: e.id, name: e.name, round: e.loreRound, via: e.draggedBy || null,
+      bytes: NWText.bytesOf(e.content),
+    })),
     dropped: r.dropped, bytes: r.bytes,
-  }, r.entries.map((e) => `【${e.name}】${e.content}`).join('\n\n')
+  }, r.entries.map((e) => `【${e.name}】${e.content}${tag(e)}`).join('\n\n')
      + (r.dropped.length ? `\n\n（已裁掉 ${r.dropped.length} 条：${r.dropped.join(', ')}）` : ''));
   process.exit(EXIT.OK);
 }

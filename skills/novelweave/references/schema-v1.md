@@ -91,6 +91,15 @@ conflicts/                        # 仅在有冲突时生成；Web 与 agent 都
   `insertion_order` / `priority` / `enabled` / `case_sensitive`）加书级的
   `scan_depth` / `token_budget` / `recursive_scanning`。**故意不改名**，
   这样「导出为 lorebook」就是纯字段搬运。
+  但**取值语义按织文自己的引擎来**，别按上游理解：`recursive_scanning` 是开关
+  （已实现：第 2 层只从**已注入**条目的正文里再命中，被额度裁掉的不算来源），
+  `scan_depth` 记的是**扫几层**（织文没有聊天条数可扫），`token_budget` 是
+  `loreBytes` 字节的 token 换算（汉字 3 字节 ≈ 1 token）。三个值由
+  `NWStory.loreIndexConfig()` 一处算出，Web 导出与 CLI 存盘共用，
+  守卫测试钉住「文件里写的 == 引擎真做的」——它们曾经写着 `true` 而代码只做单层。
+  **方向是单向的：这份文件声明引擎的行为，不是这本书的可调开关。** 读入侧
+  （`loadBook` 的 `readIndex`）刻意跳过 `_` 开头的索引文件，改这里不会改变行为，
+  而下一次导出会把它重写回常量 —— 按书调扫描深度目前没有入口，别改这里试。
 - 我们自己加的字段：`appearance.tokens[].{since,until}`。上游没有这个，但它是把
   「断臂在第 4 章断了、第 9 章又写她双手抱胸」变成机器可判的唯一办法。
 - 我们自己加的字段：`role_zh`。`role` 是英文枚举，而 Web 界面用中文定位（主角/配角/

@@ -199,7 +199,7 @@ export function saveRecord(bookDir, kind, record) {
   const file = path.join(bookDir, 'bible', sub, `${record.id}.json`);
   writeJsonAtomic(file, record);
   refreshIndex(path.join(bookDir, 'bible', sub), kind === 'world'
-    ? { schemaVersion: SCHEMA_VERSION, ids: [], order: [], scan_depth: 6, token_budget: 1400, recursive_scanning: true }
+    ? { schemaVersion: SCHEMA_VERSION, ids: [], order: [], ...NWStory.loreIndexConfig() }
     : { schemaVersion: SCHEMA_VERSION, ids: [], order: [] });
   return file;
 }

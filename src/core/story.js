@@ -129,12 +129,40 @@
     };
   }
 
+  /**
+   * 递归扫描的开关与层数上限。这是「书级世界书配置」的唯一真源：
+   * 导出到 `bible/world/_index.json` 的 scan_depth / recursive_scanning 一律从这里派生，
+   * 不要再抄一份字面量 —— 那三个字段曾经写着 `true` 而引擎只做单层，属于骗人的声明。
+   * 上限 2 层：第 1 层按正文命中，第 2 层只从已注入条目的正文里再命中一次。
+   * 更深就会把整本世界书顺着一条「灵脉」全拖进 prompt。
+   */
+  const LORE_RECURSION = { recursive: true, rounds: 2 };
+
+  /**
+   * `bible/world/_index.json` 里那三个书级扫描字段的唯一出处（Web 导出与 CLI 存盘共用）。
+   * 以前两处各写一份字面量 `scan_depth: 6, token_budget: 1400, recursive_scanning: true`，
+   * 而引擎只做单层 —— 声明与实现分家。现在导出值一律由这里的常量算出，
+   * 有守卫测试钉住「文件里写的 == 引擎真做的」，改常量不用改文案，改文案不改行为会红。
+   * 字段名沿用 Character Card V2，但按本引擎的语义取值：
+   * 织文没有「聊天条数」可扫，`scan_depth` 记的是**扫几层**；
+   * `token_budget` 是把引擎真正在用的字节额度换成 token（汉字 3 字节 ≈ 1 token）。
+   */
+  function loreIndexConfig() {
+    return {
+      scan_depth: LORE_RECURSION.rounds,
+      token_budget: Math.round(DEFAULT_BUDGET.loreBytes / 3),
+      recursive_scanning: LORE_RECURSION.recursive,
+    };
+  }
+
   /** 上下文字节预算。长篇必爆的第一原因就是无脑塞全文，这里默认按字节硬截。 */
   const DEFAULT_BUDGET = {
     contextBytes: 12288,   // 整份派生上下文
     loreBytes: 4096,       // 其中分给世界设定的额度
     prevTailChars: 2000,   // 前文结尾
     currentTailChars: 3000, // 本章已有正文
+    recursive: LORE_RECURSION.recursive,
+    loreRounds: LORE_RECURSION.rounds,
   };
 
   // ═══════════════════ 世界书关键词触发 ═══════════════════
@@ -169,9 +197,13 @@
   }
 
   /**
-   * 按扫描窗口内出现的关键词挑选世界条目。
-   * constant 条目无条件注入；selective 条目要求主键与副键同时命中。
-   * 排序：priority 降序 → insertion_order 升序；超额即截断（不静默：返回 dropped）。
+   * 按扫描窗口内出现的关键词挑选世界条目，最多 `loreRounds` 层。
+   * 第 1 层扫的是正文本身；之后每层只扫「上一层真正注入的那几条的正文」——
+   * 递归的语义是「已经决定要给作者的设定，把它的同乡带进来」，不是「把全库关键词再过一遍」。
+   * 只扫真正注入的那几条：被额度裁掉的内容模型根本看不到，拿它去带同乡会凭空多出设定。
+   * constant 条目无条件注入（第 1 层就把它们全收进来，后面几层不再有「无条件」这一说）。
+   * 每层内排序 priority 降序 → insertion_order 升序；额度跨层共享、前层先占，
+   * 超额即截断（不静默：返回 dropped）。关到 1 层就是本来的单层扫描行为。
    */
   function loreTrigger(text, entries, opts = {}) {
     const budget = Object.assign({}, DEFAULT_BUDGET, opts);
@@ -180,26 +212,46 @@
       ? hay.slice(-budget.scanDepthChars)
       : hay;
     const pool = (entries || []).map(toLoreEntry).filter((e) => e.enabled && e.content);
-
-    const matched = [];
-    for (const e of pool) {
-      const primary = e.keys.some((k) => hasKey(scanWindow, k, e.case_sensitive));
-      const secondaryOk = !e.selective || !e.secondary_keys.length
-        ? true
-        : e.secondary_keys.some((k) => hasKey(scanWindow, k, e.case_sensitive));
-      if (e.constant || (primary && secondaryOk)) matched.push(e);
-    }
-
-    matched.sort((a, b) => (b.priority - a.priority) || (a.insertion_order - b.insertion_order));
+    const maxRounds = budget.recursive ? Math.max(1, budget.loreRounds || 1) : 1;
 
     const included = [], dropped = [];
+    // 只有「本层命中过」的条目才退出后续层（要么注入、要么被额度裁掉并报出去）；
+    // 本层没命中的必须留下 —— 下一层扫的是别的文本，它可能在那一层才被带出来。
+    const consumed = new Set();
     let bytes = 0;
-    for (const e of matched) {
-      const line = `【${e.name}】${e.content}`;
-      const size = NWText.bytesOf(line);
-      if (bytes + size > budget.loreBytes) { dropped.push(e.id); continue; }
-      bytes += size;
-      included.push(e);
+    let frontier = scanWindow;
+    let sources = [];
+
+    for (let round = 1; round <= maxRounds && frontier; round++) {
+      const matched = [];
+      for (const e of pool) {
+        if (consumed.has(e.id)) continue;
+        const primary = e.keys.some((k) => hasKey(frontier, k, e.case_sensitive));
+        const secondaryOk = !e.selective || !e.secondary_keys.length
+          ? true
+          : e.secondary_keys.some((k) => hasKey(frontier, k, e.case_sensitive));
+        if (e.constant || (primary && secondaryOk)) {
+          consumed.add(e.id);
+          matched.push(e);
+        }
+      }
+      matched.sort((a, b) => (b.priority - a.priority) || (a.insertion_order - b.insertion_order));
+
+      const injectedNow = [];
+      for (const e of matched) {
+        const line = `【${e.name}】${e.content}`;
+        const size = NWText.bytesOf(line);
+        if (bytes + size > budget.loreBytes) { dropped.push(e.id); continue; }
+        bytes += size;
+        e.loreRound = round;
+        if (round > 1) e.draggedBy = sources.slice();
+        included.push(e);
+        injectedNow.push(e);
+      }
+      // 层数上限只有这一处（循环条件里的 round <= maxRounds）；
+      // 再补一句 if (round === maxRounds) break 是同一道闸门的第二份代码 —— 删不掉也测不出。
+      sources = injectedNow.map((e) => e.name);
+      frontier = injectedNow.map((e) => String(e.content)).join('\n');
     }
     return { entries: included, dropped, bytes };
   }
@@ -354,7 +406,7 @@
     };
   }
 
-  return { LORE_BUDGET: DEFAULT_BUDGET, toCharacter, fromCharacter, toWorld, fromWorld, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
+  return { LORE_BUDGET: DEFAULT_BUDGET, LORE_RECURSION, loreIndexConfig, toCharacter, fromCharacter, toWorld, fromWorld, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
     fromDecision, fromRelation, fromSecret,
     toTimeline, toSuppressions, statesFromRows, stateRowsFromFile, dimsOf, toLines, buildCtx, zhRole };
 });

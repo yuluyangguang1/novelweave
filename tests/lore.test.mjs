@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NovelLLM, NWStory, NWContext, NWText } from './_load.mjs';
+import { readFileSync } from 'node:fs';
+import { NovelLLM, NWStory, NWContext, NWText, NWProject, repoPath } from './_load.mjs';
 
 const wb = (over) => Object.assign({ id: 'wb-1', name: '青雾山', type: 'location', description: '终年大雾，山门三千阶。' }, over);
 
@@ -110,4 +111,143 @@ test('一致性检查 prompt 要求只报有原文依据的矛盾', () => {
   const p = NovelLLM.buildConsistencyCheckPrompt('正文'.repeat(50), [{ name: '甲', personality: '寡言' }], [], {});
   assert.ok(p.includes('原文引用'));
   assert.ok(p.includes('一致'));
+});
+
+// ═══════════════ M 族：世界书递归触发（第 2 层从已注入条目的正文里再命中）═══════════════
+
+const chain = () => [
+  wb({ id: 'wb-a', name: '青雾山', description: '山门三千阶，终年大雾。' }),
+  wb({ id: 'wb-b', name: '山门', description: '刻着守拙二字，背后是试剑石。' }),
+  wb({ id: 'wb-c', name: '试剑石', description: '裂了三瓣。' }),
+];
+
+test('递归触发：正文点了 A，A 的设定里点了 B，B 也进来，并记下是谁带的', () => {
+  const r = NWStory.loreTrigger('他踏上青雾山的石阶。', chain());
+  assert.deepEqual(r.entries.map((e) => e.id), ['wb-a', 'wb-b']);
+  assert.equal(r.entries[0].loreRound, 1);
+  assert.equal(r.entries[1].loreRound, 2);
+  assert.deepEqual(r.entries[1].draggedBy, ['青雾山'], '要说清这条不是正文点名的，是设定带出来的');
+});
+
+test('只递归到声明的层数：三跳不发生（顺着一串设定把整本书拖进 prompt 是灾难）', () => {
+  const r = NWStory.loreTrigger('他踏上青雾山的石阶。', chain());
+  assert.equal(r.entries.some((e) => e.id === 'wb-c'), false, '试剑石要靠第 3 层才命中，不该出现');
+});
+
+test('关掉 recursive 就是原来的单层扫描', () => {
+  const r = NWStory.loreTrigger('他踏上青雾山的石阶。', chain(), { recursive: false });
+  assert.deepEqual(r.entries.map((e) => e.id), ['wb-a']);
+});
+
+test('被额度裁掉的条目不许当二跳的来源：它的内容模型根本没看到', () => {
+  const list = [
+    wb({ id: 'wb-a', name: '青雾山', description: `${'山道'.repeat(30)}上有山门` }),
+    wb({ id: 'wb-d', name: '黑水泽', description: '泽。' }),
+    wb({ id: 'wb-b', name: '山门', description: '门。' }),
+  ];
+  // a 太大挤不进去，而只有 a 的正文里写着「山门」。
+  // 若拿「命中但被裁掉」的 a 去带同乡，b 会凭空出现在 prompt 里。
+  const r = NWStory.loreTrigger('青雾山 黑水泽', list, { loreBytes: 40 });
+  assert.deepEqual(r.entries.map((e) => e.id), ['wb-d']);
+  assert.deepEqual(r.dropped, ['wb-a']);
+  assert.equal(r.entries.some((e) => e.id === 'wb-b'), false, '山门只出现在没被注入的那条设定里，不该进来');
+});
+
+test('二跳不抢一跳的额度：层数先于 priority，第 1 层没挤满才轮到第 2 层', () => {
+  const list = [
+    wb({ id: 'wb-z', name: '镇碑', description: '无字。', priority: 99 }),
+    wb({ id: 'wb-a', name: '青雾山', description: `${'雾'.repeat(10)}。` }),
+    wb({ id: 'wb-d', name: '黑水泽', description: `泽底压着镇碑。${'水'.repeat(10)}` }),
+  ];
+  const sizes = ['wb-a', 'wb-d', 'wb-z'].map((id) => {
+    const e = list.find((x) => x.id === id);
+    return NWText.bytesOf(`【${e.name}】${e.description}`);
+  });
+  const budget = sizes[0] + sizes[1];   // 刚好只够两条第 1 层命中的
+  const r = NWStory.loreTrigger('青雾山 黑水泽', list, { loreBytes: budget });
+  assert.deepEqual(r.entries.map((e) => `${e.id}#${e.loreRound}`), ['wb-a#1', 'wb-d#1'],
+    'priority 99 的镇碑排在第 1 层两条之后，于是挤不进来');
+  assert.deepEqual(r.dropped, ['wb-z'], '让位要报出来，不许静默消失');
+});
+
+test('二跳挤不进额度时如实报 dropped，不许静默消失', () => {
+  const list = [
+    wb({ id: 'wb-a', name: '青雾山', description: '山门三千阶。' }),
+    wb({ id: 'wb-b', name: '山门', description: 'z'.repeat(400) }),
+  ];
+  const r = NWStory.loreTrigger('青雾山', list, { loreBytes: 60 });
+  assert.deepEqual(r.entries.map((e) => e.id), ['wb-a']);
+  assert.deepEqual(r.dropped, ['wb-b']);
+});
+
+test('设定互相引用不许死循环，也不许同一条注入两遍', () => {
+  const list = [
+    wb({ id: 'wb-a', name: '青雾山', description: '山门与试剑石都在此。' }),
+    wb({ id: 'wb-b', name: '山门', description: '青雾山的山门，望得见试剑石。' }),
+    wb({ id: 'wb-c', name: '试剑石', description: '山门背后。' }),
+  ];
+  // b、c 都由 a 带出，算第 2 层
+  const r = NWStory.loreTrigger('青雾山', list);
+  assert.deepEqual(r.entries.map((e) => e.id), ['wb-a', 'wb-b', 'wb-c']);
+  assert.deepEqual(r.entries.map((e) => e.loreRound), [1, 2, 2]);
+  assert.equal(new Set(r.entries.map((e) => e.id)).size, r.entries.length);
+
+  // 真正会重复的那一种：正文同时点了两条，而其中一条的设定里又提到另一条。
+  // 第 2 层的扫描文本正是第 1 层注入进来的内容，所以「已注入」的条目必然再次命中 —— 必须跳过。
+  const twice = NWStory.loreTrigger('青雾山的山门下站着人', [
+    wb({ id: 'wb-a', name: '青雾山', description: '山门三千阶。' }),
+    wb({ id: 'wb-b', name: '山门', description: '刻着守拙。' }),
+  ]);
+  assert.deepEqual(twice.entries.map((e) => `${e.id}#${e.loreRound}`), ['wb-a#1', 'wb-b#1'],
+    `实得 ${twice.entries.map((e) => e.id).join(',')} —— 第 2 层把已注入的又加了一遍，还多占一次额度`);
+});
+
+test('selective 条目在二跳同样要主副键齐命中', () => {
+  const list = [
+    wb({ id: 'wb-a', name: '青雾山', description: '山门三千阶。' }),
+    wb({ id: 'wb-b', name: '石阶', secondary_keys: ['不存在'], selective: true, description: '青石。' }),
+  ];
+  assert.deepEqual(NWStory.loreTrigger('青雾山', list).entries.map((e) => e.id), ['wb-a']);
+});
+
+test('constant 条目无条件在场，且第 1 层收齐后二跳不会再重复收', () => {
+  const list = [
+    wb({ id: 'wb-r', name: '灵气九境', type: 'rule', description: '不可逾越。' }),
+    wb({ id: 'wb-x', name: '雾', description: '水汽。' }),
+  ];
+  const r = NWStory.loreTrigger('与设定无关的一句话', list);
+  assert.deepEqual(r.entries.map((e) => e.id), ['wb-r']);
+});
+
+test('守卫：_index.json 写的扫描配置必须等于引擎真做的', async () => {
+  const cfg = NWStory.loreIndexConfig();
+  // 1) 值来自常量，且 recursive 与「默认能不能二跳」一致
+  assert.equal(cfg.recursive_scanning, true);
+  assert.equal(cfg.scan_depth, NWStory.LORE_RECURSION.rounds);
+  assert.equal(cfg.token_budget, Math.round(NWStory.LORE_BUDGET.loreBytes / 3),
+    'token_budget 必须是字节额度的换算，不许又变成一个孤立字面量');
+  const canCascade = NWStory.loreTrigger('青雾山', chain()).entries.length > 1;
+  assert.equal(canCascade, cfg.recursive_scanning, '声明递归就必须真能递归');
+  const deepest = Math.max(...NWStory.loreTrigger('青雾山', [
+    ...chain(), wb({ id: 'wb-z', name: '裂', description: '痕。' }),
+  ]).entries.map((e) => e.loreRound));
+  assert.ok(deepest <= cfg.scan_depth, `实际扫到第 ${deepest} 层，超过声明的 ${cfg.scan_depth}`);
+  // 2) 两份 exporter 都不许再手抄字面量
+  for (const [f, label] of [['src/core/project.js', 'Web 导出'], ['scripts/lib/book.mjs', 'CLI 存盘']]) {
+    const src = readFileSync(repoPath(...f.split('/')), 'utf8');
+    assert.ok(src.includes('loreIndexConfig()'), `${label} 必须用 loreIndexConfig() 派生`);
+    assert.equal(/scan_depth:\s*\d/.test(src), false, `${label} 又写回了字面量 scan_depth`);
+  }
+  // 3) 真导出的那份文件里，三个字段逐项相等
+  const ctx = NWStory.buildCtx({
+    novel: { id: 'novel_m', title: '烟火纪', genre: '仙侠', word_count: 0, chapter_count: 1 },
+    chapters: [{ id: 'ch_a', order: 1, title: '山门', content: '起' }],
+    characters: [], world: [wb({})], promises: [], timeline: [], suppressions: [],
+  });
+  const tree = await NWProject.buildProjectTree(ctx);
+  const key = Object.keys(tree).find((k) => k.endsWith('bible/world/_index.json'));
+  const idx = JSON.parse(tree[key]);
+  assert.deepEqual(
+    { scan_depth: idx.scan_depth, token_budget: idx.token_budget, recursive_scanning: idx.recursive_scanning },
+    cfg);
 });

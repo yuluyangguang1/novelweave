@@ -344,3 +344,25 @@ test('adopt 拒绝重号与判不出章号，不猜出一个错序的书', () =>
   assert.equal(fs.existsSync(path.join(base, 'workspace')), false, '拒绝时不能留下半个项目目录');
   assert.match(got.stdout, /判不出章号|重号/);
 });
+
+test('CLI --lore 说得出这条设定是第几层、被谁带出来的', () => {
+  // 单独造一本书：往共享夹具里塞世界条目会改掉别的用例的诊断数
+  const dir = path.join(tmp, 'lore-box');
+  const book = scaffoldBook(dir, { slug: 'lore', id: 'novel_lore', title: '炉边', genre: '仙侠' });
+  const wb = (over) => Object.assign(NWBible.defaultWorldEntry({ schemaVersion: '1' }), over);
+  writeJsonAtomic(path.join(book, 'bible', 'world', 'wb-a.json'),
+    wb({ id: 'wb-a', name: '青雾山', type: 'location', keys: ['青雾山'], content: '山门三千阶。' }));
+  writeJsonAtomic(path.join(book, 'bible', 'world', 'wb-b.json'),
+    wb({ id: 'wb-b', name: '山门', type: 'location', keys: ['山门'], content: '刻着守拙二字。' }));
+  writeJsonAtomic(path.join(book, 'bible', 'world', 'wb-c.json'),
+    wb({ id: 'wb-c', name: '黑水泽', type: 'location', keys: ['黑水泽'], content: '沼泽。' }));
+
+  const j = JSON.parse(run('nw-context.mjs', [book, '--lore', '--text', '他踏上青雾山。', '--json']).stdout);
+  assert.deepEqual(j.included.map((e) => [e.id, e.round]), [['wb-a', 1], ['wb-b', 2]],
+    '正文只点了青雾山，山门是第二层带出来的');
+  assert.deepEqual(j.included[1].via, ['青雾山']);
+  assert.equal(j.included.some((e) => e.id === 'wb-c'), false);
+
+  const human = run('nw-context.mjs', [book, '--lore', '--text', '他踏上青雾山。']).stdout;
+  assert.match(human, /第 2 层，由「青雾山」的设定带出/, '人读的那份也要交代来源');
+});
