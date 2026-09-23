@@ -256,6 +256,8 @@ function val(id) {
   return el ? el.value.trim() : '';
 }
 
+const isChecked = (id) => document.getElementById(id)?.checked === true;
+
 function emptyHint(text) {
   return `<div style="padding:16px;text-align:center;color:var(--text-secondary);font-size:14px;">${esc(text)}</div>`;
 }
@@ -927,6 +929,7 @@ Object.assign(ACTIONS, {
   'edit-state':      (id, el) => showStateEditor(el.dataset.chapter, el.dataset.entity),
   'jump-diag':       (id, el) => jumpToEvidence(el.dataset.chapter, el.dataset.start, el.dataset.len),
   'suppress-diag':   (id, el) => suppressDiagnostic(el.dataset.fp, el),
+  'fix-first':       (id, el) => fixCharacterFirst(el.dataset.entity, el.dataset.chapter),
   'rerun-continuity': () => renderSidebarPanel(),
 });
 
@@ -1349,7 +1352,7 @@ function readCharacterForm(prefix) {
     personality: val(`${prefix}-personality`),
     appearance: val(`${prefix}-appearance`),
     appearance_tokens: textToTokens(document.getElementById(`${prefix}-tokens`)?.value || ''),
-    aliases: val(`${prefix}-aliases`).split(/[、,，]/).map((s) => s.trim()).filter(Boolean).map((text) => ({ text, kind: 'nickname' })),
+    aliases: splitTerms(val(`${prefix}-aliases`)).map((text) => ({ text, kind: 'nickname' })),
     background: val(`${prefix}-background`),
     notes: val(`${prefix}-notes`),
   };
@@ -1403,27 +1406,53 @@ async function showCharacterList(host) {
 
 // ═══════════════════ 世界设定 ═══════════════════
 
+// 逗号/顿号分隔的称呼表：与角色别名的写法同一把尺，两处两种分隔法只会让作者猜。
+const splitTerms = (s) => s.split(/[、,，]/).map((x) => x.trim()).filter(Boolean);
+
 function worldFields(prefix, w = {}) {
+  const dead = w.lifecycle?.['destroyed-in'] || '';
   return `
     <div class="settings-field"><label class="settings-label">类型</label>
       <select class="settings-select" id="${prefix}-wb-type">
         ${Object.entries(NovelDB.WORLD_TYPES).map(([v, label]) => `<option value="${attr(v)}" ${(w.type || 'location') === v ? 'selected' : ''}>${esc(label)}</option>`).join('')}
       </select></div>
     <div class="settings-field"><label class="settings-label">名称</label>
-      <input class="settings-input" id="${prefix}-wb-name" value="${attr(w.name || '')}" placeholder="名称（会作为触发关键词）"></div>
+      <input class="settings-input" id="${prefix}-wb-name" value="${attr(w.name || '')}" placeholder="名称（没填触发词时就用它）"></div>
+    <div class="settings-field"><label class="settings-label">触发关键词</label>
+      <input class="settings-input" id="${prefix}-wb-keys" value="${attr((w.keys || []).join('、'))}" placeholder="正文里会用什么词提到它，顿号或逗号分开">
+      <div class="settings-hint">续写时按这些词把这条设定带进上下文；规则 R30 也按它们判断「建档却从没提到」。</div></div>
+    <div class="settings-field"><label class="settings-label">副键（需要同时命中才算）</label>
+      <input class="settings-input" id="${prefix}-wb-secondary" value="${attr((w.secondary_keys || []).join('、'))}" placeholder="例如「北宗」只在提到青冥山时才算">
+      <label class="settings-label"><input type="checkbox" id="${prefix}-wb-selective" ${w.selective ? 'checked' : ''}> 要求主键与副键同时命中</label></div>
     <div class="settings-field"><label class="settings-label">详细描述</label>
-      <textarea class="settings-input" id="${prefix}-wb-desc" rows="6" placeholder="详细描述...">${esc(w.description || '')}</textarea></div>`;
+      <textarea class="settings-input" id="${prefix}-wb-desc" rows="6" placeholder="详细描述...">${esc(w.description || '')}</textarea>
+      <div class="settings-hint">这段就是要注入给模型的世界书正文，导出时落在 content 字段。</div></div>
+    <div class="settings-field"><label class="settings-label">在第几章被毁掉（可选）</label>
+      ${chapterSelect(`${prefix}-wb-dead`, dead)}
+      <div class="settings-hint">标了之后，那一章之后的正文若还把它当作还在的东西点名，R28 会报出来。CLI 的 world.destroy 算子写的也是这一格。</div></div>`;
+}
+
+function readWorldForm(prefix, lifecycle = {}) {
+  const dead = val(`${prefix}-wb-dead`);
+  return {
+    type: val(`${prefix}-wb-type`) || 'location',
+    name: val(`${prefix}-wb-name`),
+    description: val(`${prefix}-wb-desc`),
+    keys: splitTerms(val(`${prefix}-wb-keys`)),
+    secondary_keys: splitTerms(val(`${prefix}-wb-secondary`)),
+    selective: isChecked(`${prefix}-wb-selective`),
+    // revealed-in 这一格表单没做（它没有生产者，也没有规则读），回写时不许被顺手抹掉
+    lifecycle: { ...lifecycle, 'destroyed-in': dead || null },
+  };
 }
 
 function showCreateWorldbuilding() {
   showModal('添加世界设定', worldFields('m'), async () => {
-    const name = val('m-wb-name');
-    if (!name) { showToast('请输入名称'); return; }
-    await NovelDB.worldbuilding.create(APP.novel.id, {
-      type: val('m-wb-type') || 'location', name, description: val('m-wb-desc'),
-    });
+    const data = readWorldForm('m');
+    if (!data.name) { showToast('请输入名称'); return; }
+    await NovelDB.worldbuilding.create(APP.novel.id, data);
     closeModal();
-    showToast(`「${name}」已添加`);
+    showToast(`「${data.name}」已添加`);
     await switchTab('world');
   });
 }
@@ -1432,9 +1461,9 @@ async function editWorldbuilding(id) {
   const w = await NovelDB.worldbuilding.get(id);
   if (!w) { showToast('设定不存在'); return; }
   showModal(`编辑设定 · ${w.name}`, worldFields('e', w), async () => {
-    const name = val('e-wb-name');
-    if (!name) { showToast('名称不能为空'); return; }
-    await NovelDB.worldbuilding.update(id, { name, description: val('e-wb-desc'), type: val('e-wb-type') });
+    const data = readWorldForm('e', w.lifecycle);
+    if (!data.name) { showToast('名称不能为空'); return; }
+    await NovelDB.worldbuilding.update(id, data);
     closeModal();
     showToast('已更新');
     await switchTab('world');
@@ -1453,13 +1482,35 @@ async function showWorldList(host) {
   const items = await NovelDB.worldbuilding.list(APP.novel.id);
   const WORLD_ICONS = { location: 'pin', faction: 'bank', rule: 'scroll', system: 'bolt' };
   if (!items.length) { host.innerHTML = emptyHint('点击 + 添加设定'); return; }
+  // 「毁于第几章」要显示章号，所以按登记了的条目去取那几章；没登记的条目一趟都不查
+  const deadIds = [...new Set(items.map((w) => w.lifecycle?.['destroyed-in']).filter(Boolean))];
+  const deadChapters = new Map();
+  for (const id of deadIds) {
+    const c = await NovelDB.chapters.get(id);
+    if (c) deadChapters.set(id, c.order);
+  }
   host.innerHTML = `<div class="char-list">
     ${items.map((w) => `
       <div class="char-card" data-action="edit-world" data-id="${attr(w.id)}">
         <div class="char-card-name">${icon(WORLD_ICONS[w.type] || 'dot')} ${esc(w.name)}</div>
-        <div class="char-card-desc">${esc((w.description || '').slice(0, 80))}</div>
+        <div class="char-card-desc">${esc(worldNote(w, deadChapters))}${esc((w.description || '').slice(0, 80))}</div>
       </div>`).join('')}
   </div>`;
+}
+
+/**
+ * 卡片上先看得见「触发词是哪些、毁在第几章」：这两格填了却看不见，
+ * 作者就只能相信自己刚填的那一次，而 R28/R30 与召回读的是库里的值。
+ * 销毁章查不到（章已删）也照样标出来 —— 那是一个该被发现的状态，不是错误。
+ */
+function worldNote(w, deadChapters) {
+  const parts = [];
+  const keys = (w.keys || []).filter(Boolean);
+  if (keys.length) parts.push(`触发 ${keys.length} 词`);
+  if ((w.secondary_keys || []).length) parts.push(`副键 ${w.secondary_keys.length}${w.selective ? '·需同中' : ''}`);
+  const deadId = w.lifecycle?.['destroyed-in'];
+  if (deadId) parts.push(deadChapters.has(deadId) ? `毁于第${deadChapters.get(deadId)}章` : '毁于（章已删）');
+  return parts.length ? `[${parts.join(' · ')}] ` : '';
 }
 
 // ═══════════════════ 笔记 ═══════════════════
@@ -1911,6 +1962,8 @@ async function showContinuity(host) {
       const code = NWRules.RULES[d.rule]?.code || d.rule;
       const quote = d.evidence?.quote;
       const off = d.evidence?.offset || [];
+      // R29 只有「first 写晚了」那一支带 suggestFirst（rules.js 里判的），所以这里天然只在那一支出按钮
+      const fixTo = d.rule === 'first-appearance-mismatch' ? (d.evidence?.suggestFirst || '') : '';
       return `<div class="char-card" ${d.chapter ? `data-action="jump-diag" data-chapter="${attr(d.chapter)}" data-start="${off[0] ?? ''}" data-len="${(off[1] ?? 0) - (off[0] ?? 0)}"` : ''}>
         <div class="char-card-name">${sevIcon}<span class="diag-code">${code}</span> · ${esc(d.chapter || '全书')}</div>
         <div class="char-card-desc">${esc(d.message)}</div>
@@ -1918,6 +1971,7 @@ async function showContinuity(host) {
         ${d.suggestion ? `<div class="diag-suggest">→ ${esc(d.suggestion)}</div>` : ''}
         <div class="diag-actions">
           <button class="btn btn-secondary" data-action="suppress-diag" data-fp="${attr(d.fingerprint)}" title="确认是有意的（闪回/伏笔故意悬置），不再提醒">豁免</button>
+          ${fixTo ? `<button class="btn btn-secondary" data-action="fix-first" data-entity="${attr(d.entity)}" data-chapter="${attr(fixTo)}" title="机器已按正文算出最早露面那一章，直接写进这张角色卡">照正文改</button>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -1928,6 +1982,22 @@ async function suppressDiagnostic(fingerprint, el) {
   if (reason === null) return;
   await NovelDB.suppressions.save(APP.novel.id, fingerprint, reason || '作者确认');
   showToast('已豁免，可撤销');
+  await renderSidebarPanel();
+}
+
+/**
+ * R29 说「正文里他早在第 N 章就露面了」，那就别只让作者照着那句话手抄进角色卡：
+ * 章 id 机器已经算得出（evidence.suggestFirst），一键写回即可。
+ * 只服务「first 写晚了」那一支 —— 另一支的问题是登记那一章没点名，
+ * 把 first 改到露面那一章等于把「本该出场却只用代称带过」这件事抹掉。
+ */
+async function fixCharacterFirst(entityId, chapterId) {
+  if (!entityId || !chapterId) return;
+  const c = await NovelDB.characters.get(entityId);
+  if (!c) { showToast('角色卡已经不在了'); return; }
+  await NovelDB.characters.update(entityId, { first: chapterId });
+  const ch = (APP.chaptersCache || []).find((x) => x.id === chapterId);
+  showToast(`「${c.name}」的首次出场已改成${ch ? `第${ch.order}章` : '正文最早露面那一章'}，重新检查后即生效`);
   await renderSidebarPanel();
 }
 

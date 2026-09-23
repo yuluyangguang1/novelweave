@@ -34,7 +34,10 @@ function rowsFixture() {
       // 作者在文体面板上关过一组、加过禁词：这份开关是本作品的设定，导出必须带着走
       stylePack: { enabled: true, disabled: ['simile'], extraBanned: ['紫气东来'] } },
     chapters, characters,
-    world: [{ id: 'wb_qing', name: '青雾山', type: 'location', description: '终年大雾，山门三千阶。' },
+    world: [{ id: 'wb_qing', name: '青雾山', type: 'location', description: '终年大雾，山门三千阶。',
+      // 界面上新开的几格：触发词、副键（含 selective）、销毁章 —— 导出导入必须原样带回来
+      keys: ['青雾山', '北宗故地'], secondary_keys: ['北宗'], selective: true,
+      lifecycle: { 'destroyed-in': 'ch_a1', 'revealed-in': null } },
             { id: 'wb_rule', name: '灵气九境', type: 'rule', description: '不可逾越。' }],
     promises: [{ id: 'p_001', type: 'promise', title: '半枚铜印', status: 'planted', weight: 'major',
       setup: { chapter: 'ch_a1', evidence: '师父塞给我' }, payoff: { chapter: null, due: 'ch_a1' } }],
@@ -188,6 +191,16 @@ test('同一份内容的「库行」与「文件记录」必须算出同一个�
 
   // 派生字段不参与
   assert.equal(await H('chapter', ctx.chapters[0]), await H('chapter', { ...sameChapter, word_count: 99999, updated_at: 1, xWords: 7 }));
+
+  // 世界条目：销毁章只有那么一格，而且没有别的字段跟着一起动。投影里漏了它，
+  // 「我在界面上标了它毁于第 3 章」在合并时就被判成没改，文件版直接盖掉本地版。
+  const sameWorld = parsed.world.find((r) => r.id === ctx.world[0].id);
+  assert.notEqual(await H('world', ctx.world[0]),
+    await H('world', { ...sameWorld, lifecycle: { ...(sameWorld.lifecycle || {}), 'destroyed-in': 'ch_a2' } }),
+    '只改销毁章必须改变哈希，否则 R28 的依据会在导入时被静默覆盖');
+  assert.notEqual(await H('world', ctx.world[0]),
+    await H('world', { ...sameWorld, lifecycle: { ...(sameWorld.lifecycle || {}), 'revealed-in': 'ch_a1' } }),
+    'revealed-in 也要参与：它是 world.reveal 算子写的那一格');
 });
 
 test('sync.json 给每一类记录都留了基线哈希，否则导入时无从判断谁改过', async () => {
@@ -430,4 +443,35 @@ test('Web 导出的信息差，CLI 侧的 R20 读得到（agent 那条路不是�
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+/**
+ * 世界设定表单新开的几格（触发词 / 副键 + selective / 销毁章）走的是「界面上填得出、
+ * 导出去带得回」这条底线：只填得进 IndexedDB 不算数，导出丢字段等于下次同步时被静默抹掉。
+ */
+test('世界条目在界面上填的那几格，导出→解析→再导出要一格不丢', async () => {
+  const ctx = NWStory.buildCtx(rowsFixture());
+  const tree = await NWProject.buildProjectTree(ctx);
+  const key = (t) => Object.keys(t).find((k) => k.endsWith('bible/world/wb_qing.json'));
+  const file = JSON.parse(tree[key(tree)]);
+  assert.deepEqual(file.keys, ['青雾山', '北宗故地']);
+  assert.deepEqual(file.secondary_keys, ['北宗']);
+  assert.equal(file.selective, true);
+  assert.equal(file.lifecycle['destroyed-in'], 'ch_a1');
+
+  const parsed = NWProject.parseFileMap(tree);
+  const row = parsed.world.find((w) => w.id === 'wb_qing');
+  assert.deepEqual(row.keys, ['青雾山', '北宗故地'], '导入没把触发词读回库行');
+  assert.deepEqual(row.secondary_keys, ['北宗'], '导入没把副键读回库行');
+  assert.equal(row.selective, true, '导入丢了 selective，副键就从「必须同时命中」变成「也算命中」');
+  assert.equal(row.lifecycle['destroyed-in'], 'ch_a1', '导入丢了销毁章，R28 会对这条设定永久失明');
+
+  const second = await NWProject.buildProjectTree(NWStory.buildCtx({
+    ...rowsFixture(), world: [row, parsed.world.find((w) => w.id === 'wb_rule')],
+  }));
+  const again = JSON.parse(second[key(second)]);
+  assert.deepEqual(again.keys, file.keys, '导入后顺手再导出，触发词就没了');
+  assert.deepEqual(again.secondary_keys, file.secondary_keys);
+  assert.equal(again.selective, true);
+  assert.equal(again.lifecycle['destroyed-in'], 'ch_a1');
 });

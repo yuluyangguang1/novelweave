@@ -731,6 +731,8 @@ test('R29 first 写早了：登记那一章没点到名，正文里更后面才�
   assert.equal(d[0].severity, 'info');
   assert.equal(d[0].chapter, 'ch-002', '要把作者送到他登记错的那一章');
   assert.ok(d[0].message.includes('最早露面是在第 4 章'), d[0].message);
+  assert.equal(d[0].evidence.suggestFirst, null,
+    '「写早了」那一支不许给出可写回的章：照着改等于把「那一章根本没点名」这件事抹平');
 });
 
 test('R29 first 写晚了：第 2 章就露面、卡上却写第 4 章 → 落在实际那一章，offset 指到称呼', () => {
@@ -743,6 +745,7 @@ test('R29 first 写晚了：第 2 章就露面、卡上却写第 4 章 → 落�
   assert.equal(d[0].chapter, 'ch-002');
   assert.equal(body.slice(d[0].evidence.offset[0], d[0].evidence.offset[1]), '林烟火');
   assert.ok(d[0].message.includes('正文里他早在第 2 章就露面'), d[0].message);
+  assert.equal(d[0].evidence.suggestFirst, 'ch-002', '界面上的「照正文改」写的就是这一格');
 });
 
 test('R29 对得上就不报，且不许靠崩来对得上', () => {
@@ -809,6 +812,24 @@ test('R30 世界条目同理：keys 或 secondary_keys 里任一称呼被写到�
   })), 'entry-never-mentioned');
   assert.deepEqual(run('他去了别处。').map((x) => x.entity), ['wb-1']);
   assert.deepEqual(run('北宗的人来了。'), [], 'secondary_keys 也是正文里的称呼');
+});
+
+test('R28 与 R30 用的是同一把尺：只被副键点名的设定，一条不报、另一条必报', () => {
+  // 「北宗」只在 secondary_keys 里。R30 认副键 → 它算露过面，不报僵尸卡；
+  // R28 也认副键 → 它毁于第 1 章、第 3 章又拿副键点名，必须报。
+  // 两边都改成「只认 keys」的话，这条测试的两半不会同时坏 —— 所以必须同时断言两条规则。
+  const c = ctx({
+    chapters: [ch(1, { body: '北宗在这一剑之下没了。' }), ch(2, { body: '井台。' }), ch(3, { body: '北宗的人来了。' })],
+    world: [{ id: 'wb-1', name: '青冥山', keys: ['青冥山'], secondary_keys: ['北宗'], enabled: true,
+      lifecycle: { 'destroyed-in': 'ch-001', 'revealed-in': null } }],
+  });
+  const all = NWRules.runRules(c);
+  assert.deepEqual(of(all, 'entry-never-mentioned').map((x) => x.entity), [],
+    '副键被点过名就不算僵尸卡');
+  const dead = of(all, 'world-destroyed-after');
+  assert.equal(dead.length, 1, '同一个称呼在毁灭之后出现，R28 不许因为它是副键就当没看见');
+  assert.equal(dead[0].chapter, 'ch-003');
+  assert.ok(dead[0].evidence.basis[0].includes('北宗'), dead[0].evidence.basis.join(' / '));
 });
 
 test('R30 已写正文不足 3 章整条静默（新书期卡片先建、正文后写）', () => {

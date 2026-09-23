@@ -414,3 +414,131 @@ test('文体规则面板：控件全被读走，存进库的键与包认的键�
   assert.match(js, /update\(APP\.novel\.id, \{ stylePack \}\)/, '保存按钮没把表单写进 novel.stylePack');
   assert.match(read('src/core/story.js'), /rows\.novel\.stylePack/, 'buildCtx 没把 stylePack 过桥给 R22 与生成 prompt');
 });
+
+/**
+ * R28（毁灭后还点名）与 R30（建档却从没点名）问的是同一件事的两面，
+ * 所以「一条设定在正文里可能被怎么叫」必须只有一个出处。分家过的两次都在别人身上见过：
+ * 一边认副键一边不认，表现是一条规则判它活着、另一条判它从没出现过。
+ */
+test('守卫：世界条目的称呼集只有一处手写，R28/R30 都调 worldForms', () => {
+  const js = read('src/core/rules.js');
+  assert.match(js, /const terms = worldForms\(w\);/, 'R28 又自己拼了一份称呼集');
+  assert.match(js, /const forms = worldForms\(w\);/, 'R30 又自己拼了一份称呼集');
+  assert.equal([...js.matchAll(/\[w\.name, \.\.\.\(w\.keys \|\| \[\]\)/g)].length, 1,
+    '称呼集的构造只许出现在 worldForms 里，出现第二处就说明两条规则又分家了');
+});
+
+/**
+ * 世界设定的触发词/副键/销毁章曾经只有 CLI 写得出来：R28、R30 与两层召回全读这几格，
+ * 界面上却既填不进也看不见。表单补齐之后，这条守卫负责让「填不进」不再悄悄回来 ——
+ * 设置页那条守卫只盯 s-/ws- 前缀，这里这种 m-wb-* / e-wb-* 是它的盲区。
+ */
+test('世界设定表单：每个控件都有人读，读回来的键 db 落库、导出带得走', () => {
+  const js = read('src/app.js');
+  const form = js.match(/function worldFields\([\s\S]*?\n\}/)?.[0] || '';
+  const reader = js.match(/function readWorldForm\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(form && reader, 'app.js 里找不到世界表单或它的读取器');
+  const ids = [...new Set([...form.matchAll(/\$\{prefix\}-([\w-]+)/g)].map((m) => m[1]))];
+  assert.deepEqual(ids.filter((k) => !reader.includes(`-${k}`)), [],
+    `这些控件的值从来没被读走：${ids.filter((k) => !reader.includes(`-${k}`)).join('、')}`);
+  // 新建与编辑必须共用同一个读取器：两份读取器迟早有一份漏字段
+  assert.match(js, /NovelDB\.worldbuilding\.create\(APP\.novel\.id, data\)/, '新建没走 readWorldForm 的 data');
+  assert.match(js, /NovelDB\.worldbuilding\.update\(id, data\)/, '编辑没走 readWorldForm 的 data');
+
+  const store = read('src/core/db.js').match(/async function createWorldbuilding\([\s\S]*?\n\}/)?.[0] || '';
+  const saved = [...reader.matchAll(/^\s{4}(\w+):/gm)].map((m) => m[1]);
+  assert.ok(saved.includes('keys') && saved.includes('secondary_keys') && saved.includes('selective')
+    && saved.includes('lifecycle'), `读取器没产出这几格：${saved.join('、')}`);
+  for (const k of ['keys', 'secondary_keys', 'selective', 'lifecycle']) {
+    assert.ok(store.includes(`${k}:`), `createWorldbuilding 不落 ${k}，界面上填了也只活到本次会话`);
+  }
+  // 这几格的名字必须与规则/导出认的字段名一字不差（story.js 的 toWorld 是过桥处）
+  const story = read('src/core/story.js');
+  const toWorld = story.match(/function toWorld\([\s\S]*?\n\}/)?.[0] || '';
+  for (const k of ['keys', 'secondary_keys', 'selective', 'lifecycle', 'content']) {
+    assert.ok(toWorld.includes(k), `toWorld 不认 ${k}，界面上的这一格进不了文件也进不了规则`);
+  }
+  // 称呼表的解析器只许有一把：角色别名与世界触发词分开写，分隔法迟早两边不一样
+  assert.equal([...js.matchAll(/split\(\/、,，\//g)].length, 0,
+    '又手写了一份顿号/逗号切分，应该调 splitTerms');
+  assert.match(js, /splitTerms\(val\(`\$\{prefix\}-aliases`\)\)/, '角色别名不再用 splitTerms，两把尺要分家了');
+  // 填得进还得看得见：列表卡片必须调用摘要函数（摘要本身的内容在下一条里按行为验）。
+  // 注意锚点要带模板插值的壳 —— 只写 worldNote(w, deadChapters) 会连函数定义那行一起匹配上。
+  assert.match(js, /\$\{esc\(worldNote\(w, deadChapters\)\)\}/, '设定列表不再显示这几格，作者只能相信自己刚填的那一次');
+});
+
+test('R29「照正文改」：按钮只在机器给出建议章时出现，且有处理器', () => {
+  const js = read('src/app.js');
+  assert.match(js, /data-action="fix-first"/, '诊断卡上没有一键改 first 的按钮');
+  assert.match(js, /^\s+'fix-first':\s*\(id, el\) =>/m, 'fix-first 没注册进 ACTIONS，点了静默不动');
+  assert.match(js, /NovelDB\.characters\.update\(entityId, \{ first: chapterId \}\)/,
+    '处理器没把章 id 写进角色卡的 first');
+  // 按钮的数据源必须是规则给出的那一章，不能是「当前诊断指向的那一章」——后者在 first 写早了那支是登记章
+  const rules = read('src/core/rules.js');
+  assert.match(rules, /suggestFirst: late \? actual\.chapter : null/,
+    'R29 不再只给「写晚了」那一支提供可写回目标，按钮会去掩盖「那一章没点名」这个问题');
+  assert.match(js, /d\.rule === 'first-appearance-mismatch' \? \(d\.evidence\?\.suggestFirst \|\| ''\)/,
+    '按钮的显示条件不再只看 suggestFirst，可能把别的规则的字段当章号用');
+});
+
+/**
+ * 上一节那条守卫只查「控件有没有被读」，查不出「用什么读」写错。
+ * 真出过的事：读取器里调 checked(...)，而 checked 只是文体规则面板里的一个局部 const ——
+ * 静态看它在文件里确实「有声明」，浏览器里点保存才炸，且弹窗把异常吞了、界面上毫无症状。
+ * 所以这里把读取链真的跑一遍：从 app.js 抠出这几段源码，在假 DOM 下调用，键名与值都核对。
+ */
+test('世界设定读取链在假 DOM 下真跑得通（助手名写错=点保存静默失败）', () => {
+  const js = read('src/app.js');
+  const parts = {
+    val: js.match(/\nfunction val\(id\) \{[\s\S]*?\n\}/)?.[0],
+    isChecked: js.match(/\nconst isChecked = [^\n]*/)?.[0],
+    splitTerms: js.match(/\nconst splitTerms = [^\n]*/)?.[0],
+    readWorldForm: js.match(/\nfunction readWorldForm\([\s\S]*?\n\}/)?.[0],
+  };
+  for (const [k, src] of Object.entries(parts)) {
+    assert.ok(src, `app.js 里抠不出 ${k}，读取链测试的形状变了，改测试也改这里`);
+  }
+  const fields = {
+    'm-wb-type': { value: 'faction' },
+    'm-wb-name': { value: '  青冥山 ' },
+    'm-wb-desc': { value: '终年大雾。' },
+    'm-wb-keys': { value: '青冥、北宗故地,青雾' },
+    'm-wb-secondary': { value: '祭石' },
+    'm-wb-selective': { checked: true },
+    'm-wb-dead': { value: 'ch-002' },
+  };
+  const run = (lifecycle) => new Function('document',
+    `${Object.values(parts).join('\n')} return readWorldForm('m', ${JSON.stringify(lifecycle)});`)({
+      getElementById: (id) => fields[id] ?? null,
+    });
+  assert.deepEqual(run({ 'revealed-in': 'ch-001', 'destroyed-in': '旧值' }), {
+    type: 'faction',
+    name: '青冥山',
+    description: '终年大雾。',
+    keys: ['青冥', '北宗故地', '青雾'],
+    secondary_keys: ['祭石'],
+    selective: true,
+    lifecycle: { 'revealed-in': 'ch-001', 'destroyed-in': 'ch-002' },
+  }, '界面上填的这几格没有原样读出来');
+  // 空销毁章必须写成 null，不能留 ''：CLI 与 R28 都按 null 判「没毁」
+  for (const k of Object.keys(fields)) delete fields[k];
+  fields['m-wb-name'] = { value: '甲' };
+  assert.deepEqual(run({}), {
+    type: 'location', name: '甲', description: '', keys: [], secondary_keys: [],
+    selective: false, lifecycle: { 'destroyed-in': null },
+  }, '清空表单时读出来的值不对');
+
+  // 读回来还要看得见：卡片摘要的三段各对应表单里的一格，缺一格等于那格白填
+  const noteSrc = js.match(/\nfunction worldNote\([\s\S]*?\n\}/)?.[0];
+  assert.ok(noteSrc, 'app.js 里抠不出 worldNote');
+  const renderNote = (w, deadEntries) => new Function('dead',
+    `${noteSrc} return worldNote(${JSON.stringify(w)}, new Map(dead));`)(deadEntries);
+  assert.equal(renderNote({
+    keys: ['青冥', '北宗故地'], secondary_keys: ['祭石', '故地'], selective: true,
+    lifecycle: { 'destroyed-in': 'ch-003' },
+  }, [['ch-003', 3]]), '[触发 2 词 · 副键 2·需同中 · 毁于第3章] ');
+  assert.equal(renderNote({ keys: [], lifecycle: {} }, []), '',
+    '什么都没填的设定不该顶着一空括号');
+  assert.equal(renderNote({ keys: ['甲'], lifecycle: { 'destroyed-in': 'ch-999' } }, []),
+    '[触发 1 词 · 毁于（章已删）] ', '销毁章被删了要看得见，而不是静默当成没毁');
+});

@@ -172,8 +172,8 @@ Web 端目前的 5 个 store 到新格式的映射。完整字段表在实现导
 | `type` | `type` | 值域已一致（`location`/`faction`/`rule`/`system`），新增 `item`/`creature`/`custom` |
 | `details` | `details` | 直接搬（当前是死字段，保留兼容） |
 | — | `constant` | 新，默认 `type` 为 `rule` 或 `system` 时为 `true`（力量体系与法则应当无条件在场） |
-| — | `selective` / `secondary_keys` / `position` / `insertion_order` / `priority` / `enabled` / `case_sensitive` | 新，`false` / `[]` / `before_character_definition` / `100 + index*10` / `0` / `true` / `false` |
-| — | `lifecycle` | 新，`{destroyed-in:null, revealed-in:null}` |
+| — | `selective` / `secondary_keys`（这两格界面上也能填，导出—解析—再导出必须原样往返）/ `position` / `insertion_order` / `priority` / `enabled` / `case_sensitive` | 新，`false` / `[]` / `before_character_definition` / `100 + index*10` / `0` / `true` / `false` |
+| — | `lifecycle` | 新，`{destroyed-in:null, revealed-in:null}`。`destroyed-in` 有两个写入处：侧栏「世界设定」的「在第几章被毁掉」，与 CLI 的 `world.destroy`；R28 读的就是它 |
 
 ### `notes` → 分流
 

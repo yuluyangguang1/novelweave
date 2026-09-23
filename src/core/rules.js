@@ -87,6 +87,18 @@
   }
 
   /**
+   * 一条世界设定在正文里可能被叫到的所有说法：本名 + 主键 + 副键。
+   * R28（毁灭后还点名）与 R30（建档却从没点名）问的是同一件事的两面 ——
+   * 「正文里到底有没有提过这个东西」，所以必须共用这一把尺。
+   * 分成两份迟早出现「R30 认副键所以判它活着，R28 不认副键所以漏掉它复活」。
+   */
+  function worldForms(w) {
+    return T.uniq([w.name, ...(w.keys || []), ...(w.secondary_keys || [])]
+      .filter((s) => typeof s === 'string' && s.trim().length >= 2)
+      .map((s) => s.trim()));
+  }
+
+  /**
    * 人名候选抽取：只出候选，不断定谁是角色。
    * R9（未登记实体）与 `nw-io adopt`（散稿建档）共用这一套识别器 ——
    * 分成两份迟早会出现「建档时看得见、检查时看不见」的自相矛盾。
@@ -1267,8 +1279,9 @@
       detail:
         '只读 lifecycle["destroyed-in"]：这个字段由 nw-changes 的 world.destroy 算子写入，' +
         '导出导入一路带着走，此前没有任何规则读它 —— 记了不查等于没记。' +
-        '取条目本名与 keys 里 ≥2 字的称呼，在销毁章**之后**的正文字面检索，一条设定只报最早撞见的那一章，' +
-        '带 flashback/dream/quoted/offscreen 标记的章跳过。' +
+        '取本名与主副键里 ≥2 字的称呼（worldForms，与 R30 同一把尺），在销毁章**之后**的正文字面检索，' +
+        '一条设定只报最早撞见的那一章，带 flashback/dream/quoted/offscreen 标记的章跳过。' +
+        '副键也算点名：读者看到别名同样会被提醒「这东西还在」，漏掉它就是漏报。' +
         '恒为 info：写废墟、旧地重提与忘了它已经毁掉，机器分不开。' +
         'lifecycle["revealed-in"] 不查 —— 它没有任何生产者，而世界条目的名字天然早于正式解释出现，' +
         '这条判据按构造就是噪声。',
@@ -1281,9 +1294,7 @@
           if (!deadId) continue;
           const deadN = ctx.chapterNumbers.get(deadId);
           if (deadN == null) continue;                 // 引了不存在的章：R15 的活
-          const terms = T.uniq([w.name, ...(w.keys || [])]
-            .filter((t) => typeof t === 'string' && t.trim().length >= 2)
-            .map((t) => t.trim()));
+          const terms = worldForms(w);
           if (!terms.length) continue;
           for (const ch of sorted) {
             if (isExempt(ch) || !Number.isFinite(ch.number) || ch.number <= deadN) continue;
@@ -1324,7 +1335,9 @@
         '只认字面称呼（本名 + 别名，≥2 字），跳过 flashback/dream/quoted/offscreen 标记章 —— ' +
         '回忆章里点不点名说明不了出场次序。角色全书从未露面不在这里报（那是 entry-never-mentioned 的活），' +
         'first 指向不存在的章也不在这里报（那是 dangling-reference 的活）。' +
-        '恒为 info：「先声后人」是正当写法 —— 第 1 章提到那个人、第 5 章他才登场，卡上填第 5 章没错。',
+        '恒为 info：「先声后人」是正当写法 —— 第 1 章提到那个人、第 5 章他才登场，卡上填第 5 章没错。' +
+        '「first 写晚了」那一支在 evidence.suggestFirst 里给出正文最早露面的章 id，' +
+        '界面上「照正文改」用的就是它 —— 机器算得出，就别只把活儿交给作者手抄一遍。',
       run(ctx) {
         const out = [];
         for (const c of ctx.characters || []) {
@@ -1348,12 +1361,15 @@
                 `正文里最早：第 ${actual.n} 章，称呼「${actual.term}」`],
               quote: actual.quote,
               offset: actual.offset,
+              // 只有「登记写晚了」这一支给可写回的目标章：另一支的问题是那一章没点名，
+              // 把 first 改成正文最早露面那一章等于把「本该出场却只用代称」这件事抹掉。
+              suggestFirst: late ? actual.chapter : null,
             },
             message: late
               ? `角色「${c.name}」的卡上写着首次出场在第 ${declared.number} 章，正文里他早在第 ${actual.n} 章就露面了。`
               : `角色「${c.name}」登记首次出场在第 ${declared.number} 章，可那一章没有出现他的任何称呼；最早露面是在第 ${actual.n} 章。`,
             suggestion: late
-              ? '把卡上的首次出场章改成实际那一章；若那次只是被提到、没有出场，忽略即可。'
+              ? '照正文改：把卡上的首次出场章改成上面算出的那一章；若那次只是被提到、并没有出场，忽略即可。'
               : '改卡上的首次出场章，或在登记的那一章把他的称呼写出来 —— 全程用「他」「那少年」带过，机器与读者都认不出是谁。',
           }));
         }
@@ -1394,9 +1410,7 @@
         }
         for (const w of ctx.world || []) {
           if (w.enabled === false) continue;
-          const forms = T.uniq([w.name, ...(w.keys || []), ...(w.secondary_keys || [])]
-            .filter((t) => typeof t === 'string' && t.trim().length >= 2)
-            .map((t) => t.trim()));
+          const forms = worldForms(w);
           if (!forms.length || seen(forms)) continue;
           out.push(diag('entry-never-mentioned', {
             chapter: null,

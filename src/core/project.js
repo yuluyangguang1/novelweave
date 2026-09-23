@@ -214,6 +214,10 @@
           id: w.id, name: w.name, type: w.type || 'custom',
           keys: w.keys || [w.name], secondary_keys: w.secondary_keys || [],
           constant: !!w.constant, selective: !!w.selective, content: w.content || '',
+          // 销毁章是 R28 的唯一依据，也是界面上能填的一格。投影里没有它 = 只改这一格
+          // 不算作者内容变化，三方合并会把两边都判成「没改」，文件版直接盖掉本地版。
+          // 摊成定长数组：老文件没这个键，与库行里的 null 必须算同一个值。
+          lifecycle: [w.lifecycle?.['destroyed-in'] ?? null, w.lifecycle?.['revealed-in'] ?? null],
         };
       }
       case 'promise': {

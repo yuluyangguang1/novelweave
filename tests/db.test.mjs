@@ -73,3 +73,37 @@ test('putRow 放行 secrets，也照样拒绝未知表名', async () => {
   assert.equal((await NovelDB.secrets.list(n.id))[0].id, 'sec_from_file', '导入必须尊重文件里的 id');
   await assert.rejects(() => NovelDB.putRow('bogus_table', { id: 'x' }), /未知 store/);
 });
+
+/**
+ * 世界设定的触发词/副键/销毁章曾经只有 CLI 写得进来：界面上填的那几格走的是
+ * createWorldbuilding，它漏一个键，那一格就只活到刷新为止 —— 而 R28/R30 与
+ * 两层召回读的全是库里的值。所以这里按「表单交下来的形状」真写一次库。
+ */
+test('界面上填的世界设定四格必须真落库，改描述不许冲掉它们', async () => {
+  const n = await freshNovel('世界条目落库');
+  const w = await NovelDB.worldbuilding.create(n.id, {
+    type: 'location', name: '青冥山', description: '终年大雾。',
+    keys: ['青冥', '北宗故地'], secondary_keys: ['祭石'], selective: true,
+    lifecycle: { 'destroyed-in': 'ch-003', 'revealed-in': null },
+  });
+  const back = await NovelDB.worldbuilding.get(w.id);
+  assert.deepEqual(back.keys, ['青冥', '北宗故地'], '触发词没落库：召回带不出来，R30 只认本名');
+  assert.deepEqual(back.secondary_keys, ['祭石']);
+  assert.equal(back.selective, true, '副键「要不要同时命中」丢了，召回口径就变了');
+  assert.equal(back.lifecycle['destroyed-in'], 'ch-003', '销毁章丢了，R28 整条静默');
+
+  await NovelDB.worldbuilding.update(w.id, { description: '改了描述' });
+  const again = await NovelDB.worldbuilding.get(w.id);
+  assert.equal(again.description, '改了描述');
+  assert.deepEqual(again.keys, ['青冥', '北宗故地'], '编辑一格不该把别的格冲掉');
+  assert.equal(again.lifecycle['destroyed-in'], 'ch-003');
+});
+
+test('AI 起书建的世界条目：没填的格子落成可用的空值，不是 undefined', async () => {
+  const n = await freshNovel('起书条目');
+  const w = await NovelDB.worldbuilding.create(n.id, { name: '井台', type: 'custom', description: '' });
+  assert.deepEqual(w.keys, [], '没填触发词要给空数组：规则与召回都是 .length 判断，undefined 会崩');
+  assert.deepEqual(w.secondary_keys, []);
+  assert.equal(w.selective, false);
+  assert.equal(w.lifecycle['destroyed-in'], null, '没标销毁章必须是 null，不能是 undefined');
+});

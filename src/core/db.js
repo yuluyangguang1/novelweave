@@ -479,6 +479,11 @@ async function createWorldbuilding(novelId, data) {
     id: newId('wb'), novel_id: novelId,
     type: data.type || 'location', name: data.name,
     description: data.description || '', details: data.details || {},
+    // 触发词、副键与销毁章：R28/R30 和世界书召回读的就是这几格。
+    // 以前只有 CLI 写得出来，界面上填不出 —— 存下来才不会「导入进来、下次导出又没了」。
+    keys: data.keys || [], secondary_keys: data.secondary_keys || [],
+    selective: !!data.selective,
+    lifecycle: data.lifecycle || { 'destroyed-in': null, 'revealed-in': null },
     created_at: Date.now(),
   });
 }
