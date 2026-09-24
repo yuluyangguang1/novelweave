@@ -623,3 +623,71 @@ test('文件 → 库行的翻译只许有 core 里那一份，界面不许再拼
   assert.doesNotMatch(app, /format:\s*parsed\.book\.format/, '界面层自己翻译 format：core 那份一改它就静默落后');
 });
 
+
+/**
+ * 选题评分卡横跨四处：判据在 core、界面上那张卡、CLI 那张卡、确认弹窗的解析。
+ * 每一处只要自己另算一份（阈值、词表、或那四个控件的解析），
+ * 表现就是「界面说 12 分、命令行说 9 分」，而且两边各自的测试都是绿的。
+ */
+test('评分卡：分数只从 core 那一份来，界面与 CLI 都不抄阈值、不抄词表', () => {
+  const app = read('src/app.js');
+  const cli = read('scripts/nw-pitch.mjs');
+  assert.match(app, /NWPitch\.scorePitch\(/, '界面自己算分 = 第二份判据');
+  assert.match(cli, /NWPitch\.scorePitch\(/, 'CLI 同理');
+  assert.match(cli, /NWPitch\.renderLines\(/, '人读的那份文字必须与 JSON 同源');
+  // 阈值与词表抄一份就会各说各话
+  assert.doesNotMatch(app, /退婚|赘婿|开局签到/, '套路词表进了界面就有第二份');
+  assert.doesNotMatch(cli, /0\.85|0\.6\b|1200|4000/, 'CLI 里出现阈值数字，说明它没走 core');
+  assert.doesNotMatch(app, /选题评分 \$\{[^}]*\/12/, '满分数字写死在界面里，core 改档位界面不会跟着变');
+});
+
+test('评分卡那张弹窗：重新评分按钮有处理器，弹窗控件的解析只有一份', () => {
+  const js = read('src/app.js');
+  assert.match(js, /id="pitch-recalc"/, '按钮没渲染就是点了没反应');
+  assert.match(js, /querySelector\('#pitch-recalc'\)\.onclick\s*=/, '渲染了但没人挂处理器');
+  assert.match(js, /function wirePitchCard\(/, '两个向导各挂一遍接线，必有一份落后');
+  assert.ok((js.match(/wirePitchCard\(/g) || []).length >= 3, '两个向导都要挂上这张卡');
+  assert.match(js, /function readConceptForm\(/);
+  // 保存处理器一旦绕过 readConceptForm 自己再解析一遍，「评分看的」与「建档存的」就不是同一份内容
+  assert.doesNotMatch(js, /getElementById\(('inp-c-[a-z]+'|id)\)\.value/, '弹窗控件被解析了两遍');
+  assert.match(js, /await showConceptConfirm\(/, '确认弹窗要读库做对照，不 await 就是异常被弹窗吞掉那种死法');
+  assert.match(js, /await showLongConceptConfirm\(/);
+});
+
+/**
+ * 弹窗那六格在假 DOM 下真读一遍。长篇向导的人物那一格原先被切了两遍
+ * （parseLines 已按 | 拆过，又拿拆出来的名字去拆 role/personality），
+ * 于是主角与性格从来进不了库、且一声不响 —— 静态守卫看不见这种 bug，只有真跑才看得见。
+ */
+test('确认弹窗六格在假 DOM 下读回来的就是作者填的（人物定位与性格不许丢）', () => {
+  const js = read('src/app.js');
+  const valSrc = js.match(/\nfunction val\(id\) \{[\s\S]*?\n\}/)?.[0];
+  const reader = js.match(/\nfunction readConceptForm\([\s\S]*?\n\}/)?.[0];
+  assert.ok(valSrc && reader, 'app.js 里抠不出 val / readConceptForm');
+  const fields = {
+    'inp-c-title': { value: ' 归途 ' },
+    'inp-c-logline': { value: '他必须赶在末班车前把信送到，可只剩一站了' },
+    'inp-c-chars': { value: '陈默|主角|沉默，认死理\n红衣女|反派|一直在笑\n|主角|没名字的算他不存在' },
+    'inp-c-world': { value: '4号线|每晚 23:47 发车\n|空名字不要' },
+    'inp-c-vols': { value: '第一卷|进城，认出凶手|但凶手也在找他' },
+    'inp-c-chapters': { value: '首班车|陈默数乘客，发现多了一个？\n|只有拍点没有标题\n|  ' },
+  };
+  const read_ = () => new Function('document', `${valSrc}\n${reader} return readConceptForm();`)({
+    getElementById: (id) => fields[id] ?? null,
+  });
+  const got = read_();
+  assert.equal(got.title, '归途');
+  assert.deepEqual(got.characters, [
+    { name: '陈默', role: '主角', personality: '沉默，认死理' },
+    { name: '红衣女', role: '反派', personality: '一直在笑' },
+  ], '人物三格必须原样读出来，空名字的丢掉');
+  assert.deepEqual(got.volumes, [{ title: '第一卷', summary: '进城，认出凶手|但凶手也在找他' }], '拍点里剩下的竖线不许被吃掉');
+  assert.deepEqual(got.world, [{ name: '4号线', content: '每晚 23:47 发车' }]);
+  assert.deepEqual(got.chapters.map((c) => c.title), ['首班车', '第2章', '第3章'], '空标题按第 N 章补，行本身不能丢');
+  assert.deepEqual(got.chapters.map((c) => c.beat), ['陈默数乘客，发现多了一个？', '只有拍点没有标题', '']);
+  // 短篇弹窗没有世界/卷纲这两格：读不到控件就是空数组，不能抛
+  delete fields['inp-c-world'];
+  delete fields['inp-c-vols'];
+  assert.deepEqual(read_().world, []);
+  assert.deepEqual(read_().volumes, []);
+});

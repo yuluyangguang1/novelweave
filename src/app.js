@@ -494,7 +494,7 @@ function showAIShortWizard() {
     // 确认框自己会 showModal → closeModal，不必在这里先关一次。
     const genre = val('inp-ai-genre') || '不限';
     const words = Number(document.getElementById('inp-ai-platform')?.selectedOptions[0]?.dataset.words || 0);
-    showConceptConfirm(concept, genre, words || null);
+    await showConceptConfirm(concept, genre, words || null);
   };
   // 平台联动篇幅档：阈值只有一个出处（NovelLLM.platformTierIndex），这里不许再抄一份数字
   document.getElementById('inp-ai-platform').onchange = function () {
@@ -505,11 +505,62 @@ function showAIShortWizard() {
   setTimeout(() => document.getElementById('inp-ai-idea')?.focus(), 60);
 }
 
-/** 梗概确认：书名 / 一句话 / 章节（标题|拍点，一行一章）/ 人物（名字|角色|性格），全部可直接改。 */
-function showConceptConfirm(concept, genre, targetWords = null) {
+/** 梗概确认弹窗那些控件 → concept。两个向导的保存与「重新评分」共用这一份解析，不许分叉。 */
+function readConceptForm() {
+  const rows = (id) => val(id).split('\n').map((l) => l.trim()).filter(Boolean);
+  const pairs = (id) => rows(id).map((l) => {
+    const [a, ...rest] = l.split('|');
+    return { a: (a || '').trim(), b: rest.join('|').trim() };
+  });
+  const chapters = pairs('inp-c-chapters').map((c, i) => ({ title: c.a || `第${i + 1}章`, beat: c.b }));
+  // 人物那一格原本在长篇向导里被切了两遍（先按 | 拆成 a/b，再拿 a 去拆 role/personality），
+  // 于是「名字|主角|性格」只有名字进得了库，定位一律退回配角、性格一律为空 —— 不报错。
+  const characters = rows('inp-c-chars')
+    .map((l) => {
+      const [name, role, ...rest] = l.split('|');
+      return { name: (name || '').trim(), role: (role || '配角').trim(), personality: rest.join('|').trim() };
+    })
+    .filter((c) => c.name);
+  const world = pairs('inp-c-world').filter((w) => w.a).map((w) => ({ name: w.a, content: w.b }));
+  const volumes = pairs('inp-c-vols').filter((v) => v.a).map((v) => ({ title: v.a, summary: v.b }));
+  return { title: val('inp-c-title'), logline: val('inp-c-logline'), characters, chapters, world, volumes };
+}
+
+const PITCH_RECALC_BTN = '<button class="btn btn-secondary" id="pitch-recalc" style="width:100%;margin-top:8px">按我改的内容重新评分</button>';
+
+/** 那张卡上没有一个数字是界面自己算的：分数、话术、词表条数全部来自 NWPitch。 */
+function pitchCardHTML(concept, opts) {
+  const res = NWPitch.scorePitch(concept, opts);
+  const sevOf = (d) => (d.score >= d.max ? 'sev-ok' : d.score >= d.max - 1 ? 'sev-info' : d.score > 0 ? 'sev-warn' : 'sev-error');
+  const rows = res.dims.map((d) => `<div class="char-card-desc">${d.label} <b class="${sevOf(d)}">${d.score}/${d.max}</b>`
+    + `${d.reason ? '：' + esc(d.reason) : ''}`
+    + `${d.advice ? `<div class="diag-suggest">→ ${esc(d.advice)}</div>` : ''}</div>`).join('');
+  const against = opts.others && opts.others.length
+    ? `已与库里 ${opts.others.length} 本书的梗概比对过撞车`
+    : '库里没有其它书可比对，是否撞车未查';
+  return `<div class="char-card-name">选题评分 <span class="diag-code">${res.total}/${res.max}</span> · ${esc(res.verdict)}</div>${rows}`
+    + `<div class="settings-hint">判据与 CLI 同一份（node scripts/nw-pitch.mjs rubric）；套路词表是手写的 ${res.basis.clicheListSize} 个词、不是平台榜单数据；${against}。分数不拦建档。</div>`;
+}
+
+/** 一张卡挂进确认弹窗：渲染 + 「重新评分」的接线。两个向导共用这一份，别各挂一遍。 */
+function wirePitchCard(cardEl, novels, concept, base) {
+  // 撞车对照用库里其它书的梗概；同名的一律剔掉 —— 自己不该成为自己的对照书
+  const optsFor = (c) => Object.assign({}, base, {
+    others: novels.filter((n) => n.title !== c.title).map((n) => n.description).filter(Boolean),
+  });
+  const paint = (c) => {
+    cardEl.innerHTML = pitchCardHTML(c, optsFor(c)) + PITCH_RECALC_BTN;
+    cardEl.querySelector('#pitch-recalc').onclick = () => paint(readConceptForm());
+  };
+  paint(concept);
+}
+
+async function showConceptConfirm(concept, genre, targetWords = null) {
   const chText = concept.chapters.map((c) => `${c.title}|${c.beat}`).join('\n') || '开篇|第一屏就立住钩子';
   const peText = concept.characters.map((c) => `${c.name}|${c.role}|${c.personality}`).join('\n');
+  const novels = await NovelDB.novels.list();
   showModal('确认梗概 —— 每一项都可以改', `
+    <div class="char-card" id="pitch-card"></div>
     <div class="settings-field"><label class="settings-label">书名</label>
       <input class="settings-input" id="inp-c-title" value="${attr(concept.title)}" maxlength="50"></div>
     <div class="settings-field"><label class="settings-label">一句话梗概</label>
@@ -520,33 +571,27 @@ function showConceptConfirm(concept, genre, targetWords = null) {
       <textarea class="settings-input" id="inp-c-chars" rows="4">${esc(peText)}</textarea></div>
     <p class="usage-bar" style="margin-top:8px;">保存即建档：书 + 角色 + 空章节。正文由你逐章「续写」产出，生成完自动过机检。</p>
   `, async () => {
-    const title = val('inp-c-title');
-    if (!title) { showToast('书名不能为空'); return; }
-    const chapters = document.getElementById('inp-c-chapters').value.split('\n')
-      .map((l) => l.trim()).filter(Boolean)
-      .map((l, i) => { const [t, b] = l.split('|'); return { title: (t || `第${i + 1}章`).trim(), beat: (b || '').trim() }; });
-    if (!chapters.length) { showToast('至少要有一章'); return; }
-    const chars = document.getElementById('inp-c-chars').value.split('\n')
-      .map((l) => l.trim()).filter(Boolean)
-      .map((l) => { const [name, role, personality] = l.split('|'); return { name: (name || '').trim(), role: (role || '配角').trim(), personality: (personality || '').trim() }; })
-      .filter((c) => c.name);
+    const form = readConceptForm();
+    if (!form.title) { showToast('书名不能为空'); return; }
+    if (!form.chapters.length) { showToast('至少要有一章'); return; }
     const novel = await NovelDB.novels.create({
-      title, genre: genre === '不限' ? '短篇' : genre,
-      description: document.getElementById('inp-c-logline').value.trim(), format: 'short', targetWords,
+      title: form.title, genre: genre === '不限' ? '短篇' : genre,
+      description: form.logline, format: 'short', targetWords,
     });
-    for (const c of chars) await NovelDB.characters.create(novel.id, c);
-    for (let i = 0; i < chapters.length; i++) {
-      await NovelDB.chapters.create(novel.id, { title: chapters[i].title, summary: chapters[i].beat, order: i + 1 });
+    for (const c of form.characters) await NovelDB.characters.create(novel.id, c);
+    for (let i = 0; i < form.chapters.length; i++) {
+      await NovelDB.chapters.create(novel.id, { title: form.chapters[i].title, summary: form.chapters[i].beat, order: i + 1 });
     }
     closeModal();
-    showToast(`梗概已建档：${chapters.length} 章。进第一章点「续写」即可成稿。`);
+    showToast(`梗概已建档：${form.chapters.length} 章。进第一章点「续写」即可成稿。`);
     await renderHomePage();
     router.go('workspace', { novelId: novel.id });
     // 向导的收尾一步：建档即问要不要连续生成（可停，不是无确认直出）
-    if (confirm(`梗概已建档。\n\n立即连续生成全部 ${chapters.length} 章正文？\n每章自动过机检并自修一轮，过程中可随时停止，已完成的章节不受影响。`)) {
+    if (confirm(`梗概已建档。\n\n立即连续生成全部 ${form.chapters.length} 章正文？\n每章自动过机检并自修一轮，过程中可随时停止，已完成的章节不受影响。`)) {
       await batchGenerateBook(novel.id);
     }
   });
+  wirePitchCard(document.getElementById('pitch-card'), novels, concept, { genre, targetWords, format: 'short' });
 }
 
 // ═══════════════════ AI 起书（长篇从零向导 · 卷纲层） ═══════════════════
@@ -659,18 +704,20 @@ function showAILongWizard() {
     catch (e) { showToast('解析失败：' + e.message); return; }
     // 同短篇向导：题材要在弹窗拆掉之前读走，先 closeModal 再读就是 null
     const genreL = val('inp-ai-genre-l') || '玄幻';
-    showLongConceptConfirm(concept, genreL);
+    await showLongConceptConfirm(concept, genreL);
   };
   setTimeout(() => document.getElementById('inp-ai-idea-l')?.focus(), 60);
 }
 
 /** 长篇骨架确认：书名 / 梗概 / 人物 / 世界设定 / 卷纲 / 首卷章纲，全部可直接改。 */
-function showLongConceptConfirm(concept, genre) {
+async function showLongConceptConfirm(concept, genre) {
   const chText = concept.chapters.map((c) => `${c.title}|${c.beat}`).join('\n') || '第一章|主角以动作或抉择出场，章末留钩子';
   const wText = concept.world.map((w) => `${w.name}|${w.content}`).join('\n');
   const vText = concept.volumes.map((v) => `${v.title}|${v.summary}`).join('\n');
   const peText = concept.characters.map((c) => `${c.name}|${c.role}|${c.personality}`).join('\n');
+  const novels = await NovelDB.novels.list();
   showModal('确认长篇骨架 —— 每一项都可以改', `
+    <div class="char-card" id="pitch-card"></div>
     <div class="settings-field"><label class="settings-label">书名</label>
       <input class="settings-input" id="inp-c-title" value="${attr(concept.title)}" maxlength="50"></div>
     <div class="settings-field"><label class="settings-label">一句话梗概</label>
@@ -685,39 +732,29 @@ function showLongConceptConfirm(concept, genre) {
       <textarea class="settings-input" id="inp-c-chapters" rows="8">${esc(chText)}</textarea></div>
     <p class="usage-bar" style="margin-top:8px;">保存即建档：书 + 角色 + 世界设定 + 卷纲（写入写作笔记）+ 带拍点的空章节。正文由你逐章「续写」产出。</p>
   `, async () => {
-    const title = val('inp-c-title');
-    if (!title) { showToast('书名不能为空'); return; }
-    const parseLines = (id) => document.getElementById(id).value.split('\n')
-      .map((l) => l.trim()).filter(Boolean)
-      .map((l) => { const [a, ...rest] = l.split('|'); return { a: (a || '').trim(), b: rest.join('|').trim() }; });
-    const chapters = parseLines('inp-c-chapters').filter((c) => c.a);
-    if (!chapters.length) { showToast('至少要有一章'); return; }
+    const form = readConceptForm();
+    if (!form.title) { showToast('书名不能为空'); return; }
+    if (!form.chapters.length) { showToast('至少要有一章'); return; }
     const novel = await NovelDB.novels.create({
-      title, genre: genre === '不限' ? '长篇' : genre,
-      description: document.getElementById('inp-c-logline').value.trim(), format: 'long',
+      title: form.title, genre: genre === '不限' ? '长篇' : genre,
+      description: form.logline, format: 'long',
     });
-    for (const c of parseLines('inp-c-chars')) {
-      if (!c.a) continue;
-      const [name, role, personality] = c.a.split('|');
-      await NovelDB.characters.create(novel.id, { name: (name || '').trim(), role: (role || '配角').trim(), personality: (personality || '').trim() });
+    for (const c of form.characters) await NovelDB.characters.create(novel.id, c);
+    for (const w of form.world) await NovelDB.worldbuilding.create(novel.id, { name: w.name, type: 'custom', description: w.content });
+    if (form.volumes.length) {
+      await NovelDB.notes.save(novel.id, { title: '卷纲', content: form.volumes.map((v) => `【${v.title}】${v.summary}`).join('\n') });
     }
-    for (const w of parseLines('inp-c-world')) {
-      if (!w.a) continue;
-      await NovelDB.worldbuilding.create(novel.id, { name: w.a, type: 'custom', description: w.b });
-    }
-    const vols = parseLines('inp-c-vols').filter((v) => v.a);
-    if (vols.length) {
-      await NovelDB.notes.save(novel.id, { title: '卷纲', content: vols.map((v) => `【${v.a}】${v.b}`).join('\n') });
-    }
-    for (let i = 0; i < chapters.length; i++) {
-      await NovelDB.chapters.create(novel.id, { title: chapters[i].a, summary: chapters[i].b, order: i + 1 });
+    for (let i = 0; i < form.chapters.length; i++) {
+      await NovelDB.chapters.create(novel.id, { title: form.chapters[i].title, summary: form.chapters[i].beat, order: i + 1 });
     }
     closeModal();
-    showToast(`长篇骨架已建档：${chapters.length} 章。逐章「续写」即可成稿。`);
+    showToast(`长篇骨架已建档：${form.chapters.length} 章。逐章「续写」即可成稿。`);
     await renderHomePage();
     router.go('workspace', { novelId: novel.id });
-    if (confirm(`立即连续生成已建档的 ${chapters.length} 章正文？每章自动过机检，可随时停止。`)) await batchGenerateBook(novel.id);
+    if (confirm(`立即连续生成已建档的 ${form.chapters.length} 章正文？每章自动过机检，可随时停止。`)) await batchGenerateBook(novel.id);
   });
+  // 长篇没有目标字数那一格（建档不带 target_words），篇幅维如实给 0 分并让人去定一个
+  wirePitchCard(document.getElementById('pitch-card'), novels, concept, { genre, targetWords: null, format: 'long' });
 }
 
 // ═══════════════════ 连续生成（短/长篇 · 逐章自动续写 + 机检自检） ═══════════════════

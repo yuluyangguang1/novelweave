@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v5'; // v5: 加 tension.js —— 与 v4 同一个道理，旧壳里没有它就静默少一组规则
+const VERSION = 'nw-v6'; // v6: 加 pitch.js —— 旧壳里没有它，向导上的评分卡就整块不出现
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 
@@ -23,6 +23,7 @@ const PRECACHE = [
   'src/core/bible.js',
   'src/core/stylepack.js',
   'src/core/tension.js',
+  'src/core/pitch.js',
   'src/core/rules.js',
   'src/core/story.js',
   'src/core/context.js',

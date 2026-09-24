@@ -58,6 +58,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 | "这条伏笔回收了" | 同上（`promise.payoff`） |
 | "我已经有三十章稿子，想管起来" | `nw-io.mjs adopt <目录> --title X --dry-run`，看报告再落盘 |
 | "这章读着像 AI 写的" | `nw-prose.mjs probe` + `packet`，按引擎清单交接；本机没外部引擎就 `nw-prose.mjs lint`（见 `references/prose-handoff.md`） |
+| "这个选题行不行 / 换个题材试试" | `nw-pitch.mjs score`（打分四维 + 弱项怎么改，见 `references/pitch-card.md`）；要问评分标准本身先 `nw-pitch.mjs rubric` |
 | "把这本书导出给织文网页 / 从网页备份导入" | `references/io.md` |
 | "这是什么格式？字段什么意思" | 读 `references/schema-v1.md` |
 
@@ -173,6 +174,7 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 - 要写 `---CHANGES---` 但 op 不熟、或某条变更被拒 → 读 `references/changes-protocol.md`
 - 用户质疑某条诊断、或要求解释规则 → 读 `../novelweave-continuity/references/rules.md`
 - 要做文体（去 AI 味）检查、或 `status` 里一堆「正文已改，结论过期」→ 读 `references/prose-handoff.md`
+- 动笔前要判一个选题成不成立、或作者质疑「凭什么说我这不行」→ 读 `references/pitch-card.md`
 - 需要新建文件 → 用 `assets/templates/` 下的模板，别手搓字段
 - `locate` 报 `needsMigrate: true` → 立即读 `references/schema-v1.md` 的 Migration 段，停止其他操作
 
@@ -193,6 +195,8 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 | `nw-prose.mjs lint --chapter <id> [--record]` | 本机没有外部引擎时的兜底：内置去 AI 味包，只数禁词密度与句式套路 | 0（不是门禁）/ 2 缺 `--chapter` |
 | `nw-prose.mjs record --chapter <id> --engine <id> --result …` | 把外部引擎的结论记进 `continuity/prose.json` | 0 / 2 参数不合规 |
 | `nw-prose.mjs status` | 作者问"这几章文字靠谱吗"、或交付前自查 | **恒为 0，不是门禁** |
+| `nw-pitch.mjs score [bookDir] [对照书…]` | 动笔前判选题立不立得住（也可 `--concept 梗概.json`） | **恒为 0，分数只是建议** / 2 用法 / 5 读文件失败 |
+| `nw-pitch.mjs rubric` | 作者质疑评分标准，或要知道词表是手写的 | 0 |
 
 统一约定：`--json` 走 stdout 纯结果，人类日志走 stderr。**不要解析 stderr。**
 

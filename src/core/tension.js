@@ -138,12 +138,15 @@
    * 光说「你有伏笔没回收」等于没说。只算已登记的 promise，candidate（自动登记、作者未确认）不算债。
    */
   function tally(ctx) {
-    const items = (ctx && ctx.promises && ctx.promises.items) || [];
-    const chapters = (ctx && ctx.chapters) || [];
+    const items = (ctx && ctx.promises && Array.isArray(ctx.promises.items)) ? ctx.promises.items : [];
+    const chapters = Array.isArray(ctx && ctx.chapters) ? ctx.chapters.filter((c) => c && typeof c === 'object') : [];
     const num = new Map(chapters.map((c) => [c.id, c.number]));
     const last = chapters.reduce((m, c) => Math.max(m, c.number || 0), 0);
     let open = 0, overdue = 0, oldest = 0;
     for (const it of items) {
+      // 账本里混进空条目（导入的半坏文件、界面异步留下的洞）不许把数债这件事整批打崩：
+      // tally 一抛，吃它的 prompt 注入与评分卡会一起静默失效。
+      if (!it || typeof it !== 'object') continue;
       if (it.type !== 'promise' || it.weight === 'candidate') continue;
       if (it.status === 'paid-off' || it.status === 'dropped' || it.status === 'cancelled') continue;
       open += 1;

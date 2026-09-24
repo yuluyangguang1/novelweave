@@ -366,3 +366,84 @@ test('CLI --lore 说得出这条设定是第几层、被谁带出来的', () => 
   const human = run('nw-context.mjs', [book, '--lore', '--text', '他踏上青雾山。']).stdout;
   assert.match(human, /第 2 层，由「青雾山」的设定带出/, '人读的那份也要交代来源');
 });
+
+// ═══════════ nw-pitch.mjs · 选题评分卡 ═══════════
+
+test('nw-pitch rubric 把判据摊开说，并声明哪些东西它不测', () => {
+  const j = JSON.parse(run('nw-pitch.mjs', ['rubric', '--json'], 0).stdout);
+  assert.deepEqual(j.dims.map((d) => d.id), ['hook', 'diff', 'structure', 'length']);
+  assert.ok(j.words.length >= 20 && j.maxPerDim === 3);
+  assert.ok(j.notMeasured.includes('平台榜单'), '不测什么必须写出来，否则作者以为它查过热榜');
+  const human = run('nw-pitch.mjs', ['rubric'], 0).stdout;
+  assert.match(human, /手写的 \d+ 个词/);
+  assert.match(human, /明确不测/);
+  assert.match(human, /恒退 0/);
+});
+
+test('nw-pitch score 读磁盘上的一本书，与 core 同一份分数', () => {
+  const j = JSON.parse(run('nw-pitch.mjs', [bookDir, '--json'], 0).stdout);
+  assert.equal(j.basis.kind, 'ctx', '已导出到磁盘的书按 ctx 判');
+  assert.equal(j.book, '烟火纪');
+  assert.ok(j.total >= 0 && j.total <= 12);
+  const human = run('nw-pitch.mjs', [bookDir], 0).stdout;
+  assert.match(human, new RegExp(`选题评分 ${j.total}/12 —— ${j.verdict}`), '人类可读那份的分数必须是同一个数');
+  assert.match(human, /撞车未查/);
+});
+
+test('分数再低也不阻断：评分卡不是门禁', () => {
+  const j = JSON.parse(run('nw-pitch.mjs', [bookDir, '--json'], 0).stdout);
+  assert.ok(j.total < 12, '这本夹具书本来就该有弱项');
+  run('nw-pitch.mjs', [bookDir], 0);
+  run('nw-pitch.mjs', [], 2);
+  // 在项目目录下不给书路径 = 只有一本时用那本，不猜第二本
+  assert.equal(JSON.parse(run('nw-pitch.mjs', ['score', '--json'], 0).stdout).book, '烟火纪');
+  run('nw-pitch.mjs', ['score', '--concept', path.join(tmp, 'nope.json')], 5);
+});
+
+test('nw-pitch --concept 吃向导那份 JSON，没填字数按 0 分并提示去选平台', () => {
+  const file = path.join(tmp, 'concept.json');
+  writeJsonAtomic(file, {
+    title: '最后一班地铁',
+    logline: '末班车司机发现多出来的乘客三年前就死了，谁来把她送回去？',
+    characters: [{ name: '陈默', role: '主角', personality: '认死理' }, { name: '红衣女', role: '反派', personality: '总在笑' }],
+    chapters: [{ title: '首班车', beat: '陈默数乘客，发现多了一个？' }, { title: '末班车', beat: '突然，红衣女在终点站下车了' }],
+  });
+  const bare = JSON.parse(run('nw-pitch.mjs', ['score', '--concept', file, '--json'], 0).stdout);
+  assert.equal(bare.basis.kind, 'concept');
+  assert.equal(bare.dims.find((d) => d.id === 'length').score, 0);
+  assert.match(bare.dims.find((d) => d.id === 'length').advice, /平台/);
+  assert.equal(bare.dims.find((d) => d.id === 'hook').score, 3);
+
+  const set = JSON.parse(run('nw-pitch.mjs', ['score', '--concept', file, '--words', '8000', '--format', 'short', '--json'], 0).stdout);
+  assert.equal(set.total, 12);
+  assert.equal(set.verdict, '可以动笔');
+  assert.match(run('nw-pitch.mjs', ['score', '--concept', file]).stdout, /《最后一班地铁》/);
+
+  const bad = path.join(tmp, 'bad-concept.json');
+  writeFileAtomic(bad, '{这不是 JSON');
+  const r = run('nw-pitch.mjs', ['score', '--concept', bad], 5);
+  assert.match(r.stderr, /不是合法 JSON/);
+});
+
+test('nw-pitch --against 才查撞车，且绝不跟自己比', () => {
+  const other = path.join(tmp, 'against-box');
+  const twin = scaffoldBook(other, {
+    slug: 'twin', id: 'novel_twin', title: '末班车', genre: '悬疑',
+    description: '末班车司机发现多出来的乘客三年前就死了，谁来把她送回去？',
+  });
+  const concept = path.join(tmp, 'concept2.json');
+  writeJsonAtomic(concept, { title: '归途', logline: '末班车司机发现多出来的乘客三年前就死了，谁来把她送回去？', characters: [], chapters: [] });
+
+  const j = JSON.parse(run('nw-pitch.mjs', ['score', '--concept', concept, '--against', twin, '--json'], 0).stdout);
+  assert.deepEqual(j.against, ['末班车']);
+  assert.match(j.dims.find((d) => d.id === 'diff').reason, /重合/);
+
+  // 给自己打分时对照表里只有自己：剔掉它，否则每本书都跟自己撞车
+  const self = JSON.parse(run('nw-pitch.mjs', [twin, '--json'], 0).stdout);
+  assert.deepEqual(self.against, []);
+  assert.ok(!/重合/.test(self.dims.find((d) => d.id === 'diff').reason), '自己不该成为自己的对照书');
+  // 点名拿自己当对照：要说清「没比成是因为只有你自己」，不许推给「没给对照书」
+  const selfHuman = run('nw-pitch.mjs', [twin, '--against', twin]).stdout;
+  assert.match(selfHuman, /对照只有这本书自己/);
+  assert.ok(!/未给对照书/.test(selfHuman), '给了 --against 却被说成没给，那是撒谎');
+});

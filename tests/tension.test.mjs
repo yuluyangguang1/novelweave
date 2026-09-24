@@ -238,3 +238,9 @@ test('三条新规则的指纹稳定：同一本书跑两次，指纹一字不�
   assert.deepEqual(once.map((d) => d.fingerprint), twice.map((d) => d.fingerprint));
   assert.ok(once.length && once.every((d) => d.source === 'machine'));
 });
+test('tally 是公用助手：账本里有空条目、章节不是数组，也不许抛（一抛所有喂它的地方一起瞎）', () => {
+  assert.deepEqual(NWTension.tally({ promises: { items: [null, undefined, 'x'] }, chapters: [] }), { open: 0, overdue: 0, oldest: 0 });
+  assert.deepEqual(NWTension.tally({ promises: { items: null }, chapters: null }), { open: 0, overdue: 0, oldest: 0 });
+  assert.deepEqual(NWTension.tally({ promises: { items: [{ type: 'promise', status: 'planted' }] }, chapters: [null] }), { open: 1, overdue: 0, oldest: 0 });
+  assert.deepEqual(NWTension.tally(null), { open: 0, overdue: 0, oldest: 0 });
+});
