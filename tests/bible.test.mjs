@@ -137,3 +137,27 @@ test('含换行的值写成转义单行：原样拼行会让 frontmatter 解析�
   const back = NWBible.parseChapterFile(file);
   assert.equal(back.meta.summary, meta.summary, '换行必须原样读回');
 });
+/**
+ * 校验器对不认识的关键字是「报 error」而不是放过（放过等于让 schema 撒谎）。
+ * 于是 schema 里多写一个 JSON Schema 有、我们没实现的关键字，平时一点动静都没有 ——
+ * 等那个属性真的出现在某本书的文件里，整本书就被判违规。
+ * `format` 上的 "default" 就是这么埋了两周的：那阵子没有任何一处会把 format 写进 book.json。
+ */
+test('schema 里不许出现校验器不认的关键字', () => {
+  const bad = [];
+  const walk = (node, where) => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+    for (const [k, v] of Object.entries(node)) {
+      if (k === 'properties' || k === '$defs') {
+        // 这一层的键是「属性名」，不是关键字
+        for (const [name, sub] of Object.entries(v || {})) walk(sub, `${where}/${name}`);
+      } else if (k === 'items' || k === 'additionalProperties') {
+        walk(v, `${where}/${k}`);
+      } else if (!NWBible.SUPPORTED_KEYWORDS.has(k) && !k.startsWith('x-')) {
+        bad.push(`${where}: ${k}`);
+      }
+    }
+  };
+  walk(readSchema(), '$');
+  assert.deepEqual(bad, [], `校验器会把这些关键字判成「未实现」：${bad.join('、')}`);
+});

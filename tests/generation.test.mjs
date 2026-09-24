@@ -443,6 +443,26 @@ test('parseConceptJSON：缺书名或缺章节必须拒绝，不能带病建档'
   assert.throws(() => NovelLLM.parseConceptJSON('我觉得这个故事不错'), /JSON/);
 });
 
+/**
+ * 「选了平台就顺手挑一档篇幅」这条对应关系以前只写在 app.js 的一个三元里，
+ * 注释还写着 2 万→标准（代码其实是 2 万→大短篇）。收成一处，数字说死在这里。
+ */
+test('平台字数 → 篇幅档：6k / 2 万 / 5 万落在哪一档，一处说死', () => {
+  assert.equal(NovelLLM.platformTierIndex(3000), 0);
+  assert.equal(NovelLLM.platformTierIndex(6000), 0, '6k 正好压在线上也算微型');
+  assert.equal(NovelLLM.platformTierIndex('8000'), 1, 'dataset 里取出来就是字符串，不许 Number() 都不用');
+  assert.equal(NovelLLM.platformTierIndex(15000), 1);
+  assert.equal(NovelLLM.platformTierIndex(20000), 2, '番茄 2 万落在大短篇，不是标准');
+  assert.equal(NovelLLM.platformTierIndex(50000), NovelLLM.SHORT_TIERS.length - 1,
+    '盐选 5 万超出最长档：骨架按最长那一档给，目标字数另存 target_words');
+  assert.equal(NovelLLM.platformTierIndex(''), -1, '没填平台就不许动篇幅档');
+  assert.equal(NovelLLM.platformTierIndex('abc'), -1, '认不出的输入不许抛错');
+  for (const p of NovelLLM.SHORT_PLATFORMS) {
+    const i = NovelLLM.platformTierIndex(p.words);
+    assert.ok(i >= 0 && i < NovelLLM.SHORT_TIERS.length, `${p.id} 映射到了不存在的篇幅档 ${i}`);
+  }
+});
+
 // ═══════════════ 章节信息控制(悬念字段) ═══════════════
 
 test('信息控制：mustHide/onlyHint 进入硬禁令，随禁令排在第一节', () => {

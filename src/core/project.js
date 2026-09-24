@@ -50,13 +50,20 @@
     const book = pick({
       schemaVersion: Bible.SCHEMA_VERSION, id: ctx.book.id, slug, title: ctx.book.title,
       genre: ctx.book.genre, language: ctx.book.language || 'zh-CN', description: ctx.book.description || '',
+      // 织物规格与目标字数必须过桥：短篇靠 format 换上下文与规则阈值，
+      // 白名单里没有这两个键 = 导出去再导回来，短篇就变成长篇（没人会想到是这里丢的）。
+      // 名字按 schema 写（target_words），schemas/story-bible.v1.json 的 book 是
+      // additionalProperties:false，写成 targetWords 会被 nw-validate 判违规。
+      format: ctx.book.format === 'short' ? 'short' : 'long',
+      target_words: ctx.book.targetWords || null,
       audience: ctx.book.audience || '', target: ctx.book.target || { chapters: 0, wordsPerChapter: 3000 },
       voice: ctx.book.voice || { person: '', tense: '', povDefault: null, notes: '' },
       // 作者关掉哪几组禁词是本作品的设定，不导出就等于换台机器重新写一遍；没设过就别写这个键
       stylePack: ctx.book.stylePack || null,
       created: ctx.book.created || T.toISO(ctx.book.created_at),
       updated: ctx.book.updated || T.toISO(ctx.book.updated_at),
-    }, ['schemaVersion', 'id', 'slug', 'title', 'genre', 'language', 'description', 'audience', 'target', 'voice', 'stylePack', 'created', 'updated']);
+    }, ['schemaVersion', 'id', 'slug', 'title', 'genre', 'language', 'description', 'format', 'target_words',
+      'audience', 'target', 'voice', 'stylePack', 'created', 'updated']);
     book._derived = {
       chapters: ctx.chapters.length,
       words: ctx.chapters.reduce((s, c) => s + T.countWords(c.body), 0),
@@ -309,7 +316,9 @@
       .map(([, text]) => JSON.parse(text));
 
     return {
-      slug, novelId, book,
+      // book 也必须交库行：这条注释以上写着「不混文件记录」，而这本书恰恰是唯一的例外 ——
+      // 于是调用方（app.js 建档）只能自己逐字段翻译，短篇规格就是这么在没人看见的地方丢的。
+      slug, novelId, book: Story.fromBook(book),
       chapters,
       characters: readDir('characters').map((rec) => Story.fromCharacter(rec, novelId)),
       world: readDir('world').map((rec) => Story.fromWorld(rec, novelId)),

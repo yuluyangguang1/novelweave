@@ -214,12 +214,26 @@ ${chText}
   /** 结构流派与篇幅档的口径与 skills/novelweave/assets/templates/short-presets.json 一致。 */
   const SHORT_STRUCTURES = ['反转流', '情感流', '脑洞设定流'];
   const SHORT_TIERS = ['微型（3k-6k 字，1-2 章）', '标准（8k-15k 字，3-6 章）', '大短篇（20k-30k 字，6-10 章）'];
-  // 平台档位:名称 → 目标字数(与 short-presets.json 的 wordBudgets 同口径)
+  // 平台档位：名称 → 目标字数。前两个落在 short-presets.json 的 wordBudgets 三档之内，
+  // 盐选 5 万字超出最长档（20k-30k）—— 那一档的骨架章数照给，目标字数按平台实数存。
   const SHORT_PLATFORMS = [
     { id: 'gzh', label: '公众号（约 6k 字）', words: 6000 },
     { id: 'fanqie', label: '番茄短篇（约 2 万字）', words: 20000 },
     { id: 'yanxuan', label: '知乎盐选（约 5 万字）', words: 50000 },
   ];
+
+  /**
+   * 平台字数 → 篇幅档下标。界面那条「选了平台就顺手挑一档篇幅」的对应关系只有这一处，
+   * app.js 里不许再抄一份数字（抄了就会各说各话：这里说 2 万落在大短篇，那儿说标准）。
+   * 盐选 5 万超出现有最长档（20k-30k），只能落在最长那一档上 —— 篇幅档给的是骨架的
+   * 章数建议，真正的目标字数另存 target_words，两者不是一回事。
+   * 认不出的字数（含空值）返回 -1，调用方自己决定不联动。
+   */
+  function platformTierIndex(words) {
+    const n = Number(words) || 0;
+    if (!n) return -1;
+    return n <= 6000 ? 0 : n <= 15000 ? 1 : SHORT_TIERS.length - 1;
+  }
 
   function buildShortConceptPrompt({ idea, genre, structure, tier }) {
     return `你是资深短篇网文编辑。根据作者的一句话想法，生成一篇短篇的完整梗概。
@@ -457,6 +471,7 @@ ${String(content || '').slice(0, 6000)}
     antiAiRules,
     buildPolishPrompt, buildOutlinePrompt,
     buildShortConceptPrompt, parseConceptJSON, SHORT_STRUCTURES, SHORT_TIERS, SHORT_PLATFORMS,
+    platformTierIndex,
     buildRefinePrompt, buildReviewPrompt,
     buildDeconstructPrompt, parseDeconstructJSON,
     buildExtractRelationsPrompt, parseExtractedRelations,

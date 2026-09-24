@@ -542,3 +542,84 @@ test('世界设定读取链在假 DOM 下真跑得通（助手名写错=点保�
   assert.equal(renderNote({ keys: ['甲'], lifecycle: { 'destroyed-in': 'ch-999' } }, []),
     '[触发 1 词 · 毁于（章已删）] ', '销毁章被删了要看得见，而不是静默当成没毁');
 });
+
+/**
+ * 上一条守卫查的是「渲染了没人读」，方向反过来才是更致命的那一半：
+ * 读了一个页面里根本不存在的 id。表现不是报错就是静默 —— 起书向导里的
+ * `inp-ai-platform` 从 fa8e6a4 那天起就没有渲染点，于是「目标平台」这一格
+ * 从来没存在过，target_words 恒为 null，字数达标进度条永远不出现，
+ * 而全量测试一直是绿的。
+ *
+ * 认三种渲染点：静态 `id="x"`、脚本里 `el.id = 'x'`（遮罩与 toast）、
+ * 以及模板拼出来的 `id="${prefix}-tail"`（读到 m-note-title 时按尾巴 -note-title 认）。
+ * 按尾巴认意味着前缀写错不会被抓到 —— 这条守卫只保证「这个控件至少有人画」，
+ * 前缀对不对得上归浏览器真跑管。
+ */
+test('界面读到的每个控件 id 都必须真的有渲染点 —— 读到 null 就是点了没反应', () => {
+  const src = read('src/app.js') + '\n' + read('index.html');
+
+  const readIds = new Set();
+  for (const m of src.matchAll(/(?:\bval|\bisChecked|document\.getElementById)\(\s*['"]([\w-]+)['"]/g)) {
+    // `'x-' + id` 那种拼接：字面量只是前缀，整 id 拼出来才知道，跳过
+    if (/['"]\s*\+/.test(src.slice(m.index + m[0].length - 1, m.index + m[0].length + 6))) continue;
+    readIds.add(m[1]);
+  }
+  assert.ok(readIds.size > 50, `只解析出 ${readIds.size} 个读取点，检查匹配式`);
+
+  const rendered = new Set([...src.matchAll(/id="([^"$]+)"/g)].map((m) => m[1]));
+  for (const m of src.matchAll(/\.id\s*=\s*['"]([\w-]+)['"]/g)) rendered.add(m[1]);
+  const tails = new Set([...src.matchAll(/id="\$\{[^}]+\}([-\w]+)"/g)].map((m) => m[1]));
+  // `id="rev-body-${…}"` 这种「静态前缀 + 动态尾巴」：读的时候也是拼接，按前缀认
+  const heads = new Set([...src.matchAll(/id="([-\w]+)-?\$\{/g)].flatMap((m) => [m[1], `${m[1]}-`]));
+
+  const missing = [...readIds].filter((id) => {
+    if (rendered.has(id) || heads.has(id)) return false;
+    const seg = id.indexOf('-');
+    return !(seg > 0 && tails.has(id.slice(seg)));
+  }).sort();
+  assert.deepEqual(missing, [], `这些 id 有人读、没人画：${missing.join('、')}`);
+});
+
+/**
+ * 第二个坑同样是浏览器才看得见：closeModal() 把 .modal-overlay 整块摘掉，
+ * 之后 `document.getElementById('inp-ai-genre').value` 就是读 null 的属性 ——
+ * 抛错发生在 async 处理器里被吞掉，用户看到的是「生成完弹窗一关，啥也没发生」。
+ * 两个起书向导都这么写过。只查「紧跟一行」这一种形状（那正是出事时的形状）：
+ * 再往后的行分不清是不是同一个函数体，硬查会误报。
+ */
+test('closeModal 之后紧跟着一行读弹窗控件 = 读到的是 null', () => {
+  const lines = read('src/app.js').split(/\r?\n/);
+  const bad = [];
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (!/closeModal\(\);/.test(lines[i])) continue;
+    const next = lines[i + 1];
+    const m = next.match(/(?:\bval|document\.getElementById)\(\s*['"](inp-[\w-]*|[me]-[\w-]*)['"]/);
+    if (m) bad.push(`${m[1]}（第 ${i + 2} 行）`);
+  }
+  assert.deepEqual(bad, [], `这些值在弹窗拆掉之后才读，拿到的是 null：${bad.join('、')}`);
+});
+
+/**
+ * 平台字数 → 篇幅档那条对应关系，原先是 app.js 里手抄的两个阈值，
+ * 而它上面那行注释写着「2 万→标准」、代码走的却是「2 万→大短篇」。
+ * 阈值收进 NovelLLM.platformTierIndex 之后，这里钉住界面确实走它。
+ */
+test('篇幅档阈值不许在界面里再抄一份', () => {
+  const js = read('src/app.js');
+  assert.match(js, /NovelLLM\.platformTierIndex\(/, '平台联动篇幅档要调那个唯一的出处');
+  assert.doesNotMatch(js, /words\s*<=\s*\d+/, '界面里抄了阈值数字，就会和 llm.js 那份各说各话');
+});
+
+/**
+ * 导入时那行 novels 记录以前是在界面层手拼字面量拼出来的：其余每张表都走 core 里的
+ * from*（有测试盯着），只有这本书没有，所以 format / target_words 漏在桥上是全绿的。
+ * 这里钉住「翻译只有一份、且在 core 里」。
+ */
+test('文件 → 库行的翻译只许有 core 里那一份，界面不许再拼一遍', () => {
+  const app = read('src/app.js');
+  const project = read('src/core/project.js');
+  assert.match(project, /book:\s*Story\.fromBook\(/, 'parseFileMap 交回的是文件记录而不是库行');
+  assert.match(app, /\.\.\.parsed\.book/, '导入建档没吃 parseFileMap 的库行，是自己另拼了一份');
+  assert.doesNotMatch(app, /format:\s*parsed\.book\.format/, '界面层自己翻译 format：core 那份一改它就静默落后');
+});
+

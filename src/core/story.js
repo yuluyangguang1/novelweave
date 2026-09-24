@@ -256,6 +256,23 @@
     return { entries: included, dropped, bytes };
   }
 
+  /**
+   * book.json → 小说库行。章节、角色、设定……每张表都有 from*，只有这本书是导入
+   * 现场手拼一个字面量 —— 于是「文件里写着 format:short、库里那格却是空的」这种断口
+   * 没有任何一处测试够得着。短篇靠 format 换上下文与规则阈值，进度条读 target_words，
+   * 这两个键丢了不报错，只会悄悄变成长篇。
+   */
+  function fromBook(b) {
+    return {
+      id: b.id, title: b.title || '', genre: b.genre || '玄幻', description: b.description || '',
+      format: b.format === 'short' ? 'short' : 'long',
+      target_words: Number(b.target_words) || null,
+      stylePack: b.stylePack || null,
+      created_at: T.fromISO(b.created) ?? null,
+      updated_at: T.fromISO(b.updated) ?? null,
+    };
+  }
+
   function fromWorld(e, novelId) {
     return {
       id: e.id, novel_id: novelId, type: e.type || 'location', name: e.name,
@@ -388,6 +405,11 @@
         // 去 AI 味包必须原样过桥：R22 与 prompt 都只认 ctx.book.stylePack，
         // 这里漏掉一项，作者在设置里关掉的词组就只是看起来生效
         stylePack: rows.novel.stylePack || null,
+        // 建档/改稿时间必须过桥。project.js 写 book.json 时读的就是这两个键，
+        // 而 buildCtx 以前不给 —— 于是导出的目录里压根没有 created：
+        // 导入端只能把书重新写成「今天建的」，agent 侧看到的「上次更新」也跟着丢。
+        created: rows.novel.created || T.toISO(rows.novel.created_at),
+        updated: rows.novel.updated || T.toISO(rows.novel.updated_at),
         _derived: { words: rows.novel.word_count, chapters: rows.novel.chapter_count } },
       chapters, characters,
       world: (rows.world || []).map(toWorld),
@@ -406,7 +428,7 @@
     };
   }
 
-  return { LORE_BUDGET: DEFAULT_BUDGET, LORE_RECURSION, loreIndexConfig, toCharacter, fromCharacter, toWorld, fromWorld, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
+  return { LORE_BUDGET: DEFAULT_BUDGET, LORE_RECURSION, loreIndexConfig, toCharacter, fromCharacter, toWorld, fromWorld, fromBook, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
     fromDecision, fromRelation, fromSecret,
     toTimeline, toSuppressions, statesFromRows, stateRowsFromFile, dimsOf, toLines, buildCtx, zhRole };
 });

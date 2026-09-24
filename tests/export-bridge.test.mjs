@@ -159,6 +159,87 @@ test('文体包开关一路走通：库行 → book.json → 读回来还是同�
   assert.deepEqual(NWStylePack.optsFrom(ctx2.book), { enabled: true, disabled: ['simile'], extraBanned: ['紫气东来'] });
 });
 
+/**
+ * 织物规格与目标字数是这本书的设定，不是本机状态：短篇靠 format 换上下文与规则阈值
+ * （R17 的 minBody、前情全量注入），靠 target_words 画达标进度条。
+ * 这两个键以前根本不在导出的 pick 白名单里 —— 导出去再导回来，短篇变长篇，
+ * 而且没有任何一处会报错。名字也必须按 schema 写（target_words）：
+ * schemas/story-bible.v1.json 的 book 是 additionalProperties:false，写成 targetWords 会被判违规。
+ */
+test('短篇规格一路走通：库行 → book.json → 读回来还是短篇，目标字数不丢', async () => {
+  const rows = rowsFixture();
+  rows.novel.format = 'short';
+  rows.novel.target_words = 20000;
+  const ctx = NWStory.buildCtx(rows);
+  const tree = await NWProject.buildProjectTree(ctx);
+  const bookJson = JSON.parse(tree[Object.keys(tree).find((k) => k.endsWith('book.json'))]);
+  assert.equal(bookJson.format, 'short', 'format 没进导出文件');
+  assert.equal(bookJson.target_words, 20000, 'target_words 没进导出文件（写成 targetWords 会被 schema 判违规）');
+
+  const parsed = NWProject.parseFileMap(tree);
+  assert.equal(parsed.book.format, 'short', 'parseFileMap 丢了 format');
+  const ctx2 = NWStory.buildCtx({ novel: { ...parsed.book, created_at: 1, updated_at: 2 }, chapters: [], characters: [] });
+  assert.equal(ctx2.book.format, 'short', '导入后重新装配的 ctx 又变回长篇');
+  assert.equal(ctx2.book.targetWords, 20000, '进度条的目标字数丢了');
+  // 规格真的换到了档，不是个装饰字段：R17 短篇用 300 字门槛、长篇用 800 字。
+  // 同一章 350 字无钩子的正文，短篇要挑出来、长篇不该评 —— format 一丢就走错这一支。
+  const noHook = '他推开门，看见雪。'.repeat(50);
+  const mk = (format) => NWStory.buildCtx({
+    novel: { ...parsed.book, format, target_words: null, created_at: 1, updated_at: 2 },
+    chapters: [{ id: 'ch_x', order: 1, title: '雪', content: noHook, word_count: NWText.countWords(noHook) }],
+    characters: [],
+  });
+  const hooked = (format) => NWRules.runRules(mk(format))
+    .some((d) => d.rule === 'chapter-end-hook' && d.chapter === 'ch_x');
+  assert.ok(hooked('short'), '短篇那一支该报：没换档说明 format 在桥两头断了');
+  assert.ok(!hooked('long'), '长篇不评这一章：两条都报说明阈值根本没看 format');
+});
+
+test('长篇导出别把 target_words 写出去（没设过就是没有，schema 只收整数）', async () => {
+  const ctx = NWStory.buildCtx(rowsFixture());
+  const tree = await NWProject.buildProjectTree(ctx);
+  const bookJson = JSON.parse(tree[Object.keys(tree).find((k) => k.endsWith('book.json'))]);
+  assert.equal(bookJson.format, 'long', '长篇要显式写 long，别让读的一方猜');
+  assert.ok(!('target_words' in bookJson), '没设目标字数却写出了这个键：null 会被 schema 判成非法整数');
+});
+
+/**
+ * book.json → 库行这一步以前发生在 app.js 的字面量里（其余每张表都走 core 的 from*），
+ * 于是「文件里写着 format:short、库里那格是空的」没有任何一处测试够得着。
+ * 契约：交出去的行能直接落库 —— 字段名是库里的名字，时间戳是毫秒，文件形状一个不带。
+ */
+test('book.json → 库行：字段名与类型都是库里那一格的样子', async () => {
+  const rows = rowsFixture();
+  rows.novel.format = 'short';
+  rows.novel.target_words = 6000;
+  const tree = await NWProject.buildProjectTree(NWStory.buildCtx(rows));
+  const bookJson = JSON.parse(tree[Object.keys(tree).find((k) => k.endsWith('book.json'))]);
+  assert.equal(typeof bookJson.created, 'string', '导出文件里没有 created：buildCtx 没把库里的时间戳带上桥');
+  assert.equal(typeof bookJson.updated, 'string', '同上，updated');
+  const parsed = NWProject.parseFileMap(tree);
+
+  assert.equal(parsed.book.id, rows.novel.id);
+  assert.equal(parsed.book.format, 'short');
+  assert.equal(parsed.book.target_words, 6000);
+  assert.equal(typeof parsed.book.created_at, 'number', 'ISO created 没换算成毫秒：落库后按时间排序全乱');
+  assert.equal(parsed.book.created_at, rows.novel.created_at, '建档时间过了一座桥就变成了今天');
+  assert.equal(parsed.book.updated_at, rows.novel.updated_at, '上次更新时间同理');
+  assert.equal(parsed.book.created, undefined, '文件字段不该混进库行');
+  assert.equal(parsed.book.slug, undefined, '同上：slug 是 buildCtx 从标题现算的，不是库里的列');
+  assert.deepEqual(parsed.book.stylePack, rows.novel.stylePack, '去 AI 味开关没跟着建档：agent 在磁盘上改的导入即丢');
+
+  // 老目录里没这两个键：读回来得是长篇、没有目标字数，而不是 undefined
+  const legacy = JSON.parse(tree[Object.keys(tree).find((k) => k.endsWith('book.json'))]);
+  delete legacy.format;
+  delete legacy.target_words;
+  const row = NWStory.fromBook(legacy);
+  assert.equal(row.format, 'long', '缺 format 要读成长篇，不能留 undefined');
+  assert.equal(row.target_words, null);
+  // agent 手改 JSON 常把数字写成字符串，落库前必须收回数字（进度条按数值比较）
+  assert.equal(NWStory.fromBook({ id: 'b', target_words: '8000' }).target_words, 8000);
+  assert.equal(NWStory.fromBook({ id: 'b', target_words: '八千字' }).target_words, null, 'NaN 不许进库');
+});
+
 test('冲突判定不许静默丢任何一侧的修改', () => {
   assert.equal(NWProject.classify('h', 'h', 'h'), 'same');
   assert.equal(NWProject.classify('h', 'h2', 'h'), 'take-file', '只有 agent 改过 → 取文件');

@@ -445,6 +445,7 @@ function showAIShortWizard() {
   }
   const structures = NovelLLM.SHORT_STRUCTURES;
   const tiers = NovelLLM.SHORT_TIERS;
+  const platforms = NovelLLM.SHORT_PLATFORMS;
   const genres = ['不限','玄幻','都市','仙侠','科幻','悬疑','言情','脑洞','现实','历史'];
   showModal('AI 起书 · 短篇', `
     <div class="settings-field"><label class="settings-label">一句话想法 *</label>
@@ -452,6 +453,10 @@ function showAIShortWizard() {
     <div class="settings-field"><label class="settings-label">结构流派</label>
       <select class="settings-select" id="inp-ai-structure">
         ${structures.map((s) => `<option value="${attr(s)}">${esc(s)}</option>`).join('')}
+      </select></div>
+    <div class="settings-field"><label class="settings-label">目标平台（决定字数目标，顺带挑一档篇幅）</label>
+      <select class="settings-select" id="inp-ai-platform">
+        ${platforms.map((p) => `<option value="${attr(p.id)}" data-words="${p.words}">${esc(p.label)}</option>`).join('')}
       </select></div>
     <div class="settings-field"><label class="settings-label">篇幅档</label>
       <select class="settings-select" id="inp-ai-tier">
@@ -484,18 +489,18 @@ function showAIShortWizard() {
     let concept;
     try { concept = NovelLLM.parseConceptJSON(res.content); }
     catch (e) { showToast('解析失败：' + e.message); return; }
-    closeModal();
-    const platformSel = document.getElementById('inp-ai-platform');
-    const targetWords = Number(platformSel?.selectedOptions[0]?.dataset.words || 0) || null;
-    showConceptConfirm(concept, document.getElementById('inp-ai-genre').value, targetWords);
+    // 值必须在弹窗关掉之前读走：closeModal 把这些控件从 DOM 里删了，之后再读拿到的是 null
+    // （原来正是这么写的：生成完弹窗一关，题材那行直接抛 TypeError，界面表现为「点了没反应」）。
+    // 确认框自己会 showModal → closeModal，不必在这里先关一次。
+    const genre = val('inp-ai-genre') || '不限';
+    const words = Number(document.getElementById('inp-ai-platform')?.selectedOptions[0]?.dataset.words || 0);
+    showConceptConfirm(concept, genre, words || null);
   };
-  // 平台联动篇幅档:6k→微型,2 万→标准,5 万→大短篇
+  // 平台联动篇幅档：阈值只有一个出处（NovelLLM.platformTierIndex），这里不许再抄一份数字
   document.getElementById('inp-ai-platform').onchange = function () {
-    const words = Number(this.selectedOptions[0]?.dataset.words || 0);
+    const idx = NovelLLM.platformTierIndex(this.selectedOptions[0]?.dataset.words);
     const tierSel = document.getElementById('inp-ai-tier');
-    if (!words || !tierSel) return;
-    const idx = words <= 6000 ? 0 : words <= 15000 ? 1 : 2;
-    if (tiers[idx]) tierSel.selectedIndex = idx;
+    if (idx >= 0 && tierSel && tiers[idx]) tierSel.selectedIndex = idx;
   };
   setTimeout(() => document.getElementById('inp-ai-idea')?.focus(), 60);
 }
@@ -652,8 +657,9 @@ function showAILongWizard() {
     let concept;
     try { concept = NovelLLM.parseConceptJSON(res.content); }
     catch (e) { showToast('解析失败：' + e.message); return; }
-    closeModal();
-    showLongConceptConfirm(concept, document.getElementById('inp-ai-genre-l').value);
+    // 同短篇向导：题材要在弹窗拆掉之前读走，先 closeModal 再读就是 null
+    const genreL = val('inp-ai-genre-l') || '玄幻';
+    showLongConceptConfirm(concept, genreL);
   };
   setTimeout(() => document.getElementById('inp-ai-idea-l')?.focus(), 60);
 }
@@ -2610,12 +2616,12 @@ async function importNovelweave() {
   // 目标作品：库里已有同 id 就合并，没有就按文件原样建档
   let novel = await NovelDB.novels.get(parsed.book.id);
   if (!novel) {
+    // 文件 → 库行的翻译在 NWStory.fromBook 里（和其余每张表的 from* 一样有测试盯着），
+    // 这里只补「文件里没有、库里必须有」的那几格。以前是在这儿手拼字面量的，
+    // 于是 format / target_words 谁也没想起来写 —— 导进来的短篇直接变长篇，且不报错。
     novel = await NovelDB.putRow('novels', {
-      id: parsed.book.id, title: parsed.book.title, genre: parsed.book.genre,
-      description: parsed.book.description || '', word_count: 0, chapter_count: 0,
-      // 去 AI 味包跟着建档进来：它是本书设定，不在这条路上的话，agent 在磁盘上改的开关导个入就没了
-      stylePack: parsed.book.stylePack || null,
-      created_at: NWText.fromISO(parsed.book.created) || Date.now(), updated_at: Date.now(),
+      ...parsed.book, word_count: 0, chapter_count: 0,
+      created_at: parsed.book.created_at ?? Date.now(), updated_at: parsed.book.updated_at ?? Date.now(),
     });
   }
   const current = {
