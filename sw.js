@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v7'; // v7: 加 stylefit.js —— 旧壳里没有它，文体规则页的基准指纹整块不出现
+const VERSION = 'nw-v8'; // v8: 加 statescope.js —— 旧壳里没有它，状态矩阵的图例与翻页按钮会整块缺席
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 
@@ -25,6 +25,7 @@ const PRECACHE = [
   'src/core/tension.js',
   'src/core/pitch.js',
   'src/core/stylefit.js',
+  'src/core/statescope.js',
   'src/core/rules.js',
   'src/core/story.js',
   'src/core/context.js',

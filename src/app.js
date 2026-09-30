@@ -970,6 +970,15 @@ Object.assign(ACTIONS, {
   'edit-promise':    (id) => editPromise(id),
   'edit-anchor':     (id) => editAnchor(id),
   'edit-state':      (id, el) => showStateEditor(el.dataset.chapter, el.dataset.entity),
+  // 翻页与换模式都不重新取库：chapters 与 rows 一格都没变，变的只是画哪几列
+  'state-scope-back': () => { stateScopeOf().page += 1; return showStatesPanel(); },
+  'state-scope-recent': () => { stateScopeOf().page = 0; return showStatesPanel(); },
+  'state-scope-all': () => {
+    const scope = stateScopeOf();
+    scope.all = !scope.all;
+    scope.page = 0;   // 全书模式没有「第几页」，留在旧页码上会翻到一张空表
+    return showStatesPanel();
+  },
   'jump-diag':       (id, el) => jumpToEvidence(el.dataset.chapter, el.dataset.start, el.dataset.len),
   'suppress-diag':   (id, el) => suppressDiagnostic(el.dataset.fp, el),
   'fix-first':       (id, el) => fixCharacterFirst(el.dataset.entity, el.dataset.chapter),
@@ -1870,18 +1879,25 @@ async function showStatesPanel(host) {
   if (!chars.length) { host.innerHTML = emptyHint('先到「角色」里登记人物，再记录他们的状态'); return; }
   if (!chapters.length) { host.innerHTML = emptyHint('先到「章节」里建一章'); return; }
 
+  // 画哪几章由 statescope 那一份判据说，这里只负责按它给的列画出来。
+  const scope = stateScopeOf();
+  const win = NWStateScope.windowOf(chapters, scope.all ? chapters.length : NWStateScope.WINDOW_SIZE, scope.page);
+  const ids = NWStateScope.idSet(win);
   const byKey = new Map(rows.map((r) => [r.id, r]));
   const total = rows.length;
+  const inWindow = rows.filter((r) => ids.has(r.chapter)).length;
   host.innerHTML = `<div class="state-wrap">
-    <div class="state-legend">已记录 ${total} 格 · 红格=与角色卡状态冲突 · 点任意格子编辑（空格子=新增）</div>
+    <div class="state-legend">${esc(NWStateScope.lines(win, { inWindow, total }))}
+      · 红格=与角色卡状态冲突 · 点任意格子编辑（空格子=新增）</div>
+    ${stateScopeBar(win)}
     <table class="state-matrix">
       <thead><tr><th class="col-name">角色</th>
-        ${chapters.map((c) => `<th title="${attr(c.title)}">${c.order}</th>`).join('')}
+        ${win.visible.map((c) => `<th title="${attr(c.title)}">${c.order}</th>`).join('')}
       </tr></thead>
       <tbody>
       ${chars.map((card) => `<tr>
         <td class="col-name">${esc(card.name)}${card.status === 'deceased' ? ' <em>亡</em>' : ''}</td>
-        ${chapters.map((c) => {
+        ${win.visible.map((c) => {
           const row = byKey.get(NovelDB.states.idOf(c.id, card.id));
           const conflict = row?.alive && row.alive !== card.status;
           return `<td class="${conflict ? 'cell-bad' : ''}" data-action="edit-state" data-chapter="${attr(c.id)}" data-entity="${attr(card.id)}">${stateCellText(row, card)}</td>`;
@@ -1889,7 +1905,35 @@ async function showStatesPanel(host) {
       </tr>`).join('')}
       </tbody>
     </table>
+  </div>${win.truncated ? `<div class="settings-hint state-scope-note">翻到别页去点格子也一样改的是那一章的记录 —— 窗口只裁视图，不裁数据。</div>` : ''}`;
+}
+
+/**
+ * 这一条上的三个数（第几页 / 共几页 / 一页几章）都从 win 里念，界面上不写死任何一个：
+ * 「已记录 N 格」不说是哪一页的，作者就会把这一页的格数当成全书的记过了多少。
+ * 要不要给这一条也由 core 判（needsScopeBar），界面里不第二遍比大小。
+ */
+function stateScopeBar(win) {
+  if (!NWStateScope.needsScopeBar(win)) return '';
+  const btn = (action, label, disabled) =>
+    `<button class="btn btn-secondary" data-action="${action}" ${disabled ? 'disabled' : ''}>${esc(label)}</button>`;
+  const all = win.size >= win.total;
+  return `<div class="state-scope">
+    ${all ? '' : btn('state-scope-back', '再往前一页', !win.canBack)}
+    ${all ? '' : btn('state-scope-recent', '回到最近一页', win.page === 0)}
+    ${btn('state-scope-all', all ? '收成一片' : '全书一起看', false)}
+    <span class="settings-hint">${all ? `全书 ${win.total} 章都画出来了`
+      : `第 ${win.pages - win.page}／${win.pages} 页 · 一页 ${win.size} 章`}</span>
   </div>`;
+}
+
+/** 这本书的显示范围。换书必须回到最近一页：拿上一本书的页码来翻这一本，画出来的是莫名其妙的几章。 */
+function stateScopeOf() {
+  const key = APP.novel ? APP.novel.id : null;
+  if (!APP.stateScope || APP.stateScope.novelId !== key) {
+    APP.stateScope = { novelId: key, all: false, page: 0 };
+  }
+  return APP.stateScope;
 }
 
 async function showStateEditor(chapterId, entityId) {

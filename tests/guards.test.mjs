@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -889,4 +889,78 @@ test('守卫：R32 的「两格」门槛只有一处，CLI 与规则的话术跟
   assert.doesNotMatch(rules, /drift\.length < [3-9]/, '门槛被抬高却没改 CLI 与文档那句「两格」');
   const cli = read('scripts/nw-style.mjs');
   assert.match(cli, /同时越两格以上/, 'keys 里没交代报的门槛，作者会以为越一格也会被报');
+});
+
+/**
+ * 状态矩阵这一批的全部价值都在「只画窗口内那几列」，而窗口判据在 statescope.js。
+ * 界面一旦自己 `slice(-40)`，core 那个数就变成一句摆设 —— 这正是本项目反复犯的病，
+ * 所以三条守卫各盯一面：加载表挂齐、界面只问 core、翻页条那颗按钮真有人接。
+ */
+test('statescope.js 在三张加载表里都在，且排在 app.js 之前', () => {
+  const lists = loadLists();
+  const miss = [];
+  for (const [tag, list] of Object.entries({ web: lists.web, cache: lists.cache, tests: lists.tests })) {
+    const i = list.indexOf('src/core/statescope.js');
+    if (i === -1) miss.push(`${tag} 没挂 statescope.js`);
+    else if (list.indexOf('src/app.js') !== -1 && i > list.indexOf('src/app.js')) miss.push(`${tag} 里它排在 app.js 之后`);
+  }
+  assert.deepEqual(miss, [], `加载表不齐：${miss.join('；')}（旧壳里没有它，矩阵的图例与翻页条会整块缺席）`);
+});
+
+test('矩阵画哪几列只问 statescope，界面里不许有第二份窗口', () => {
+  const js = read('src/app.js');
+  const panel = js.match(/\nasync function showStatesPanel\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(panel, 'app.js 里抠不出 showStatesPanel，这条守卫的形状变了');
+  assert.match(panel, /NWStateScope\.windowOf\(/, '列不是 statescope 给的，默认窗口就成了第二份口径');
+  assert.match(panel, /NWStateScope\.idSet\(/, '数「这一页几格」自己 filter 一遍，判据就分家了');
+  assert.match(panel, /NWStateScope\.lines\(/, '图例不是 statescope 那句，三件事就说不齐');
+  assert.doesNotMatch(panel, /\.slice\(-\d/, '界面自己按数字裁列，core 那个数改了没人知道');
+  assert.doesNotMatch(panel, /size:\s*\d+|\bwindowOf\([^)]*\b\d{2,}\b/, '界面里出现了窗口大小的字面量');
+  assert.match(panel, /NWStateScope\.WINDOW_SIZE/, '默认窗口没从 core 取，两处会各长各的');
+  const scope = js.match(/\nfunction stateScopeOf\(\)[\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(scope, 'app.js 里抠不出 stateScopeOf');
+  assert.match(scope, /novelId !== key/, '换书不重置页码，会拿着上一本的页码翻这一本，画出来的是莫名其妙的几章');
+});
+
+/**
+ * 翻页条上的按钮名是拼出来的（`data-action="${action}"`），那条「每个 data-action 都有处理器」
+ * 的守卫抓不到 —— 所以这里真跑 stateScopeBar，把名字抠出来对着 ACTIONS 核，并把三种显隐状态验一遍：
+ * 翻不动的按钮要 disabled，只有一页时整条不出现（给一个点了没反应的按钮比不给更坏）。
+ */
+test('翻页条在假 DOM 下真跑得通：按钮名有人接、翻不动时收着', () => {
+  const js = read('src/app.js');
+  const barSrc = js.match(/\nfunction stateScopeBar\([\s\S]*?\n\}/)?.[0];
+  assert.ok(barSrc, 'app.js 里抠不出 stateScopeBar');
+  const run = (win) => new Function('esc', 'W',
+    `${barSrc} return stateScopeBar(W);`)((s) => String(s), win);
+  const S = NWStateScope;
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: `c${i}`, order: i + 1 }));
+  /** 抠出某一颗按钮的整段标签：disabled 写在文字前面，光看文字周围几个字符是看不见的。 */
+  const tagOf = (html, action) =>
+    html.match(new RegExp(`<button[^>]*data-action="${action}"[^>]*>[^<]*</button>`))?.[0] || '';
+  const off = (html, action) => { const t = tagOf(html, action); return t.includes('disabled'); };
+
+  const first = run(S.windowOf(mk(180), 40, 0));
+  assert.deepEqual([...first.matchAll(/data-action="([\w-]+)"/g)].map((m) => m[1]).sort(),
+    ['state-scope-all', 'state-scope-back', 'state-scope-recent'], '翻页条上不是那三颗按钮');
+  const registered = new Set([...actionsSource(js).matchAll(/^\s+(['"])([\w-]+)\1\s*:/gm)].map((m) => m[2]));
+  const dead = [...first.matchAll(/data-action="([\w-]+)"/g)].map((m) => m[1]).filter((a) => !registered.has(a));
+  assert.deepEqual(dead, [], `这些按钮点了没反应：${dead.join('、')}`);
+  assert.ok(off(first, 'state-scope-recent'), '已经在最近一页，那颗按钮还亮着');
+  assert.equal(off(first, 'state-scope-back'), false, '往前还有四页，就说翻不动了');
+  assert.ok(tagOf(first, 'state-scope-all').includes('全书一起看'), first);
+  assert.ok(first.includes('第 5／5 页'), first);
+
+  const last = run(S.windowOf(mk(180), 40, 4));
+  assert.ok(off(last, 'state-scope-back'), '已经翻到最早一页，往前没得翻了还不收按钮');
+  assert.equal(off(last, 'state-scope-recent'), false, last);
+  assert.ok(last.includes('第 1／5 页'), last);
+
+  // 不足一页的书不给条；全书模式反过来 —— 它必须留着「收成一片」，否则回不到分页
+  assert.equal(run(S.windowOf(mk(6), 40, 0)), '', '书比一页还短，不该出现「再往前」');
+  const wide = run(S.windowOf(mk(180), 180, 0));
+  assert.ok(wide.includes('收成一片'), '全书模式下没有那颗退回分页的按钮，进去就出不来：' + wide);
+  assert.equal(tagOf(wide, 'state-scope-back'), '', '全书模式没有「第几页」，别摆两颗永远点不动的翻页钮');
+  assert.equal(tagOf(wide, 'state-scope-recent'), '', wide);
+  assert.ok(wide.includes('全书 180 章都画出来了'), wide);
 });

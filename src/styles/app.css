@@ -523,6 +523,10 @@ select.settings-select { cursor: pointer; }
   color: var(--dim); margin-bottom: 10px; line-height: 1.7;
 }
 
+.state-scope { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.state-scope .btn { font-size: .62rem; padding: 4px 10px; }
+.state-scope-note { padding: 0 12px 10px; }
+
 .state-matrix { border-collapse: collapse; width: 100%; font-size: 12px; }
 .state-matrix th, .state-matrix td {
   padding: 7px 9px; text-align: center; white-space: nowrap;
