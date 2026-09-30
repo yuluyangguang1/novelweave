@@ -8,10 +8,10 @@
  * 每条规则都必须自带误报控制。误报的检查器会被作者关掉，等于没有。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStylePack, root.NWTension);
+  const mod = factory(root.NWText, root.NWBible, root.NWStylePack, root.NWTension, root.NWStyleFit);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWRules = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack, Tension) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack, Tension, StyleFit) {
   'use strict';
 
   const ENGINE_VERSION = '1.0.0';
@@ -1475,6 +1475,54 @@
         return out;
       },
     },
+
+    'style-drift': {
+      code: 'R32',
+      defaultSeverity: 'info',
+      scope: 'chapter',
+      summary: '某一章的文风指纹与作者勾定的基准章差出两格以上。',
+      detail:
+        '基准只认 book.styleAnchor.chapterIds —— 作者没勾过就整条闭嘴，一条都不报：' +
+        '「就近取两章当标准」在长篇里恰好取到漂移最远的那两章，用它当基准等于把漂移写成合格。' +
+        '比的是 NWStyleFit 那四格（句均字数、对话占比、段均句数、禁词密度），门槛各写在包里：' +
+        '两句相对 30%、对话 12 个百分点、段均相对 40%、禁词 1.5 处每千字。' +
+        '**两格以上同时越界才报** —— 一格往往是这一章本来就是动作场面或独白，不是笔法变了。' +
+        '基准章自身、正文不足 600 字的章、带 flashback/dream/quoted/offscreen 标记的章一律不评。' +
+        '恒为 info：文体本来就是作者说了算的那件事，规则只负责把数字摆出来。',
+      run(ctx) {
+        // chapterIds 来自 book.json / 导入的文件，形状不受我们控制：非数组一律当没勾
+        const raw = ctx.book?.styleAnchor?.chapterIds;
+        const ids = (Array.isArray(raw) ? raw : []).filter((x) => typeof x === 'string' && x);
+        if (!ids.length) return [];
+        const opts = StylePack.optsFrom(ctx.book);
+        const base = ctx.chapters.filter((c) => ids.includes(c.id));
+        const baseFp = StyleFit.fingerprint(base, opts);
+        if (!baseFp.chapters) return [];   // 勾的章正文都不够长：没有基准，别拿半句话去评全书
+        const out = [];
+        for (const ch of ctx.chapters) {
+          if (ids.includes(ch.id) || isExempt(ch)) continue;
+          const fp = StyleFit.fingerprint([ch], opts);
+          if (!fp.chapters) continue;
+          const drift = StyleFit.compare(baseFp, fp);
+          if (drift.length < 2) continue;
+          out.push(diag('style-drift', {
+            chapter: ch.id,
+            severity: 'info',
+            confidence: 0.6,
+            evidence: {
+              basis: [`book.styleAnchor.chapterIds=${ids.join(',')}`,
+                `基准指纹 ${baseFp.chapters} 章 / ${baseFp.words} 字`,
+                `本章 ${fp.words} 字`,
+                `同时越界 ${drift.length} 格（门槛：句均 30%、对话 12 个百分点、段均 40%、禁词 1.5 处/千字）`],
+            },
+            message: `${ch.id} 与本书文风基准偏离：${StyleFit.driftText(baseFp, fp)}。`,
+            suggestion: '这一章本来就要换口气（动作场面、独白、书信）的话忽略即可；'
+              + '若不是你要的笔法，去「文体规则」页重勾基准章 —— 生成时注入的样例与这一格数字都跟着它走。',
+          }));
+        }
+        return out;
+      },
+    },
   };
 
 
@@ -1596,6 +1644,9 @@
     RULES,
     ACTION_RE,
     RECALL_RE,
+    // 豁免标记也导出去：nw-style 的逐章视图要与 R32 用同一张名单，
+    // 界面上写第二份「哪些章不评」迟早会和规则不一致
+    EXEMPT_FLAGS,
     runRules,
     runSchemaRules,
     summarize,

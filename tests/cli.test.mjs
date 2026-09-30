@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  NWBible, NWText, repoRoot, NWProject,
-  scaffoldBook, upsertProject, writeJsonAtomic, writeFileAtomic,
+  NWBible, NWText, repoRoot, NWProject, NWStyleFit,
+  scaffoldBook, upsertProject, writeJsonAtomic, writeFileAtomic, recountBook,
 } from './_load-cli.mjs';
 
 const script = (name) => path.join(repoRoot, 'scripts', name);
@@ -446,4 +446,148 @@ test('nw-pitch --against 才查撞车，且绝不跟自己比', () => {
   const selfHuman = run('nw-pitch.mjs', [twin, '--against', twin]).stdout;
   assert.match(selfHuman, /对照只有这本书自己/);
   assert.ok(!/未给对照书/.test(selfHuman), '给了 --against 却被说成没给，那是撒谎');
+});
+
+// ═══════════ nw-style.mjs · 文风指纹 ═══════════
+
+const FIT_LONG = '他沿着石阶往上走，雾贴着脚背流动，山门还在很远的地方，钟声从崖下传上来一声隔着一声。';
+const FIT_TALK = '“你来晚了。”他低声说。\n“我知道。”她没有回头。';
+const fitRep = (n, unit) => Array.from({ length: n }, () => unit).join('\n\n');
+
+let fitSeq = 0;
+/** 造一本磁盘上的书：前两章同一种长句笔法，第三章短句加对话，第四章故意太短。 */
+function styleBook() {
+  const box = path.join(tmp, `style-box-${++fitSeq}`);
+  const book = scaffoldBook(box, { slug: `sb${fitSeq}`, id: `novel_style${fitSeq}`, title: '问剑', genre: '仙侠' });
+  const specs = [
+    { title: '山门', body: fitRep(24, FIT_LONG) },
+    { title: '夜袭', body: fitRep(24, FIT_LONG) },
+    { title: '下山', body: fitRep(40, FIT_TALK) },
+    { title: '挑水', body: '他挑水。' },
+  ];
+  specs.forEach((s, i) => {
+    const meta = NWBible.newChapter({ id: `ch-00${i + 1}`, number: i + 1, slug: `s${i + 1}`, title: s.title, status: 'draft' });
+    meta.schemaVersion = NWBible.SCHEMA_VERSION;
+    meta['x-words'] = NWText.countWords(s.body);
+    writeFileAtomic(path.join(book, 'manuscript', 'chapters', NWBible.chapterFileName(meta)), NWBible.serializeChapterFile(meta, s.body));
+  });
+  // scaffoldBook 里的 _derived 是全 0，补完正文就必须走库内那个唯一出口重算，
+  // 否则这本夹具一开场就自报 derived-field-touched，跑在它上面的门禁命令全退 3。
+  recountBook(book);
+  return book;
+}
+const bookJson = (book) => JSON.parse(fs.readFileSync(path.join(book, 'book.json'), 'utf8'));
+
+test('nw-style keys：四格与门槛都从包里现取，也交代了它不测什么', () => {
+  const j = JSON.parse(run('nw-style.mjs', ['keys', '--json'], 0).stdout);
+  assert.deepEqual(j.keys.map((k) => k.id), NWStyleFit.KEYS.map((k) => k.id));
+  assert.deepEqual(j.keys.map((k) => k.threshold), NWStyleFit.KEYS.map((k) => k.dev), 'CLI 里抄了第二份门槛');
+  assert.equal(j.minBodyWords, NWStyleFit.MIN_BODY);
+  assert.deepEqual(j.notMeasured, ['文笔高低', '一个总分', '语义相似度']);
+
+  const human = run('nw-style.mjs', ['keys'], 0).stdout;
+  assert.match(human, new RegExp(`正文 ≥${NWStyleFit.MIN_BODY} 字`), '够不够格的数字要说出口');
+  assert.match(human, /不合成总分/);
+  assert.match(human, /明确不算：文笔高低/);
+  assert.match(human, /只认 book\.styleAnchor 勾定的基准章/);
+});
+
+test('没勾基准时这份视图照样给数字，但话术不许把它叫作标准，R32 也一条不报', () => {
+  const book = styleBook();
+  const j = JSON.parse(run('nw-style.mjs', [book, '--json'], 0).stdout);
+  assert.equal(j.baseline.source, 'auto');
+  assert.deepEqual(j.baseline.declared, []);
+  assert.equal(j.baseline.chapters, 3, '没勾时参照是全部够格的章，不是最近两章');
+  assert.deepEqual(j.chapters.map((c) => c.role), ['chapter', 'chapter', 'chapter', 'too-short']);
+  assert.equal(j.chapters[3].words, 0, '太短的章不许编一个字数');
+
+  const human = run('nw-style.mjs', [book], 0).stdout;
+  assert.match(human, /未勾定基准/);
+  assert.match(human, /R32 在这种情况下一条不报/);
+  assert.match(human, /两章彼此一模一样也可能各报偏离/, '参照被离群章拖走这件事要当场说，不然数字看着像指控');
+  assert.match(human, /第4章《挑水》　正文不足 \d+ 字，不进指纹/);
+
+  const gate = JSON.parse(run('nw-continuity.mjs', [book, '--rules', 'R32', '--json'], 0).stdout);
+  assert.deepEqual(gate.diagnostics, [], '没勾基准就没有基准，机检必须整条闭嘴');
+});
+
+test('anchor --set 勾定基准：写的就是 book.styleAnchor，越几格与 R32 报的是同一件事', () => {
+  const book = styleBook();
+  assert.equal('styleAnchor' in bookJson(book), false);
+  const j = JSON.parse(run('nw-style.mjs', ['anchor', book, '--set', 'ch-001,ch-002', '--json'], 0).stdout);
+  assert.deepEqual(bookJson(book).styleAnchor, { chapterIds: ['ch-001', 'ch-002'] }, 'book.json 里没落成 R32 认的那个形状');
+  assert.deepEqual(j.baseline.declared, ['ch-001', 'ch-002']);
+  assert.equal(j.baseline.source, 'anchor');
+  assert.equal(j.baseline.fingerprint.words, 1824, '基准按两章加权，不是各章比值再平均');
+  assert.deepEqual(j.chapters.map((c) => c.role), ['baseline', 'baseline', 'chapter', 'too-short'], '基准章不评自己');
+  assert.deepEqual(j.chapters[2].drift.map((d) => d.id), ['sentAvg', 'dialogue', 'paraSent']);
+
+  // 与 core 同一把尺：同样的夹具在测试里再算一遍，话术与数字必须一字不差
+  const core = NWStyleFit.compare(
+    NWStyleFit.fingerprint([{ id: 'a', body: fitRep(24, FIT_LONG) }, { id: 'b', body: fitRep(24, FIT_LONG) }], {}),
+    NWStyleFit.fingerprint([{ id: 'c', body: fitRep(40, FIT_TALK) }], {}));
+  assert.deepEqual(j.chapters[2].drift.map((d) => d.text), core.map((d) => d.text));
+
+  const human = run('nw-style.mjs', [book], 0).stdout;
+  assert.match(human, /作者勾定的基准：第1章《山门》、第2章《夜袭》/);
+  assert.match(human, /第3章《下山》　640 字 · 越 3 格：句均字数 38\.0 字→4\.0 字（降 89%）/);
+  assert.match(human, /第1章《山门》　基准，不评自己/);
+
+  const gate = JSON.parse(run('nw-continuity.mjs', [book, '--rules', 'R32', '--json'], 0).stdout);
+  assert.deepEqual(gate.diagnostics.map((d) => [d.chapter, d.severity]), [['ch-003', 'info']],
+    '视图里越三格的那一章与机检报的那一章必须是同一章，且永远只是 info');
+
+  // 勾了基准，导出去再读回来还认这几章（与 Web 侧共用同一条桥）
+  const v = JSON.parse(run('nw-validate.mjs', [book, '--json', '--no-write'], 0).stdout);
+  assert.deepEqual(v.diagnostics.filter((d) => d.severity === 'error'), [], '勾完基准的书必须仍然过 schema');
+});
+
+test('anchor --clear 是删掉这一格，不是留一个 schema 不认的 null', () => {
+  const book = styleBook();
+  run('nw-style.mjs', ['anchor', book, '--set', 'ch-001'], 0);
+  assert.deepEqual(bookJson(book).styleAnchor, { chapterIds: ['ch-001'] });
+  const keysBefore = Object.keys(bookJson(book));
+  run('nw-style.mjs', ['anchor', book, '--clear', '--json'], 0);
+  assert.equal('styleAnchor' in bookJson(book), false, '留一个空键就不叫取消');
+  assert.deepEqual(Object.keys(bookJson(book)), keysBefore.filter((k) => k !== 'styleAnchor'), '除了这一格，别的键一个不许动');
+  assert.equal(bookJson(book).title, '问剑');
+  assert.equal(JSON.parse(run('nw-style.mjs', [book, '--json'], 0).stdout).baseline.source, 'auto');
+  const v = JSON.parse(run('nw-validate.mjs', [book, '--json', '--no-write'], 0).stdout);
+  assert.deepEqual(v.diagnostics.filter((d) => d.severity === 'error'), [], '取消基准之后 validate 仍要 0 error');
+});
+
+test('anchor 的参数错要说清能勾哪些章，且一个字都不落盘', () => {
+  const book = styleBook();
+  const snapshot = fs.readFileSync(path.join(book, 'book.json'), 'utf8');
+  let r = run('nw-style.mjs', ['anchor', book, '--set', 'ch-009,ch-001'], 2);
+  assert.match(r.stderr, /不在书里：ch-009/);
+  assert.match(r.stderr, /ch-001、ch-002、ch-003、ch-004/, '拒绝的时候要给出可写的清单');
+  r = run('nw-style.mjs', ['anchor', book, '--set', 'ch-001', '--clear'], 2);
+  assert.match(r.stderr, /只能给一个/);
+  run('nw-style.mjs', ['anchor', book, '--set', ''], 2);
+  run('nw-style.mjs', ['anchor', book], 2);
+  assert.equal(fs.readFileSync(path.join(book, 'book.json'), 'utf8'), snapshot, '参数错了却不许已经动过盘');
+  run('nw-style.mjs', ['anchor', path.join(tmp, 'no-such-book'), '--set', 'ch-001'], 5);
+  run('nw-style.mjs', [], 2);
+});
+
+test('注入预览与生成时同一函数同一预算：样例是谁、指纹多少都跟着基准走', () => {
+  const book = styleBook();
+  const auto = JSON.parse(run('nw-style.mjs', [book, '--json'], 0).stdout);
+  assert.deepEqual(auto.injected.chapters, ['第2章《夜袭》', '第3章《下山》'], '没勾基准时按就近取，取的是最后两章');
+  // 「在场两章」与「全书合格章」必须是两个不同的数，否则这句断言钉不住任何东西
+  const inPool = NWStyleFit.fingerprint(
+    [{ id: 'b', body: fitRep(24, FIT_LONG) }, { id: 'c', body: fitRep(40, FIT_TALK) }], {});
+  const allEligible = NWStyleFit.fingerprint([
+    { id: 'a', body: fitRep(24, FIT_LONG) }, { id: 'b', body: fitRep(24, FIT_LONG) },
+    { id: 'c', body: fitRep(40, FIT_TALK) }], {});
+  assert.ok(inPool.words < allEligible.words, `夹具塌了：两章 ${inPool.words} 字竟然不比全书 ${allEligible.words} 字小`);
+  assert.match(auto.injected.fitLine, new RegExp(`【基准指纹】2 章 / ${inPool.words} 字`),
+    '那一行说的必须是在场这两章的字数，不是全书的');
+
+  run('nw-style.mjs', ['anchor', book, '--set', 'ch-001,ch-002', '--json'], 0);
+  const pinned = JSON.parse(run('nw-style.mjs', [book, '--json'], 0).stdout);
+  assert.deepEqual(pinned.injected.chapters, ['第1章《山门》', '第2章《夜袭》']);
+  assert.equal(pinned.injected.fitLine, NWStyleFit.lines(NWStyleFit.fingerprint(
+    [{ id: 'ch-001', body: fitRep(24, FIT_LONG) }, { id: 'ch-002', body: fitRep(24, FIT_LONG) }], {})));
 });

@@ -60,10 +60,13 @@
       voice: ctx.book.voice || { person: '', tense: '', povDefault: null, notes: '' },
       // 作者关掉哪几组禁词是本作品的设定，不导出就等于换台机器重新写一遍；没设过就别写这个键
       stylePack: ctx.book.stylePack || null,
+      // 基准章同理：换台机器 / 导出给 agent 之后，「以第 1 章为文风基准」这件事
+      // 必须还在这本书上。没设过就不写这个键（与 stylePack 同一约定）。
+      styleAnchor: ctx.book.styleAnchor || null,
       created: ctx.book.created || T.toISO(ctx.book.created_at),
       updated: ctx.book.updated || T.toISO(ctx.book.updated_at),
     }, ['schemaVersion', 'id', 'slug', 'title', 'genre', 'language', 'description', 'format', 'target_words',
-      'audience', 'target', 'voice', 'stylePack', 'created', 'updated']);
+      'audience', 'target', 'voice', 'stylePack', 'styleAnchor', 'created', 'updated']);
     book._derived = {
       chapters: ctx.chapters.length,
       words: ctx.chapters.reduce((s, c) => s + T.countWords(c.body), 0),

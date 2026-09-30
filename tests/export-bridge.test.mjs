@@ -160,6 +160,46 @@ test('文体包开关一路走通：库行 → book.json → 读回来还是同�
 });
 
 /**
+ * 「以第 1 章为文风基准」与去 AI 味包同性质：这是这本书的设定，不是本机状态。
+ * 四处声明（buildCtx / pick 白名单 / fromBook / schema 属性）漏任何一处的表现都一样 ——
+ * 界面上勾了、保存成功、下一句 prompt 里注入的是别的章。所以这条往返要连着过一遍 CLI 校验。
+ */
+test('文风基准章一路走通：库行 → book.json → 读回来还认这几章，且没勾时不多写一格', async () => {
+  const rows = rowsFixture();
+  rows.novel.styleAnchor = { chapterIds: ['ch_a1'] };
+  const ctx = NWStory.buildCtx(rows);
+  assert.deepEqual(ctx.book.styleAnchor, { chapterIds: ['ch_a1'] }, 'buildCtx 没过桥：ctx 里根本没有这一格');
+
+  const tree = await NWProject.buildProjectTree(ctx);
+  const key = Object.keys(tree).find((k) => k.endsWith('book.json'));
+  assert.deepEqual(JSON.parse(tree[key]).styleAnchor, { chapterIds: ['ch_a1'] }, '导出白名单漏了这个键');
+
+  const parsed = NWProject.parseFileMap(tree);
+  assert.deepEqual(parsed.book.styleAnchor, { chapterIds: ['ch_a1'] }, 'fromBook 丢了它');
+  const ctx2 = NWStory.buildCtx({ novel: { ...parsed.book, created_at: 1, updated_at: 2 }, chapters: [], characters: [] });
+  assert.deepEqual(ctx2.book.styleAnchor, { chapterIds: ['ch_a1'] }, '导入后重新装配的 ctx 拿不到作者勾的基准');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-anchor-'));
+  try {
+    for (const [rel, text] of Object.entries(tree)) {
+      const f = path.join(tmp, '.novelweave', rel);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, text, 'utf8');
+    }
+    const v = run('nw-validate.mjs', [path.join(tmp, '.novelweave', '桥接测试'), '--json', '--no-write']);
+    const bad = JSON.parse(v.stdout).diagnostics.filter((d) => d.severity === 'error');
+    assert.deepEqual(bad, [], 'schema 里没声明 styleAnchor 的话，导出的书会被自己的校验器判违规：' + JSON.stringify(bad));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // 没勾过的书不许凭空多出这一格：旧导出文件与新导出文件要能字节一致
+  const bare = await NWProject.buildProjectTree(NWStory.buildCtx(rowsFixture()));
+  const bkey = Object.keys(bare).find((k) => k.endsWith('book.json'));
+  assert.ok(!('styleAnchor' in JSON.parse(bare[bkey])), '没设过基准也被写了一格');
+});
+
+/**
  * 织物规格与目标字数是这本书的设定，不是本机状态：短篇靠 format 换上下文与规则阈值
  * （R17 的 minBody、前情全量注入），靠 target_words 画达标进度条。
  * 这两个键以前根本不在导出的 pick 白名单里 —— 导出去再导回来，短篇变长篇，

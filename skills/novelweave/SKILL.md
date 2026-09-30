@@ -39,7 +39,8 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 本 skill **不做**的事，无论用户怎么问：
 - 不从零起稿整本书，不做"一键生成 50 章"。
 - 不判断文笔好坏，不承诺"去 AI 痕迹"。内置包与 R22 数的是禁词密度和句式套路，
-  那是可复现的统计，不是"这段写得好不好"的评价。
+  文风指纹那四个数数的是句长、对话占比、段均句数与禁词密度，
+  这些都是可复现的统计，不是"这段写得好不好"的评价。
 - 不发明第二套状态文件格式（只认 `.novelweave/`，见 `references/schema-v1.md`）。
 - 不在作者确认前改写任何既定事实（见 Hard Constraints 第 5 条）。
 
@@ -59,6 +60,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 | "我已经有三十章稿子，想管起来" | `nw-io.mjs adopt <目录> --title X --dry-run`，看报告再落盘 |
 | "这章读着像 AI 写的" | `nw-prose.mjs probe` + `packet`，按引擎清单交接；本机没外部引擎就 `nw-prose.mjs lint`（见 `references/prose-handoff.md`） |
 | "这个选题行不行 / 换个题材试试" | `nw-pitch.mjs score`（打分四维 + 弱项怎么改，见 `references/pitch-card.md`）；要问评分标准本身先 `nw-pitch.mjs rubric` |
+| "写着写着不像这本书了 / 我的笔法是哪几章定的" | `nw-style.mjs <bookDir>`（四格指纹 + 逐章偏离 + 注入预览，见 `references/style-fingerprint.md`）；没勾基准就先问作者勾哪几章，别替他挑 |
 | "把这本书导出给织文网页 / 从网页备份导入" | `references/io.md` |
 | "这是什么格式？字段什么意思" | 读 `references/schema-v1.md` |
 
@@ -197,6 +199,9 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 | `nw-prose.mjs status` | 作者问"这几章文字靠谱吗"、或交付前自查 | **恒为 0，不是门禁** |
 | `nw-pitch.mjs score [bookDir] [对照书…]` | 动笔前判选题立不立得住（也可 `--concept 梗概.json`） | **恒为 0，分数只是建议** / 2 用法 / 5 读文件失败 |
 | `nw-pitch.mjs rubric` | 作者质疑评分标准，或要知道词表是手写的 | 0 |
+| `nw-style.mjs [bookDir]` | 作者问「写着写着不像这本书了」：四格指纹 + 逐章偏离 + 注入预览 | **恒不阻断：0** / 2 用法 / 5 读盘错 |
+| `nw-style.mjs keys` | 报告漂移前先讲清那四个数各是什么 | 0 |
+| `nw-style.mjs anchor [bookDir] --set ch-001,ch-002` \| `--clear` | 作者说出基准是哪几章（别替他挑）；`--clear` 删键 | 0 / 2 章 id 不在书里（拒绝时不落盘）/ 5 |
 
 统一约定：`--json` 走 stdout 纯结果，人类日志走 stderr。**不要解析 stderr。**
 

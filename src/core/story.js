@@ -268,6 +268,7 @@
       format: b.format === 'short' ? 'short' : 'long',
       target_words: Number(b.target_words) || null,
       stylePack: b.stylePack || null,
+      styleAnchor: b.styleAnchor || null,
       created_at: T.fromISO(b.created) ?? null,
       updated_at: T.fromISO(b.updated) ?? null,
     };
@@ -405,6 +406,9 @@
         // 去 AI 味包必须原样过桥：R22 与 prompt 都只认 ctx.book.stylePack，
         // 这里漏掉一项，作者在设置里关掉的词组就只是看起来生效
         stylePack: rows.novel.stylePack || null,
+        // 基准章与去 AI 味包一样必须原样过桥：风格样例那一节只认 ctx.book.styleAnchor，
+        // 这里漏掉，作者在文体规则页勾的基准就只是界面上的勾，进不了 prompt。
+        styleAnchor: rows.novel.styleAnchor || null,
         // 建档/改稿时间必须过桥。project.js 写 book.json 时读的就是这两个键，
         // 而 buildCtx 以前不给 —— 于是导出的目录里压根没有 created：
         // 导入端只能把书重新写成「今天建的」，agent 侧看到的「上次更新」也跟着丢。

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWContext, NWRules, NWSelfCheck, NWStory, NovelLLM } from './_load.mjs';
+import { NWContext, NWRules, NWSelfCheck, NWStory, NWStyleFit, NWText, NovelLLM } from './_load.mjs';
 
 // ═══════════════ 夹具 ═══════════════
 
@@ -134,6 +134,7 @@ test('风格样例：opts.style 开启时注入，从上一章中段节选并带
   const style = built.sections.find((s) => s.name === '风格样例');
   assert.match(style.text, /风格锚点甲句/, '节选要带作者正文的真实句子');
   assert.match(style.text, /第1章《山门》/, '样例要标来源章');
+  assert.ok(style.text.endsWith('…'), '节选是正文中段，截断必须写在脸上 —— 不标就是在假装交给模型一整段');
   assert.equal(names[names.length - 1], '风格样例', '风格样例是软上下文，排最末先被裁');
 });
 
@@ -143,6 +144,117 @@ test('风格样例：默认关闭 —— 不传 style 就不注入，旧行为�
   assert.ok(!sectionNames(built).includes('风格样例'));
   const usage = built.usage.sections.find((s) => s.name === '风格样例');
   assert.equal(usage, undefined);
+});
+
+// ═══════════════ 风格基准：勾哪几章、压尾、预算 ═══════════════
+
+const builtStyle = (novelOver, budget) => NWContext.buildSections(
+  NWStory.buildCtx(rows({ novel: { id: 'novel_g', title: '问剑', genre: '仙侠', description: '少年出山', ...novelOver } })),
+  { chapterId: 'ch-003', style: true, budget },
+);
+const styleIncluded = (built) => built.usage.sections.find((s) => s.name === '风格样例')?.included || [];
+
+test('动笔前最后读到的必须是正文：开了 style 时样例压在所有约束之后', () => {
+  const prompt = NovelLLM.buildContinueContext({
+    ctx: NWStory.buildCtx(rows()), chapterId: 'ch-003', style: true,
+  }).prompt;
+  const at = prompt.indexOf('【模仿以下段落的句长');
+  assert.ok(at > 0, '样例节没进 prompt');
+  assert.ok(!/^## /m.test(prompt.slice(at)), '样例之后不许再有任何一节 —— 写作要求、配额、禁词清单都在它前面');
+  assert.ok(prompt.indexOf('去 AI 味') < at && prompt.indexOf('写作要求') < at, '约束要退到样例之前');
+  assert.match(prompt.slice(at), /风格锚点甲句/, '离生成点最近的必须是一段作者自己的正文');
+});
+
+test('基准章可指定：勾了第 1 章就注入第 1 章，最近那章不再自动当标准', () => {
+  const auto = builtStyle({});
+  assert.equal(auto.usage.styleSource, 'auto');
+  assert.deepEqual(styleIncluded(auto), ['第1章《山门》', '第2章《夜行》'], '不勾时仍是就近取两章');
+
+  const pinned = builtStyle({ styleAnchor: { chapterIds: ['ch-001'] } });
+  assert.equal(pinned.usage.styleSource, 'anchor');
+  assert.deepEqual(styleIncluded(pinned), ['第1章《山门》']);
+  const sec = pinned.sections.find((s) => s.name === '风格样例');
+  assert.match(sec.text, /风格锚点甲句/);
+  assert.ok(!/他往前走着/.test(sec.text), '第 2 章的句子还在样例里，说明勾的基准根本没被读');
+});
+
+test('一次最多注入两章：预算再宽也不许把前五章的正文一起拖进 prompt', () => {
+  // STYLE_MAX 是预算之外的第二道闸：长篇写续写时合格章成百，只按字节裁就会一路收进十几章。
+  // 预算给足 20 万字节，收到的章数仍必须停在 2 —— 这样改大 STYLE_MAX 才会被看见。
+  const many = [1, 2, 3, 4, 5].map((i) => ({
+    id: `ch-00${i}`, number: i, title: `第${i}章`, body: '他往前走，山很静。'.repeat(90),
+  }));
+  const book = NWStory.buildCtx(rows()).book;
+  const picked = NWContext.pickStyleExemplars(many, null, book, 200000);
+  assert.equal(picked.list.length, 2, `只该注入最近两章，实际 ${picked.list.length} 章`);
+  assert.deepEqual(picked.list.map((e) => e.id), ['ch-004', 'ch-005'], '取的是最近的，不是最早的');
+});
+
+test('选样例的门槛与指纹同一口径：字符数够而字数不够的一章不许进池', () => {
+  // 界面写着「正文 ≥600 字」，规则话术里也是「正文不足 600 字」—— 选样例这一路若退回按字符数比长度，
+  // 一章 469 字的正文就会当起基准，而那两条句子都在说谎。判据只有 stylefit 那一份。
+  const thin = '他往前走，山很静。'.repeat(67);      // 603 字符 / 469 字
+  const fat = '他往前走，山很静。'.repeat(90);        // 810 字符 / 630 字
+  assert.ok(thin.length >= NWStyleFit.MIN_BODY && NWText.countWords(thin) < NWStyleFit.MIN_BODY,
+    '夹具必须正好走「字符够而字不够」那条缝，否则这条守卫是空的');
+  const book = NWStory.buildCtx(rows()).book;
+  const many = [1, 2, 3].map((i) => ({
+    id: `ch-00${i}`, number: i, title: `第${i}章`, body: i === 3 ? thin : fat,
+  }));
+  const picked = NWContext.pickStyleExemplars(many, null, book, 200000);
+  assert.deepEqual(picked.list.map((e) => e.id), ['ch-001', 'ch-002'],
+    '最近那章只有 469 字，进了池就是拿它当基准');
+});
+
+test('勾定的基准章全不合格时退回就近取样，并把「退回了」说出来', () => {
+  // ch-003 是空章、nope 不存在 —— 这种书界面上一律显示成「按我指定的基准」就是撒谎
+  const lost = builtStyle({ styleAnchor: { chapterIds: ['ch-003', 'nope'] } });
+  assert.equal(lost.usage.styleSource, 'anchor-lost');
+  assert.deepEqual(styleIncluded(lost), ['第1章《山门》', '第2章《夜行》']);
+  const mixed = builtStyle({ styleAnchor: { chapterIds: ['ch-003', 'ch-001'] } });
+  assert.equal(mixed.usage.styleSource, 'anchor', '有一章合格就不算退回');
+  assert.deepEqual(styleIncluded(mixed), ['第1章《山门》']);
+});
+
+test('styleBytes 真的参与收样：先丢较远的那一章，再缩节选，缩到地板就如实超预算', () => {
+  assert.equal(NWContext.DEFAULTS.styleBytes, 3000, '这个预算从没被读过过；现在它生效了，值要钉住');
+  const bytes = (built) => built.sections.find((s) => s.name === '风格样例').bytes;
+
+  const two = builtStyle({}, { styleBytes: 3000 });
+  assert.deepEqual(styleIncluded(two), ['第1章《山门》', '第2章《夜行》']);
+
+  const one = builtStyle({}, { styleBytes: 2600 });
+  assert.deepEqual(styleIncluded(one), ['第2章《夜行》'], '预算不够先丢远的那一章，不是丢近的那一章');
+
+  const mid = builtStyle({}, { styleBytes: 1500 });
+  assert.deepEqual(styleIncluded(mid), ['第2章《夜行》']);
+  assert.ok(bytes(mid) < bytes(one), '只剩一章还超预算时要缩节选字数');
+
+  const floor = builtStyle({}, { styleBytes: 200 });
+  const tiny = builtStyle({}, { styleBytes: 1 });
+  assert.equal(bytes(floor), bytes(tiny), '缩到 120 字就停：再小的预算也不许把样例压成碎片');
+  assert.ok(bytes(tiny) > 200, '软预算到底还是超了要如实超着走，而不是把样例切没');
+  // 只比「floor 与 tiny 相等」钉不住地板的高度：把 STYLE_MIN_CHARS 改小到 20，两者照样相等。
+  const cjk = (b) => (b.sections.find((s) => s.name === '风格样例').text.match(/[\u4e00-\u9fff]/g) || []).length;
+  assert.ok(cjk(tiny) >= 120, `样例被压到 ${cjk(tiny)} 个字，已经不成段正文了`);
+});
+
+test('指纹那一行说的是眼前这几章：注入几章就报几章的字数', () => {
+  const two = builtStyle({});
+  assert.match(two.sections.find((s) => s.name === '风格样例').text, /【基准指纹】2 章 \/ 1746 字的实测值/);
+  const one = builtStyle({}, { styleBytes: 2600 });
+  assert.match(one.sections.find((s) => s.name === '风格样例').text, /【基准指纹】1 章 \/ 1080 字的实测值/,
+    '样例被预算收到只剩一章，那一行还写「2 章 / 1746 字」就是在描述眼前没有的东西');
+  for (const k of NWStyleFit.KEYS) {
+    assert.ok(one.sections.find((s) => s.name === '风格样例').text.includes(k.label), `${k.label} 那一格没进 prompt`);
+  }
+});
+
+test('CLI 出的派生文档与 Web 的 prompt 是同一份顺序 —— 正文块同样压尾', () => {
+  const built = builtStyle({});
+  const doc = NWContext.renderDocument(built);
+  assert.ok(doc.indexOf('【模仿以下段落的句长') > doc.indexOf('## 前情摘要'), '文档里样例也在资料之后');
+  assert.ok(doc.trimEnd().endsWith(built.sections.find((s) => s.name === '风格样例').block.trimEnd()));
 });
 
 // ═══════════════ R17 章末钩子 ═══════════════
@@ -567,12 +679,14 @@ const CONT = (over = {}) => NovelLLM.buildContinueContext({
 test('续写 prompt 带着「去 AI 味」清单，钉在写作要求之后', () => {
   // 自检那一轮修的是已经成形的句子；把清单前置到 prompt 才能少烧一次 API。
   // 这条测试盯的是「到底进没进 prompt」，不是清单内容 —— 内容在 stylepack.test.mjs。
+  // 末尾这一句的前提是「没有正文样例在场」：开了 opts.style 时压尾的是风格样例，
+  // 那份清单退到它前面（见上面「动笔前最后读到的必须是正文」）。
   const prompt = CONT();
   assert.match(prompt, /去 AI 味/);
   assert.match(prompt, /比喻引导词[^\n]*仿佛/);
   assert.match(prompt, /句式：[^\n]*连续多句同一开头/);
   assert.ok(prompt.indexOf('去 AI 味') > prompt.indexOf('写作要求'), '清单要在写作要求之后');
-  assert.match(prompt, /去 AI 味[\s\S]*$/, '清单要在整份 prompt 末尾，离生成点最近');
+  assert.match(prompt, /去 AI 味[\s\S]*$/, '无样例时这份清单仍是整份最后一节');
 });
 
 test('stylePack.enabled=false：prompt 里一个字都不留', () => {

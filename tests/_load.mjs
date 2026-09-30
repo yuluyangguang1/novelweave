@@ -20,6 +20,7 @@ export const NWBible = (globalThis.NWBible = require('../src/core/bible.js'));
 export const NWStylePack = (globalThis.NWStylePack = require('../src/core/stylepack.js'));
 export const NWTension = (globalThis.NWTension = require('../src/core/tension.js'));
 export const NWPitch = (globalThis.NWPitch = require('../src/core/pitch.js'));
+export const NWStyleFit = (globalThis.NWStyleFit = require('../src/core/stylefit.js'));
 export const NWRules = (globalThis.NWRules = require('../src/core/rules.js'));
 export const NWStory = (globalThis.NWStory = require('../src/core/story.js'));
 export const NWProject = (globalThis.NWProject = require('../src/core/project.js'));

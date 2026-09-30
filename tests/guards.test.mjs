@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules, NovelDB } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -200,6 +200,54 @@ test('CLI 的 R 编号别名表覆盖每一条已实现规则（--rules R23 不�
   }
   assert.deepEqual(missing, [], `这些规则在 CLI 里按编号选不到：${missing.join('、')}`);
   assert.deepEqual(wrong, [], `别名指错了规则：${wrong.join('；')}`);
+});
+
+/**
+ * 反验时撞出来的洞：把 rules.md 里的 R32 改成 RXX、把 SKILL.md 路由表里的 nw-style.mjs 改成
+ * nw-styleX.mjs，全量测试一声不响 —— 因为此前没有任何一条测试读 skills/。
+ * 文档是 agent 唯一的入口：编号点错、脚本名点错，那条能力对它就不存在，
+ * 而作者看到的是一句「按文档做了却没反应」。
+ */
+test('技能文档点名的规则编号、脚本与参考文件必须对得上', () => {
+  const known = new Set(Object.values(NWRules.RULES).map((r) => r.code).filter(Boolean));
+  const scripts = new Set(readdirSync(repoPath('scripts')).filter((f) => f.endsWith('.mjs')));
+  const files = [];
+  (function walk(dir) {
+    for (const e of readdirSync(repoPath(dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(rel);
+      else if (e.name.endsWith('.md')) files.push(rel);
+    }
+  })('skills');
+  assert.ok(files.length >= 6, `只找到 ${files.length} 份技能文档，八成是遍历写错了`);
+  const badCode = [], badScript = [], badRef = [];
+  for (const f of files) {
+    const md = read(f);
+    const skillDir = f.split('/').slice(0, -1).join('/');   // skills/<skill>/xxx.md
+    for (const m of md.matchAll(/\bR\d+\b/g)) {
+      if (!known.has(m[0])) badCode.push(`${f} 点了 ${m[0]}`);
+    }
+    for (const m of md.matchAll(/nw-[\w-]+\.mjs/g)) {
+      if (!scripts.has(m[0])) badScript.push(`${f} 点了 ${m[0]}`);
+    }
+    for (const m of md.matchAll(/references\/([\w.-]+\.md)/g)) {
+      // 参考文件与点它的那份文档在同一个技能目录下，所以按各自技能目录查
+      const here = existsSync(repoPath(...skillDir.split('/'), 'references', m[1]));
+      const sibling = files.some((g) => g !== f && g.startsWith('skills/')
+        && g.endsWith(`/references/${m[1]}`));
+      if (!here && !sibling) badRef.push(`${f} 点了 references/${m[1]}`);
+    }
+  }
+  assert.deepEqual(badCode, [], `文档里点到不存在的规则编号：${badCode.join('；')}`);
+  assert.deepEqual(badScript, [], `文档里点到不存在的脚本：${badScript.join('；')}`);
+  assert.deepEqual(badRef, [], `文档里点到不存在的参考文件：${badRef.join('；')}`);
+  // 反方向：每条已实现的规则都得在 rules.md 里有那一节。
+  // 上面那三条只查「文档点到的东西存在」，把 R32 那一节整个改名成 RXX 反而全绿 —— 反验时就是绿的。
+  const doc = read('skills/novelweave-continuity/references/rules.md');
+  const missing = Object.entries(NWRules.RULES)
+    .filter(([slug, r]) => r.code && !doc.includes(`${r.code} \`${slug}\``))
+    .map(([slug, r]) => `${r.code} ${slug}`);
+  assert.deepEqual(missing, [], `rules.md 里缺了这些小节：${missing.join('、')}`);
 });
 
 test('app.js 用到的每个 NovelDB 门面成员都必须真的存在', () => {
@@ -410,9 +458,132 @@ test('文体规则面板：控件全被读走，存进库的键与包认的键�
   assert.deepEqual([...saved].filter((k) => !known.has(k)).sort(), [], '面板存了包不认的键，落库也没人读');
   assert.deepEqual([...known].filter((k) => !saved.has(k)).sort(), [], '这些包开关作者在界面上改不了');
 
-  // 面板写的是 novel.stylePack，buildCtx 读的也是这个名字 —— 拼错是静默失效
-  assert.match(js, /update\(APP\.novel\.id, \{ stylePack \}\)/, '保存按钮没把表单写进 novel.stylePack');
+  // 面板写的是 novel.stylePack 与 novel.styleAnchor，buildCtx 读的也是这两个名字 —— 拼错是静默失效
+  assert.match(js, /update\(APP\.novel\.id, \{ stylePack, styleAnchor \}\)/, '保存按钮没把两份表单写进 novel 行');
   assert.match(read('src/core/story.js'), /rows\.novel\.stylePack/, 'buildCtx 没把 stylePack 过桥给 R22 与生成 prompt');
+  assert.match(read('src/core/story.js'), /rows\.novel\.styleAnchor/, 'buildCtx 没把 styleAnchor 过桥给 R32 与样例选择');
+});
+
+/**
+ * 基准章这一格的两个消费方（生成时选样例的 NWContext.stylePool、检查器 R32）
+ * 都不在界面里，界面上勾错一个名字不会有任何报错，只会让作者以为自己勾过了。
+ * 所以这几条静态核对一起做：面板有画、有人读、写进库的名字与 core 读的名字一致，
+ * 而「哪几章够格」这个门槛必须只有一个出处。
+ */
+test('文体面板的基准章：画了有人读，读回来的键 core 认，合格门槛不抄第二份', () => {
+  const js = read('src/app.js');
+  const form = js.match(/function styleAnchorFields\([\s\S]*?\n\}/)?.[0] || '';
+  const reader = js.match(/function readStyleAnchorForm\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(form && reader, 'app.js 里找不到基准章表单或它的读取器');
+  // 定义了不等于画出来了：删掉模板里的渲染点，函数体守卫照样全绿，只有语法解析那条泛红（删了 ${…} 打断模板）。
+  assert.match(js, /\$\{styleAnchorFields\('sty', ctx\)\}/, '基准章表单没被渲染进文体面板');
+  // 容器 id 两边必须同一个拼法：画成 ${prefix}-p-anchor、读成 'sty-p-anchor'，前缀写错就是读到 null
+  const box = form.match(/id="\$\{prefix\}-([\w-]+)"/)?.[1];
+  assert.ok(box, '基准章列表没有容器 id');
+  assert.ok(reader.includes('getElementById(`${prefix}-' + box + '`)'), `读取器没读 ${box} 这个容器`);
+  assert.match(form, /value="\$\{attr\(c\.id\)\}"/, '章 id 没走 attr，属性会被半角引号突破');
+  assert.match(form, /disabled/, '正文不够长的章必须画成禁用，勾了也不进指纹');
+
+  // 那一行数字得跟着勾态当场动：勾了一章而屏上还写着「2 章 / 1760 字」，作者就用旧尺子理解新基准
+  assert.match(form, /data-action="style-anchor-preview"/, '基准章容器没有预览动作，改了勾态数字不动');
+  assert.match(js, /'style-anchor-preview': \(\) => refreshStyleAnchorFit\('sty'\)/, '预览动作没人接，点 checkbox 毫无反应');
+  const preview = js.match(/function refreshStyleAnchorFit\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(preview, 'app.js 里没有当场重算那行的函数');
+  assert.match(form, /id="\$\{prefix\}-p-fit"/, '指纹那一行没有可替换的容器');
+  assert.ok(preview.includes('getElementById(`${prefix}-p-fit`)'), '重算没写回那个容器');
+  assert.ok(preview.includes('getElementById(`${prefix}-p-anchor`)'), '重算没读作者眼前勾着的那几章');
+  assert.match(preview, /NWStyleFit\.fingerprint\(/, '重算另起了一套算法，面板与检查器就会分家');
+  assert.match(js, /APP\.styleCtx = ctx/, '面板没把手里的 ctx 存下来，重算时拿不到正文');
+  assert.doesNotMatch(form, /改勾态按「保存」后才会重算/, '界面还写着「按保存才重算」，与当场重算的行为对不上');
+
+  // 保存 → 库 → 过桥 → 导出白名单，四段都得认这个名字
+  assert.match(js, /NovelDB\.novels\.update\(APP\.novel\.id, \{ stylePack, styleAnchor \}\)/);
+  assert.match(js, /readStyleAnchorForm\('sty'\)/, 'styleAnchor 没人从表单读，勾态进不了库');
+  const project = read('src/core/project.js');
+  assert.match(project, /styleAnchor: ctx\.book\.styleAnchor \|\| null/, '导出的 book.json 不带基准章');
+  assert.match(project, /'styleAnchor'/, 'styleAnchor 不在导出白名单里，导出目录里根本没有这一格');
+
+  // 门槛的出处：判「够不够长」这件事只有 stylefit 那一份，面板与 core 都只调 qualifies，
+  // 谁都不许自己比一个长度 —— 更要紧的是口径：它必须与界面那个「N 字」同一个数法。
+  assert.match(form, /NWStyleFit\.qualifies\(/, '面板自己判「够不够长」，与指纹的门槛会分家');
+  assert.doesNotMatch(form, /(?:length|长度)\s*[<>]=?\s*\d/, '面板里出现了第二个长度门槛');
+  assert.doesNotMatch(form, /MIN_BODY/, '面板又开始自己拿门槛数值比了');
+  assert.match(read('src/core/context.js'), /StyleFit\.qualifies\(/, '选样例的门槛不再问 stylefit 要那一份判据');
+  const fitSrc = read('src/core/stylefit.js');
+  assert.match(fitSrc, /function qualifies\(body\)/, '「够不够长」的判据不在 stylefit 里，四处就各判各的');
+  assert.match(fitSrc, /function qualifies\(body\)[\s\S]{0,200}?T\.countWords\(s\)[\s\S]{0,40}?>= MIN_BODY/,
+    '够不够长改回按字符数判：界面写着「480 字」却允许勾，规则话术里的「600 字」就是假话');
+  assert.doesNotMatch(fitSrc, /trim\(\)\.length >= MIN_BODY/, '指纹入口还留着一份按字符数的第二门槛');
+
+  // 数字必须与检查器同源：面板与 R32 都调 NWStyleFit，界面不许自己拼四格
+  assert.match(form, /NWStyleFit\.fingerprint\(/, '面板的基准指纹不是 core 那个函数算的');
+  assert.match(form, /NWStyleFit\.lines\(/, '面板没把指纹念成那一行，作者看不见基准到底是几个数');
+  assert.match(form, /NWContext\.styleOpts\(ctx\.book\)/, '算基准指纹没带作者自己的包，关掉的词组还会算进密度');
+
+  // 「先只勾最早那一章」是给老书回填用的：没有处理器就是点了静默不动
+  assert.match(js, /data-action="style-anchor-first"/, '没有回填基准的入口，建了三章才想起要勾的人只能一眼看一章');
+  assert.match(js, /^\s+'style-anchor-first':\s*\(\) =>/m, 'style-anchor-first 没注册进 ACTIONS');
+});
+
+/**
+ * 上一条守卫还是字符串级的，抓不出「读的方式写错」。基准章这一格尤其脆：
+ * 容器 id 与选择器都是拼出来的，错一点就是作者勾了三章、库里存了空数组，
+ * 而 R32 与生成样例都按「没勾过」静默退回就近取样 —— 表现是「我明明勾了」。
+ * 所以这里把读取链与回填按钮的处理器都在假 DOM 下真跑一遍。
+ */
+test('基准章读取链与回填按钮在假 DOM 下真跑得通', () => {
+  const js = read('src/app.js');
+  const readerSrc = js.match(/\nfunction readStyleAnchorForm\([\s\S]*?\n\}/)?.[0];
+  const fitSrc = js.match(/\nfunction refreshStyleAnchorFit\([\s\S]*?\n\}/)?.[0];
+  const clickSrc = js.match(/\n\s+'style-anchor-first': \(\) => \{[\s\S]*?\n {2}\},/)?.[0];
+  assert.ok(readerSrc, 'app.js 里抠不出 readStyleAnchorForm，读取链测试的形状变了，改测试也改这里');
+  assert.ok(fitSrc, 'app.js 里抠不出 refreshStyleAnchorFit，回填后的重算没走真函数');
+  assert.ok(clickSrc, 'app.js 里抠不出 style-anchor-first 的函数体');
+
+  const box = (items) => ({ querySelectorAll: () => items });
+  const runReader = (items, id = 'sty-p-anchor') => new Function('document',
+    `${readerSrc} return readStyleAnchorForm('sty');`)({
+    getElementById: (key) => (key === id ? box(items) : null),
+  });
+  const c = (value, checked, disabled) => ({ value, checked: !!checked, disabled: !!disabled });
+
+  assert.deepEqual(runReader([c('ch-001', true), c('ch-002'), c('ch-003', true)]),
+    { chapterIds: ['ch-001', 'ch-003'] }, '勾着的章没有原样交回库里');
+  assert.deepEqual(runReader([c('ch-001'), c('ch-002')]), { chapterIds: [] }, '一章都没勾时要给空数组，不是 null');
+  // 正文后来变短的章：画成 disabled 却仍带着作者原来的勾，一次保存不该把他的选择抹掉
+  assert.deepEqual(runReader([c('ch-001', true, true), c('ch-002')]),
+    { chapterIds: ['ch-001'] }, 'disabled+checked 的历史勾态被静默清空了');
+
+  // 指纹行跑真函数：面板上那句「几章几字」是作者唯一的尺子，回填后它不跟着变就是拿旧尺子量新基准。
+  const long = '他往前走，山很静，风也从很远的地方赶过来。'.repeat(40);
+  const body = clickSrc.match(/'style-anchor-first': \(\) => \{([\s\S]*?)\n {2}\},/)?.[1];
+  assert.ok(body, 'style-anchor-first 的函数体抠不出来，改形状请同时改这里');
+  const fire = (items, id = 'sty-p-anchor', fitText = '【基准指纹】2 章 / 1800 字的实测值') => {
+    const said = [];
+    const fit = { textContent: fitText };
+    new Function('document', 'showToast', 'APP', 'NWStyleFit', 'NWContext',
+      `${fitSrc}\n${body}`)(
+      { getElementById: (key) => (key === id ? box(items) : key === 'sty-p-fit' ? fit : null) },
+      (m) => said.push(m),
+      { styleCtx: { book: {}, chapters: [
+        { id: 'ch-002', number: 2, title: '夜行', body: long },
+        { id: 'ch-003', number: 3, title: '下山', body: long },
+      ] } },
+      NWStyleFit, NWContext);
+    return { said, fit };
+  };
+  const list = [c('ch-001', false, true), c('ch-002', true), c('ch-003', true)];
+  const first = fire(list);
+  assert.deepEqual(first.said, ['已只勾上最早那一章，按「保存」生效']);
+  assert.deepEqual(list.map((x) => x.checked), [false, true, false],
+    '回填要清掉旧勾、只留最早那一条正文够长的章，不然它只是又加一个勾');
+  assert.match(first.fit.textContent, /^【基准指纹】1 章 /,
+    '勾已经只剩一章，那一行还写着两章的旧数字 —— 界面在谎报基准的范围');
+  assert.doesNotMatch(first.fit.textContent, /1800 字/, '指纹行还是点进去时那份，没按新勾态重算');
+  assert.deepEqual(fire([c('ch-001', false, true), c('ch-002', false, true)]).said,
+    ['还没有正文够长的章节可当基准，先写一章再勾'], '全是短章时要说人话，不是默默什么都不发生');
+  assert.deepEqual(fire([c('ch-001')], '别的页').said, ['先进入文体规则页'],
+    '容器不在 DOM 里时不许抛异常');
 });
 
 /**
@@ -690,4 +861,32 @@ test('确认弹窗六格在假 DOM 下读回来的就是作者填的（人物定
   delete fields['inp-c-vols'];
   assert.deepEqual(read_().world, []);
   assert.deepEqual(read_().volumes, []);
+});
+
+/**
+ * nw-style.mjs 是文风指纹的第四个消费方（另三个：注入 prompt 的那一行、文体面板、R32）。
+ * 它一旦自己抄一份门槛、自己判「哪几章不评」、自己另挑一遍样例，
+ * 表现就是同一本书在三处给两个答案，而这四个测试文件各自都是绿的。
+ */
+test('nw-style.mjs 只搬运 core 的判据：门槛、豁免名单、注入预览都不许有第二份', () => {
+  const cli = read('scripts/nw-style.mjs');
+  assert.match(cli, /NWStyleFit\.KEYS\.map/, '四格表不是从包里现取的，加一格 CLI 就少一格');
+  assert.match(cli, /NWStyleFit\.MIN_BODY/, 'CLI 自己判「够不够长」，与指纹的门槛会分家');
+  assert.match(cli, /NWRules\.EXEMPT_FLAGS/, '豁免名单自己抄一份，CLI 说不评的章 R32 却照样报');
+  assert.match(cli, /NWContext\.stylePool\(/, '参照章不是按「作者勾没勾」选的，那这视图与生成时看的不是同一份');
+  assert.match(cli, /NWContext\.pickStyleExemplars\(/, '注入预览另算一遍就不是生成时那一份');
+  assert.match(cli, /NWStylePack\.optsFrom\(book\)/, '没带作者自己的包就算指纹，他关掉的词组还照样报密度');
+  // 门槛数字只许出现在 core 那份里
+  assert.doesNotMatch(cli, /\b(?:0\.3|0\.4|1\.5)\b/, 'CLI 里出现了阈值数字，说明它没走 KEYS');
+  // 视图不是门禁：偏离再多也不许用它拦人
+  assert.doesNotMatch(cli, /process\.exit\((?:EXIT\.ERROR_FOUND|1)\)/, '这份视图退出码非零过 0，它只是量出来的数字');
+});
+
+/** 「越两格才报」这句话在规则里、在 CLI 的 keys 输出里各说一遍，两遍必须是同一个数。 */
+test('守卫：R32 的「两格」门槛只有一处，CLI 与规则的话术跟着它走', () => {
+  const rules = read('src/core/rules.js');
+  assert.match(rules, /if \(drift\.length < 2\) continue;/, 'R32 的格数门槛写法变了，这条守卫与 CLI 话术都要改');
+  assert.doesNotMatch(rules, /drift\.length < [3-9]/, '门槛被抬高却没改 CLI 与文档那句「两格」');
+  const cli = read('scripts/nw-style.mjs');
+  assert.match(cli, /同时越两格以上/, 'keys 里没交代报的门槛，作者会以为越一格也会被报');
 });

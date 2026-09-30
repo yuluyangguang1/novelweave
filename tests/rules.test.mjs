@@ -910,3 +910,110 @@ test('R29/R30/R31 遇到边界输入不许崩，且都不产出 error', () => {
   assert.deepEqual(picked.map((x) => x.fingerprint), [...new Set(picked.map((x) => x.fingerprint))],
     picked.map((x) => x.fingerprint).join(' / '));
 });
+
+// ═══════════════════ R32 style-drift（文风基准偏离）═══════════════════
+//
+// 夹具给的是「整章」不是一句话：指纹按字数加权，同一支单位重复几十遍就是一章 600 字以上的正文。
+// 四支笔法各自卡在不同数量的格上，整组测试才有意义：
+//   A（基准）长句、无对话、段均一句、零禁词
+//   B 短句加对话 —— 句均/对话/段均三格一起越界
+//   C 只加禁词 —— 只越一格，按判据不许报
+//   F 短句加禁词 —— 越两格（正好过线），禁词那一格一消失就退回一格
+const A_BASE = '他沿着石阶往上走，雾贴着脚背流动，山门还在很远的地方，钟声从崖下传上来一声隔着一声。';
+const B_DIALOG = '“你来晚了。”他低声说。\n“我知道。”她没有回头。';
+const C_CLICHE = '他沿着石阶往上走，雾贴着脚背流动，山门还在很远的地方，钟声传来，仿佛很静，一声隔着一声。';
+const F_SHORT = '他沿着石阶往上走，雾贴着脚背流动，仿佛山门还在很远的地方。';
+const rep = (n, unit) => Array.from({ length: n }, () => unit).join('\n\n');
+const BODY_A = rep(24, A_BASE), BODY_B = rep(40, B_DIALOG), BODY_C = rep(24, C_CLICHE), BODY_F = rep(24, F_SHORT);
+/** 基准永远勾前两章：这两章同文，基准指纹就是 BODY_A 本身（912 字 × 2）。 */
+const bookFit = (over = {}) => ({ id: 'novel_t', title: '测试书', genre: '玄幻',
+  styleAnchor: { chapterIds: ['ch-001', 'ch-002'] }, ...over });
+const fitChapters = (thirdBody, thirdOver = {}) => [
+  ch(1, { body: BODY_A }), ch(2, { body: BODY_A }), ch(3, { body: thirdBody, ...thirdOver }),
+];
+
+test('R32 文风漂移：两格以上同时越界才报，报出来的是实测数字不是形容词', () => {
+  const d = of(NWRules.runRules(ctx({ book: bookFit(), chapters: fitChapters(BODY_B) })), 'style-drift');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].chapter, 'ch-003');
+  assert.equal(d[0].severity, 'info', '文体永远是建议，任何一格都不许把它升成 error');
+  assert.equal(d[0].confidence, 0.6, '这条是统计数字，置信度就固定在「拿不准」那一档');
+  assert.equal(NWRules.RULES['style-drift'].defaultSeverity, 'info',
+    '规格上声明的档位与实际发出来的是两回事，两边都要钉住');
+  // 数字是夹具算出来的，写死在这里是有意的：它同时钉住「话术里真带实测值」和「基准按两章加权」
+  assert.ok(d[0].message.includes('38.0 字→4.0 字'), d[0].message);
+  assert.ok(d[0].message.includes('0%→44%'), d[0].message);
+  assert.ok(d[0].message.includes('1.0 句→2.0 句'), d[0].message);
+  // basis 是「有顺序的四件事」，少一行作者就少一个判断依据（两章的基准本来比二十章的抖，
+  // 全靠「基准几章几字 / 本章几字」那两行说话）。整串写死，删一行或换顺序都会红。
+  assert.deepEqual(d[0].evidence.basis, [
+    'book.styleAnchor.chapterIds=ch-001,ch-002',
+    '基准指纹 2 章 / 1824 字',
+    '本章 640 字',
+    '同时越界 3 格（门槛：句均 30%、对话 12 个百分点、段均 40%、禁词 1.5 处/千字）',
+  ], d[0].evidence.basis.join(' / '));
+  assert.equal(d[0].fingerprint, 'style-drift:ch-003:-');
+});
+
+test('R32 误报控制：只越一格不报 —— 这一章本来就可能就是动作场面或独白', () => {
+  // BODY_C 与基准只差禁词密度那一格（0 → 26.32 处/千字），越得再狠也只有一格
+  const d = of(NWRules.runRules(ctx({ book: bookFit(), chapters: fitChapters(BODY_C) })), 'style-drift');
+  assert.deepEqual(d, [], '单格越界不该自成一条诊断');
+});
+
+test('R32 作者没勾基准：整条闭嘴，一条都不报', () => {
+  const all = NWRules.runRules(ctx({
+    book: { id: 'novel_t', title: '测试书', genre: '玄幻' },
+    chapters: fitChapters(BODY_B),
+  }));
+  assert.deepEqual(of(all, 'style-drift'), [],
+    '没有作者勾的基准时绝不能拿「就近取两章」顶上 —— 长篇里那恰好是漂移最远的两章');
+  assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed'), []);
+});
+
+test('R32 基准章自己不评，哪怕两章基准彼此就差得很远', () => {
+  const d = of(NWRules.runRules(ctx({
+    book: bookFit(),
+    chapters: [ch(1, { body: BODY_A }), ch(2, { body: BODY_B }), ch(3, { body: BODY_B })],
+  })), 'style-drift');
+  assert.deepEqual(d.map((x) => x.chapter), ['ch-003'], '勾进基准的章是尺子，不是被量的东西');
+});
+
+test('R32 勾的基准章正文都不够长：没有基准，整条静默', () => {
+  const d = of(NWRules.runRules(ctx({
+    book: { id: 'novel_t', title: '测试书', genre: '玄幻', styleAnchor: { chapterIds: ['ch-001', 'ch-999'] } },
+    chapters: [ch(1, { body: '他挑水。' }), ch(2, { body: BODY_B }), ch(3, { body: BODY_A })],
+  })), 'style-drift');
+  assert.deepEqual(d, [], '基准章全被 600 字门槛挡掉时不许拿半句话评全书（这两章互为基准能越三格）');
+});
+
+test('R32 不评：带 flashback/dream 等标记的章、正文不足 600 字的章', () => {
+  const d = of(NWRules.runRules(ctx({
+    book: bookFit(),
+    chapters: [ch(1, { body: BODY_A }), ch(2, { body: BODY_A }),
+      ch(3, { body: BODY_B, flags: ['dream'] }), ch(4, { body: BODY_B.slice(0, 300) })],
+  })), 'style-drift');
+  assert.deepEqual(d, [], '梦境章与短章都不该出现在这份名单里');
+});
+
+test('R32 认作者关掉的词组：禁词那一格一消失，两格退回一格就不报了', () => {
+  const chapters = fitChapters(BODY_F);
+  // 夹具自己得先卡在门槛这一侧，否则下面两个「不报」是白过的
+  assert.deepEqual(of(NWRules.runRules(ctx({ book: bookFit(), chapters })), 'style-drift')
+    .map((x) => x.chapter), ['ch-003'], 'BODY_F 要正好越两格（句均 + 禁词）');
+  assert.deepEqual(of(NWRules.runRules(ctx({ book: bookFit({ stylePack: { enabled: false } }), chapters })), 'style-drift'),
+    [], '整包关掉 → 只剩句均一格');
+  assert.deepEqual(of(NWRules.runRules(ctx({ book: bookFit({ stylePack: { disabled: ['simile'] } }), chapters })), 'style-drift'),
+    [], '只关掉比喻那一组，走的必须是同一条路');
+});
+
+test('R32 遇到脏 styleAnchor 不许崩，也不许凭空造出基准', () => {
+  for (const v of [undefined, null, 'ch-001', {}, { chapterIds: null }, { chapterIds: 'ch-001' },
+    { chapterIds: [null, 12, '', 'ch-404'] }]) {
+    const all = NWRules.runRules(ctx({ book: { id: 'novel_t', title: '测试书', genre: '玄幻', styleAnchor: v },
+      chapters: fitChapters(BODY_B) }));
+    const tag = JSON.stringify(v) + '';
+    assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed').map((x) => x.message), [], tag);
+    assert.deepEqual(of(all, 'style-drift'), [], tag + ' 里没有一个 id 解析得到，必须整条静默');
+  }
+});

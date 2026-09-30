@@ -9,12 +9,13 @@
  * prompt，两者遍历的是同一批对象，内容不可能再分叉。
  *
  * 依赖：NWText / NWBible / NWStory.loreTrigger（世界书匹配在 story.js，故无环）
+ *        + NWStyleFit / NWStylePack（风格样例那一节的指纹与本书禁词包）
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStory);
+  const mod = factory(root.NWText, root.NWBible, root.NWStory, root.NWStyleFit, root.NWStylePack);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWContext = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, StyleFit, StylePack) {
   'use strict';
 
   const DEFAULTS = {
@@ -22,7 +23,10 @@
     loreBytes: 4096,
     prevTailChars: 1200,
     currentTailChars: 1500,
-    styleBytes: 1600,      // 风格样例的软预算；opts.style 开启后才参与
+    // 风格样例的软预算；opts.style 开启后才参与。1600 是 2026-09-24 之前的旧值，
+    // 那个数字从来没被任何人读过（两章 400 字的节选实际约 2900 字节），
+    // 现在它真的参与收样了，就按真实产出量重设 —— 写一个没人读的常量比不写更糟。
+    styleBytes: 3000,
   };
 
   const STATUS_ZH = { deceased: '已死亡', missing: '下落不明', unknown: '状态未知' };
@@ -277,30 +281,97 @@
   }
 
   // ═══════════════ 风格样例：模仿作者自己的笔法，而不是模板文 ═══════════════
-  // 从目标章之前、正文足量的最近章节取中段节选 —— 中段是叙述稳定区，
+  // 默认从目标章之前、正文足量的最近章节取中段节选 —— 中段是叙述稳定区，
   // 开头常带承接、结尾常带钩子，都不代表作者的日常笔触。
+  // 作者也可以在「文体规则」页勾定基准章（book.styleAnchor）：长篇写到 60 章时，
+  // 「最近两章」恰好是漂移最远的那两章，用它当样例等于把漂移当标准。勾了就以勾的为准，
+  // 位置不限（第 1 章回填的锚点也认）。
   // 只在 opts.style 开启时参与；预算再紧也只裁它自己，不动其他节。
 
-  const STYLE_MIN_BODY = 600;
-  const STYLE_EXCERPT = 400;
+  const STYLE_EXCERPT = 400;      // 单个节选的字数上限
+  const STYLE_MIN_CHARS = 120;    // 再往下压就不成样例了，宁可如实超预算
+  const STYLE_MAX = 2;            // 一次最多注入几章
 
-  function pickStyleExemplars(chapters, current) {
-    const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
-    const pool = chapters.slice(0, Math.max(0, upto))
-      .filter((c) => (c.body || '').trim().length >= STYLE_MIN_BODY);
-    return pool.slice(-2).map((c) => {
-      const body = c.body.trim();
-      const start = Math.floor(body.length * 0.3);
-      let excerpt = body.slice(start, start + STYLE_EXCERPT);
-      if (start + STYLE_EXCERPT < body.length) excerpt += '…';
-      return { id: c.id, label: Bible.chapterLabel(c), excerpt };
-    });
+  function anchorIds(book) {
+    const ids = book && book.styleAnchor && book.styleAnchor.chapterIds;
+    return Array.isArray(ids) ? ids.filter((x) => typeof x === 'string' && x) : [];
   }
 
-  function styleBlock(exemplars) {
+  /** 够格进样例的章：正文够不够长只问 stylefit 那一份判据（与指纹同一个口径）。 */
+  function eligible(chapters, current) {
+    const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
+    return chapters.slice(0, Math.max(0, upto)).filter(isEligible);
+  }
+
+  function isEligible(c) {
+    // 读不到 stylefit 时（模块没加载全）退回字符数兜底，判据仍写在 stylefit 里，界面上不许再抄一份。
+    return StyleFit && StyleFit.qualifies ? StyleFit.qualifies(c?.body)
+      : String(c?.body || '').trim().length >= 600;
+  }
+
+  /**
+   * 选基准章 → 定注入量。返回 { source, list }：
+   * source 是 'anchor'（作者勾的）/ 'auto'（就近取）/ 'anchor-lost'（勾了但都不合格，已退回 auto）。
+   */
+  function stylePool(chapters, current, book) {
+    const wanted = anchorIds(book);
+    if (!wanted.length) return { source: 'auto', list: eligible(chapters, current) };
+    const picked = chapters.filter((c) => wanted.includes(c.id));
+    const usable = picked.filter(isEligible);
+    if (!usable.length) return { source: 'anchor-lost', list: eligible(chapters, current) };
+    return { source: 'anchor', list: usable };
+  }
+
+  function excerptOf(c, chars) {
+    const body = String(c.body).trim();
+    const start = Math.floor(body.length * 0.3);
+    let excerpt = body.slice(start, start + chars);
+    if (start + chars < body.length) excerpt += '…';
+    return { id: c.id, label: Bible.chapterLabel(c), excerpt };
+  }
+
+  /**
+   * styleBytes 是软上限：先按「丢较远的那一章」收，收到只剩一章还超，就缩节选字数，
+   * 缩到 STYLE_MIN_CHARS 仍超就如实带着超预算走 —— 压成碎片比超预算更没用。
+   */
+  function fitExcerpts(list, budgetBytes) {
+    let items = list.slice(-STYLE_MAX);
+    let chars = STYLE_EXCERPT;
+    for (;;) {
+      const ex = items.map((c) => excerptOf(c, chars));
+      if (!ex.length || T.bytesOf(styleBlock(ex)) <= budgetBytes) return ex;
+      if (items.length > 1) { items = items.slice(1); continue; }
+      if (chars <= STYLE_MIN_CHARS) return ex;
+      chars = Math.max(STYLE_MIN_CHARS, chars - 40);
+    }
+  }
+
+  /**
+   * 选基准章 → 按预算收样 → 用**实际注入了的那几章**算指纹。
+   * 顺序不能反过来：先算指纹再收样，就会出现「样例只剩一章、那一行却说 2 章 / 1746 字」
+   * —— 数字描述不到作者眼前读到的东西，这行就只是装饰。
+   * 指纹行自己也要占预算，所以先扣一个固定余量再收样。
+   */
+  const FIT_LINE_RESERVE = 300;
+
+  function pickStyleExemplars(chapters, current, book, budgetBytes) {
+    const pool = stylePool(chapters, current, book);
+    const items = fitExcerpts(pool.list, budgetBytes - FIT_LINE_RESERVE);
+    const basis = pool.list.filter((c) => items.some((e) => e.id === c.id));
+    const fitLine = StyleFit ? StyleFit.lines(StyleFit.fingerprint(basis, styleOpts(book))) : '';
+    return { source: pool.source, fitLine, list: items };
+  }
+
+  /** 禁词密度那一格要按作者自己的包算：他整包关掉时不许还报密度。 */
+  function styleOpts(book) {
+    return StylePack && book ? StylePack.optsFrom(book) : {};
+  }
+
+  function styleBlock(exemplars, fitLine) {
     if (!exemplars.length) return null;
-    return '【模仿以下段落的句长、叙述节奏与用词密度——只学笔法，不得复述其中情节】\n'
-      + exemplars.map((e) => `（${e.label}）${e.excerpt}`).join('\n———\n');
+    const head = '【模仿以下段落的句长、叙述节奏与用词密度——只学笔法，不得复述其中情节】'
+      + (fitLine ? `\n${fitLine}` : '');
+    return head + '\n' + exemplars.map((e) => `（${e.label}）${e.excerpt}`).join('\n———\n');
   }
 
   /**
@@ -336,8 +407,11 @@
     const banText = hardBanBlock(ctx, chapters, targetN, current);
 
     const useStyle = !!opts.style;
-    const exemplars = useStyle ? pickStyleExemplars(chapters, current) : [];
-    const styleText = styleBlock(exemplars);
+    const stylePick = useStyle
+      ? pickStyleExemplars(chapters, current, ctx.book, b.styleBytes)
+      : { source: null, fitLine: '', list: [] };
+    const exemplars = stylePick.list;
+    const styleText = styleBlock(exemplars, stylePick.fitLine);
 
     const core = [
       { name: '书目', text: [
@@ -368,11 +442,13 @@
 
     // 硬禁令排第一节：它是约束不是资料，预算再紧也最后才轮到它被裁。
     // 风格样例是软上下文，排最末 —— 预算一紧第一个被裁的应该是它。
+    // 但它带 prose 标记：renderPrompt 会把它提到所有约束之后（见「动笔前最后读到的
+    // 必须是正文语态文字」）。裁切顺序与注入顺序在这里是两件事，故意分开。
     const ordered = [
       ...(banText ? [{ name: '硬禁令', text: banText }] : []),
       ...core,
       ...tails.filter(Boolean),
-      ...(styleText ? [{ name: '风格样例', text: styleText }] : []),
+      ...(styleText ? [{ name: '风格样例', text: styleText, prose: true }] : []),
     ];
 
     // 按字节预算裁切，且如实记录被裁掉的节
@@ -408,21 +484,39 @@
         hasPrevChapter: !!prev?.body,
         hasCurrentBody: hasBody,
         droppedSections: dropped,
+        // 样式样例的来源要能说出来：作者勾的基准 / 就近自动 / 勾了但都不合格已退回自动。
+        // 第三种最容易骗人 —— 界面显示「已按我指定的基准」，实际注入的是别的章。
+        styleSource: useStyle ? stylePick.source : null,
         truncated: dropped.length > 0 || lore.dropped.length > 0,
       },
     };
   }
 
+  /**
+   * 正文语态块永远压尾。理由不是审美：模型接着往下写时，模仿的是它读到的最后一段文字。
+   * 禁词清单和配额是约束，读完就该让位给「这一段才是这本书的声音」。
+   * 裁切顺序不看这个标记（风格样例仍旧末 = 先被裁），只看注入顺序 —— 两件事故意分开。
+   */
+  function splitProse(sections) {
+    const body = [], prose = [];
+    for (const s of sections) (s.prose ? prose : body).push(s);
+    return { body, prose };
+  }
+
   /** CLI 用：派生上下文文档 */
   function renderDocument({ sections }) {
+    const { body, prose } = splitProse(sections);
     return `<!-- NovelWeave 派生上下文，勿手改；权威数据在 book.json / bible/ / manuscript/ -->\n\n`
-      + sections.map((s) => s.block).join('\n\n') + '\n';
+      + [...body, ...prose].map((s) => s.block).join('\n\n') + '\n';
   }
 
   /** Web 用：拼成 prompt 正文。与 renderDocument 遍历同一批 section。 */
   function renderPrompt({ sections }, extra = '') {
-    return sections.map((s) => s.block).join('\n\n') + (extra ? `\n\n${extra}` : '');
+    const { body, prose } = splitProse(sections);
+    return body.map((s) => s.block).join('\n\n')
+      + (extra ? `\n\n${extra}` : '')
+      + prose.map((s) => `\n\n${s.block}`).join('');
   }
 
-  return { buildSections, renderDocument, renderPrompt, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters, hardBanBlock, pickStyleExemplars, styleBlock, relatedPastChapters, relatedBlock };
+  return { buildSections, renderDocument, renderPrompt, splitProse, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters, hardBanBlock, pickStyleExemplars, stylePool, styleBlock, styleOpts, relatedPastChapters, relatedBlock };
 });

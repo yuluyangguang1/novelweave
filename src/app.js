@@ -3072,16 +3072,21 @@ async function exportEpub() {
 // ═══════════════════ 文体规则包（去 AI 味） ═══════════════════
 
 /**
- * 这一本用哪套「去 AI 味」标准。存进去的 stylePack 是三个消费方的唯一事实源：
- * 生成时的写作要求（NovelLLM.antiAiRules）、检查器 R22、CLI 的 nw-prose lint，
- * 三者都只认 book.stylePack —— 这个面板写漏一个键，那三处就各自回到默认包。
+ * 这一本用哪套「去 AI 味」标准，以及拿哪几章当文风基准。两格存进 novel 行，各自是消费方的唯一事实源：
+ * stylePack 由生成时的写作要求（NovelLLM.antiAiRules）、检查器 R22、CLI 的 nw-prose lint 三处共认；
+ * styleAnchor 由生成时的样例选择（NWContext.stylePool）与 R32 两处共认。
+ * 这个面板写漏一个键，那几处就各自回到默认值 —— 而界面上什么都看不出来。
  */
 async function showStylePack(host) {
   host = host || document.getElementById('sidebar-content');
   if (!host || !APP.novel) return;
+  const ctx = await loadStoryCtx();
+  // 基准章那一行要跟着勾态当场重算，正文都在 ctx 里 —— 存下来，省得每点一次重读一遍库
+  APP.styleCtx = ctx;
   host.innerHTML = `<div style="padding:12px;">
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">这一本的「去 AI 味」标准，只影响当前这本书。</div>
     ${stylePackFields('sty', APP.novel.stylePack || {})}
+    ${styleAnchorFields('sty', ctx)}
     <button class="btn btn-primary" style="width:100%;margin-top:8px;" data-action="style-pack-save">保存</button>
   </div>`;
 }
@@ -3113,13 +3118,75 @@ function readStylePackForm(prefix) {
   };
 }
 
+/**
+ * 基准章决定两件事：生成时注入哪几段正文当样例，以及 R32 拿哪几章的指纹当尺子。
+ * 没勾过时两边都退回「就近取已写章节」—— 长篇里那恰好取到漂移最远的两章，
+ * 于是把漂移写成了合格。所以这一格必须能在界面上勾，而且要把当前基准的数字亮出来。
+ */
+function styleAnchorFields(prefix, ctx) {
+  const on = new Set((ctx.book.styleAnchor || {}).chapterIds || []);
+  const fp = NWStyleFit.fingerprint(ctx.chapters.filter((c) => on.has(c.id)), NWContext.styleOpts(ctx.book));
+  const list = ctx.chapters.slice().sort((a, b) => (a.number || 0) - (b.number || 0));
+  return `
+    <div class="settings-field"><label class="settings-label">文风基准章（勾 1–2 章就够，勾中的正文会进生成时的样例）</label>
+      <div id="${prefix}-p-anchor" data-action="style-anchor-preview" style="max-height:220px;overflow:auto;border:1px solid var(--border);padding:6px;">
+        ${list.length ? list.map((c) => {
+          const usable = NWStyleFit.qualifies(c.body);
+          return `<label class="settings-label"><input type="checkbox" value="${attr(c.id)}" ${usable ? '' : 'disabled'} ${on.has(c.id) ? 'checked' : ''}> 第${c.number ?? '?'}章 ${esc(c.title || '')} · ${countWords(c.body || '')} 字${usable ? '' : '（正文太短，进不了指纹）'}</label>`;
+        }).join('') : '<div class="settings-hint">这本书还没有章节。</div>'}
+      </div>
+      <div class="settings-hint" id="${prefix}-p-fit">${fp.chapters ? esc(NWStyleFit.lines(fp))
+        : '尚未勾定基准：生成时按就近取已写章节挑样例，R32 一条漂移也不报。'}</div>
+      <div class="settings-hint">这里的四个数与检查器用的是同一个函数，跟着勾态当场重算；按「保存」才写进这本书。</div></div>
+    <button class="btn btn-secondary" style="width:100%;" data-action="style-anchor-first">先只勾最早那一章</button>`;
+}
+
+/**
+ * 那一行必须描述作者眼前勾着的章：勾成一章而它还写着「2 章 / 1760 字」，
+ * 作者就会拿旧尺子去理解新基准 —— 与它等他按保存，不如当场把数字换掉。
+ * 算的是 NWStyleFit.fingerprint 同一份，界面上不另立口径。
+ */
+function refreshStyleAnchorFit(prefix) {
+  const ctx = APP.styleCtx;
+  const box = document.getElementById(`${prefix}-p-anchor`);
+  const out = document.getElementById(`${prefix}-p-fit`);
+  if (!ctx || !box || !out) return;
+  const on = new Set([...box.querySelectorAll('input[type="checkbox"]')].filter((i) => i.checked).map((i) => i.value));
+  const fp = NWStyleFit.fingerprint(ctx.chapters.filter((c) => on.has(c.id)), NWContext.styleOpts(ctx.book));
+  out.textContent = fp.chapters ? NWStyleFit.lines(fp)
+    : '尚未勾定基准：生成时按就近取已写章节挑样例，R32 一条漂移也不报。';
+}
+
+function readStyleAnchorForm(prefix) {
+  const box = document.getElementById(`${prefix}-p-anchor`);
+  // 只按 checked 收，不按 disabled 再滤一道：正文后来变短的章画成 disabled 却仍带着作者原来的勾，
+  // 滤掉等于一次保存就把他选过的基准抹掉；而「新勾一条 disabled」浏览器本身就不允许。
+  return { chapterIds: [...box.querySelectorAll('input[type="checkbox"]')].filter((i) => i.checked).map((i) => i.value) };
+}
+
 Object.assign(ACTIONS, {
   'style-pack-save': async () => {
     if (!APP.novel) { showToast('先进入一本书'); return; }
     const stylePack = readStylePackForm('sty');
+    const styleAnchor = readStyleAnchorForm('sty');
     // updateNovel 返回落库后的整行。APP.novel 是界面手里这一份（本面板重渲染、大纲提示词都读它），
     // 不跟着换就会看到旧勾态；生成那条路走 loadStoryCtx 重新取库，本来就拿的是新值。
-    APP.novel = await NovelDB.novels.update(APP.novel.id, { stylePack });
+    APP.novel = await NovelDB.novels.update(APP.novel.id, { stylePack, styleAnchor });
     showToast('文体规则已保存');
+    // 指纹那一行是按库里这几章算的，勾态一变数字就变 —— 不重画就是拿旧数字说话
+    await showStylePack();
   },
+  'style-anchor-first': () => {
+    const box = document.getElementById('sty-p-anchor');
+    if (!box) { showToast('先进入文体规则页'); return; }
+    const inputs = [...box.querySelectorAll('input[type="checkbox"]')];
+    const first = inputs.find((i) => !i.disabled);
+    if (!first) { showToast('还没有正文够长的章节可当基准，先写一章再勾'); return; }
+    inputs.forEach((i) => { i.checked = false; });
+    first.checked = true;
+    refreshStyleAnchorFit('sty');
+    showToast('已只勾上最早那一章，按「保存」生效');
+  },
+  // 勾一下就当场重算那一行：点击从 checkbox 冒泡到带 data-action 的容器，所以两处都走这里
+  'style-anchor-preview': () => refreshStyleAnchorFit('sty'),
 });
