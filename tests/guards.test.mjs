@@ -1781,8 +1781,9 @@ test('界面不许用「不等于长篇」代替「等于短篇」', () => {
   // 让时间线与状态矩阵两栏凭空消失，而同一本书在规则那边还是长篇。
   const app = read('src/app.js');
   assert.doesNotMatch(app, /\.format\s*[!=]==\s*'long'/, '脏档会被当成短篇，这一句要换成 NWTension.isShort(…)');
-  assert.equal((app.match(/NWTension\.isShort\(/g) || []).length, 5,
-    '书封、短篇标记、侧栏折叠、目标进度条、连续生成各一处；多一处少一处都先说清是哪一路');
+  assert.equal((app.match(/NWTension\.isShort\(/g) || []).length, 4,
+    '书封、短篇标记、侧栏折叠、连续生成各一处（目标进度条那一处 Y 起改问 targetOf，它连档带数一起答）；'
+    + '多一处少一处都先说清是哪一路');
 });
 
 test('每一条路都过同一句归一：落库、列表投影、导出、建上下文、预设打包', () => {
@@ -1792,7 +1793,7 @@ test('每一条路都过同一句归一：落库、列表投影、导出、建�
   assert.match(read('src/core/project.js'), /format: Tension\.formatKey\(ctx\.book\.format\)/,
     '导出跟着库行原值走，脏档就出了门，下一本书从导入开始带着它');
   const story = read('src/core/story.js');
-  assert.match(story, /format: Tension\.formatKey\(b\.format\)/, '导入建档没归一');
+  assert.match(story, /const format = Tension\.formatKey\(b\.format\);/, '导入建档没归一');
   assert.match(story, /format: Tension\.formatKey\(rows\.novel\.format\)/, 'buildCtx 没归一，规则与上下文就各拿原始值比');
   assert.equal((read('src/core/context.js').match(/const isShort = Tension\.isShort\(ctx\.book\);/g) || []).length, 2,
     '分层前情与上下文分段各判一次档：短篇就会一边喂卷、一边不召回旧章');
@@ -1841,4 +1842,52 @@ test('三份文档都点名 core 那个出处，不各留一份规矩', () => {
   assert.match(rules, /不 trim、不改大小写、不猜/);
   assert.match(rules, /行为变化只有两处可见/, '改了行为不写下来，下一批就会把差异当遗留');
   assert.match(rules, /`nw-workflow\.mjs pack` 的人读输出/, 'pack 那一行的改口没记进规格，读文档的人会以为预设带着遗留目标');
+});
+
+// ═══════════════ Y 族：这一档有没有字数目标那一格 ═══════════════
+
+test('「这个数算不算一个目标」与「这一档有没有那一格」各只有一句：全仓扫第二处', () => {
+  // X 之前那一句换挡在 19 处各归一遍；这一格更安静 —— 建档按「非空就算」存、打包按「≥ 下限」读、
+  // 评分卡拿原值就算，三处自认为说的是同一句话，于是同一个数在界面是「没设」、在这张卡是「目标 8000 字」。
+  const second = (re, why) => {
+    const hits = X_CODE.filter((f) => f !== 'src/core/tension.js' && re.test(read(f)));
+    assert.deepEqual(hits, [], `${why}：${hits.join('、')}`);
+  };
+  second(/TARGET_MIN\s*=\s*\d/, '下限被另写成一个字面量');
+  second(/[<>]=?\s*(?:Tension\.)?TARGET_MIN/, '有人在自己这边比这个下限');
+  second(/Number\.isInteger\([^)]*target/i, '「得是整数」那一句被抄了第二遍');
+  second(/isShort\([^)]*\)\s*&&[^&]*target/i, '问过档之后又自己判一次「这一档有没有目标」');
+  second(/\.target_words\s*(?:\|\||\?|\s*>=\s*)/, '拿库行原值判有没有目标：这三处各判各的就是这么开始的');
+});
+
+test('目标那一格的六个读写点各自点名 core 那一句，绕过它就要说清是哪一路', () => {
+  const n = (f, re) => (read(f).match(new RegExp(re.source, 'g')) || []).length;
+  assert.equal(n('src/core/db.js', /Tension\.targetOf\(/), 1, '建档那一格不再问 core，库里就会存进这一档不该有的数');
+  assert.equal(n('src/core/story.js', /Tension\.targetOf\(/), 2, '导入建档与装配 ctx 各一处：少一处就是桥的一头不判');
+  assert.equal(n('src/app.js', /NWTension\.targetOf\(/), 1, '进度条那一处改读原值就是第二份判据');
+  assert.equal(n('src/core/pitch.js', /Tension\.targetOf\(/), 1, '评分卡的 ctx 那一头不再问这一句，就会按遗留数给分');
+  assert.equal(n('src/core/workflow.js', /Tension\.targetOf\(/), 1, '打包那一处');
+  // 这两处问的都是与档无关的那一句：一处判这份文件写的数，一处判库里还躺着那个数没有
+  assert.equal(n('src/core/workflow.js', /Tension\.targetValue\(/), 2, '过闸与逐格 diff 各一处');
+  // 评分卡的 concept 那一头读的是「作者当场打算写多少」，不是库里那一格，所以它不归 targetOf 管
+  assert.match(read('src/core/pitch.js'), /isCtx \? Tension\.targetOf\(book\) : Number\(src\.targetWords \?\? src\.target_words\)/,
+    '两种入参混成一句：要么把长篇的规划数判死，要么把库里的遗留数当目标用');
+});
+
+test('下限只有一个数：workflow 那份是别名，schema 与 CLI 念的都是它', () => {
+  assert.equal(NWWorkflow.TARGET_MIN, NWTension.TARGET_MIN,
+    '不是同一个数就是抄了一遍下限：core 一改，预设那道闸还在按旧的拦');
+  assert.equal(NWTension.TARGET_MIN, 1000, '这个数一改，两份 schema 的 minimum 与全部夹具都要跟着想清楚');
+  assert.match(read('scripts/nw-workflow.mjs'), /NWWorkflow\.TARGET_MIN/, 'CLI 自己写一份下限');
+});
+
+test('Y 的规格写进了文档，且点名 core 那两句', () => {
+  const rules = read('skills/novelweave-continuity/references/rules.md');
+  assert.match(rules, /## Y 族：这一档有没有字数目标/, '换挡的共用前提只写了档，没写「这一档有没有那一格」');
+  assert.match(rules, /`NWTension\.targetOf\(?/, '打包那一句的出处没点名，加一档时它会跟着抄一份门槛');
+  assert.match(rules, /`NWTension\.targetValue\(?/, '两处与档无关的判据没点名出处，就会长成第三份「算不算设过」');
+  const wf = read('skills/novelweave/references/workflow-preset.md');
+  assert.match(wf, /`NWTension\.targetOf`/, '预设文档没点名打包那一句，加一档时它会跟着抄一份门槛');
+  const schema = read('skills/novelweave/references/schema-v1.md');
+  assert.match(schema, /`NWTension\.TARGET_MIN`/, 'schema 文档里的下限没点名出处');
 });

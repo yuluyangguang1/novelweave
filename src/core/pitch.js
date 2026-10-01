@@ -83,7 +83,11 @@
       genre: txt(src.genre || book.genre),
       // 与对照书取更短的那一档：两边都算长篇才按长篇评
       format: Tension.minFormat([book, src]),
-      targetWords: Number(isCtx ? book.target_words : (src.targetWords ?? src.target_words)) || null,
+      // 两种入参问的是两件事，这里必须分开：ctx 读的是**这本书库里那一格**（长篇没有那一格，
+      // 低于下限的数算没设），concept 读的是**作者当场打算写多少**（那是规划：向导的平台档与
+      // CLI 的 --words 都能给长篇一个数，它从来不是库里那一格）。以前两边都拿原值算，
+      // 于是长篇库里那个遗留数画不出进度条、面板说「没设」，而这张卡按它给分。
+      targetWords: isCtx ? Tension.targetOf(book) : Number(src.targetWords ?? src.target_words) || null,
       chapters, characters, world, openPromises,
     };
   }

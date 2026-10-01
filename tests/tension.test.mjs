@@ -289,3 +289,31 @@ test('minFormat：任一本算短篇就按短篇，全长篇、空清单、脏�
   assert.equal(NWTension.minFormat([null, 'x', 7]), 'long', '脏元素不许抛');
   assert.equal(NWTension.minFormat(null), 'long');
 });
+
+// ═══════════════ Y 族：这一档有没有字数目标那一格 ═══════════════
+
+test('targetValue：这个数本身算不算一个目标 —— 下限含端点、字符串收回数字，其余一律算没设', () => {
+  assert.equal(NWTension.targetValue(1000), 1000, '下限含端点：schema 写的是 minimum，不是 exclusiveMinimum');
+  assert.equal(NWTension.targetValue('8000'), 8000, 'agent 手改 JSON 常把数写成字符串，落库前收回数字');
+  assert.equal(NWTension.targetValue(200000), 200000, '评分卡那边长篇的规划数可以很大');
+  for (const bad of [999, 0, -5000, 1500.5, '八千字', '', true, false, [], ['8000'], {}, new Date(1700000000000), null, undefined, NaN]) {
+    assert.equal(NWTension.targetValue(bad), null, `${JSON.stringify(bad)} 不该被当成一个字数目标`);
+  }
+  // 后两条是 typeof 那道闸的工作，不是下限的工作：['8000'] 会被 Number 收成 8000，
+  // Date 收成 1.7 万亿 —— 只比下限的话它们都能混进来。
+  assert.equal(NWTension.targetValue(NWTension.TARGET_MIN), NWTension.TARGET_MIN, '下限自己必须算合法');
+});
+
+test('targetOf：长篇没有那一格，短篇也要先是个像样的数；库行与 ctx 两种形状都问这一句', () => {
+  assert.equal(NWTension.targetOf({ format: 'short', target_words: 8000 }), 8000);
+  assert.equal(NWTension.targetOf({ format: 'short', targetWords: 8000 }), 8000, 'ctx.book 那一形状用的是 targetWords');
+  assert.equal(NWTension.targetOf({ format: 'short', target_words: 8000, targetWords: 20000 }), 8000,
+    '库行的名字优先：targetWords 是过桥后的形状，别让它盖过库里那一格');
+  for (const row of [{ format: 'long', target_words: 8000 }, { target_words: 8000 }, { format: 'zhong', target_words: 8000 }]) {
+    assert.equal(NWTension.targetOf(row), null, '长篇（连同认不出的脏档）没有字数目标这一格：' + JSON.stringify(row));
+  }
+  assert.equal(NWTension.targetOf({ format: 'short', target_words: 500 }), null,
+    '低于下限算没设：存进去就是一份过不了自己那份 schema 的存档');
+  assert.equal(NWTension.targetOf({ format: 'short' }), null);
+  assert.equal(NWTension.targetOf(null), null, '残缺输入不许抛');
+});

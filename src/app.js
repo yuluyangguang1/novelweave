@@ -926,6 +926,8 @@ async function renderSidebar() {
     promises: (await NovelDB.promises.list(novel.id)).filter((p) => ['planned', 'planted'].includes(p.status)).length,
     notes: (await NovelDB.notes.list(novel.id)).length,
   };
+  // 「这一档有没有字数目标、那个数是多少」问 core 那一句；这里再比一次原值就是第二份判据
+  const target = NWTension.targetOf(novel);
 
   document.getElementById('sidebar-nav').innerHTML = `
     <div style="padding:12px; border-bottom:1px solid var(--border);">
@@ -946,10 +948,10 @@ async function renderSidebar() {
           ${counts[t.id] != null ? `<span class="sidebar-nav-count">${counts[t.id]}</span>` : ''}
           ${t.hasAdd ? `<span class="sidebar-nav-add" data-action="${attr('nav-add-' + t.id)}" title="${attr(t.addTitle)}">${icon('plus')}</span>` : ''}
         </div>`).join('')}
-      ${NWTension.isShort(novel) && novel.target_words ? `
+      ${target !== null ? `
       <div class="target-progress" title="按汉字计，不含标点">
-        <div class="target-progress-bar"><span style="width:${Math.min(100, Math.round((novel.word_count || 0) / novel.target_words * 100))}%"></span></div>
-        <div class="target-progress-text">${formatWordCount(novel.word_count || 0)} / ${formatWordCount(novel.target_words)}${(novel.word_count || 0) >= novel.target_words ? ' · 已达标' : ''}</div>
+        <div class="target-progress-bar"><span style="width:${Math.min(100, Math.round((novel.word_count || 0) / target * 100))}%"></span></div>
+        <div class="target-progress-text">${formatWordCount(novel.word_count || 0)} / ${formatWordCount(target)}${(novel.word_count || 0) >= target ? ' · 已达标' : ''}</div>
       </div>` : ''}
       ${NWTension.isShort(novel) ? `
       <div style="padding:10px 4px 2px;">

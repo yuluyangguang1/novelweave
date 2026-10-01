@@ -140,7 +140,7 @@ Web 端目前的 5 个 store 到新格式的映射。完整字段表在实现导
 | — | `audience` / `target` / `voice` | 新，默认 `""` / `{chapters:0,wordsPerChapter:3000}` / 空对象 |
 | `stylePack` | `stylePack` | 去 AI 味规则包的本书开关（`enabled` / `disabled[]` 组 id / `extraBanned[]`）。Web 侧栏「文体规则」页写它，导出原样带、没设过就不写这个键；组 id 见 `src/core/stylepack.js` 的 `GROUPS` |
 | `format` | `format` | 只有 `"long"` / `"short"` 两个值，出处是 `NWTension.FORMATS`。短篇靠它换上下文口径与规则阈值（R17 的评审门槛、前情全量注入）。**认不出与没写一律按 `"long"`**，归一那一句是 `NWTension.formatKey`（不 trim、不改大小写，`"SHORT"` 就是认不出）；导出写的是归一后的值。显式写出来是为了让人读得懂，不是为了教机器猜 |
-| `target_words` | `target_words` | 目标字数（短篇由「目标平台」定：6k / 2 万 / 5 万）。没设过就**不写这个键** —— schema 只收整数，写 `null` 会被判违规 |
+| `target_words` | `target_words` | 目标字数，**只有短篇有这一格**（短篇由「目标平台」定：6k / 2 万 / 5 万）。有没有这一格、以及多大的数才算，全仓只有一句：`NWTension.targetOf`；下限是 `NWTension.TARGET_MIN`（就是本文件那份 schema 里 `target_words.minimum` 写的同一个数，守卫对着它核），低于它、小数、认不出的字符串都算「没设」。**长篇库里遗留的那个数不落 `book.json`** —— 那一格在长篇这一档不存在，带出去就是让别人的机器收到「界面说没设、评分卡却按它算分」的存档。没设过就**不写这个键** —— schema 只收整数，写 `null` 会被判违规 |
 
 ### `chapters` → `manuscript/chapters/*.md`
 

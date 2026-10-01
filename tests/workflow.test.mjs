@@ -48,6 +48,20 @@ test('长篇打包不会把字数目标带出来（建档那一路本来就把�
   assert.equal('target_words' in p.fields, false, JSON.stringify(p.fields));
 });
 
+test('短篇那一格也得是个像样的数：低于下限、小数、乱码都不进预设', () => {
+  // 以前打包自己判「≥ 下限」，建档却按「非空就算」存 —— 于是库里可以躺着一个 500：
+  // 进度条照它画、评分卡照它算分，而这份预设说这本书没设过目标。
+  for (const bad of [500, 1500.5, '八千字', true, {}, null]) {
+    const p = W.pack({ format: 'short', target_words: bad }, { name: '脏目标' });
+    assert.equal('target_words' in p.fields, false, `${JSON.stringify(bad)} 被装进了预设：${JSON.stringify(p.fields)}`);
+  }
+  const p = W.pack({ format: 'short', target_words: '8000' }, { name: '字符串数' });
+  assert.equal(p.fields.target_words, 8000, '字符串数字收回来 —— 过闸那一路也是同一句');
+  // 不该清的也别顺手清：这一格在 core 这边根本没设过，预设就不该带一行「清掉它」
+  const rows = W.diffFields({ format: 'short', target_words: 500 }, { format: 'short' });
+  assert.deepEqual(rows.filter((r) => r.clears), [], JSON.stringify(rows));
+});
+
 test('库里那格写着认不出的档名：打包先归一成缺档，不把外人认不出的值装进预设', () => {
   // 库行是 updateNovel/putRow 直接写的，那道闸不在这条路上，'SHORT'、'zhong' 都可能躺在库里。
   // 不归一就打出一份 format:'SHORT' 的预设 —— 它过不了自己的闸，而它是从一本能打开的书里打出来的。

@@ -268,6 +268,31 @@ test('「最近编辑」档与行的插入顺序无关：同一份库两次打�
 });
 
 /**
+ * 「这一档有没有字数目标那一格」建档与读档必须同一句：以前建档按「非空就算」存，
+ * 打包与逐格 diff 按「≥ 下限才算」读，于是短篇库里躺着一个 500 —— 进度条画出 0%，
+ * 导出去过不了 schemas 的 minimum，而预设那边说这本书没设过目标。
+ */
+test('建档那一格：短篇要一个像样的数才存得进去，长篇与脏档一律留空', async () => {
+  const cases = [
+    [{ format: 'short', targetWords: 8000 }, 8000, '短篇的合法目标照存'],
+    [{ format: 'short', targetWords: '8000' }, 8000, '向导以外传来的字符串要收回数字'],
+    [{ format: 'short', targetWords: 500 }, null, '低于下限算没设，不是「存着但没人认」'],
+    [{ format: 'short', targetWords: 1500.5 }, null, '小数不是合法的存档值（schema 只收整数）'],
+    [{ format: 'short' }, null, '没填就是没设'],
+    [{ format: 'long', targetWords: 8000 }, null, '长篇没有这一格'],
+    [{ format: 'zhong', targetWords: 8000 }, null, '脏档归成长篇，那个数就不该留下'],
+  ];
+  for (const [input, want, why] of cases) {
+    const n = await NovelDB.novels.create({ title: `目标那一格 ${want}`, ...input });
+    try {
+      assert.equal((await NovelDB.novels.get(n.id)).target_words, want, `${JSON.stringify(input)}：${why}`);
+    } finally {
+      await NovelDB.novels.delete(n.id);
+    }
+  }
+});
+
+/**
  * 篇幅档这一格以前在建书与列表两处各归一遍，而 update / putRow 那条路根本没归：
  * 库里可以躺着一格 'zhong'，首页按长篇画、侧栏按长篇画，而 R35 拿到的是原值。
  * 现在两处都问 NWTension，写进去与读出来必须同一句。

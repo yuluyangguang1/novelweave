@@ -50,11 +50,11 @@
   const FORMAT_LABEL = { short: '短篇', long: '长篇连载' };
 
   /**
-   * 字数目标的下限。这个数不是这儿首创 —— 它写在 schemas/story-bible.v1.json 的
-   * `book.target_words.minimum`，也就是「一本书导出成磁盘存档时什么算合法」那一份声明里。
-   * 预设搬的正是那一格，所以两处必须同数；守卫拿 schema 里的 minimum 对着它核。
+   * 字数目标的下限。**不在这里定**：出处是 `NWTension.TARGET_MIN`（那一份又对着 schemas
+   * 的 `target_words.minimum` 核）。这里是别名，因为打包、过闸、逐格 diff 与 CLI 那句说明
+   * 都要念同一个数 —— 抄一份就意味着 core 改了下限而预设那边还在按旧的拦。
    */
-  const TARGET_MIN = 1000;
+  const TARGET_MIN = Tension.TARGET_MIN;
 
   const FIELD_LABEL = {
     format: '篇幅档',
@@ -109,9 +109,10 @@
   function pack(book, { name, note } = {}) {
     const b = book || {};
     const fields = { format: Tension.fmtOf(b) };
-    if (Tension.isShort(fields) && Number.isInteger(Number(b.target_words)) && Number(b.target_words) >= TARGET_MIN) {
-      fields.target_words = Number(b.target_words);
-    }
+    // 带不带这一格，问的是 core 那一句「这一档有没有字数目标」：长篇库里那个遗留数
+    // 不该被打包成「这份预设要的目标」，而一个低于下限的数在库里本来就不算设过。
+    const target = Tension.targetOf(b);
+    if (target !== null) fields.target_words = target;
     fields.stylePack = normalizePack(SP && SP.optsFrom ? SP.optsFrom(b) : {});
     return {
       kind: KIND,
@@ -156,10 +157,10 @@
         }
         out.fields.format = src.format;
       } else if (key === 'target_words') {
-        // 布尔与对象不许靠「能转成数」混进来：Number(true) 是 1，那就成了「目标 1 字」
+        // 「这个数算不算一个字数目标」与打包、建档问的是同一句（连布尔与对象不许混进来那条）
         const raw = src.target_words;
-        const n = (typeof raw === 'string' || typeof raw === 'number') ? Number(raw) : NaN;
-        if (!Number.isInteger(n) || n < TARGET_MIN) {
+        const n = Tension.targetValue(raw);
+        if (n === null) {
           out.bad.push({ key, reason: `字数目标得是 ${TARGET_MIN} 以上的整数（与书存档同一个下限），这份写的是「${String(raw)}」` });
           continue;
         }
@@ -223,8 +224,10 @@
     // 它带来的目标字数是有落点的，拿换之前的档拦就等于把整套短篇工作流挡在门外。
     const after = want.format !== undefined ? want.format : Tension.fmtOf(b);
     // pack 会替长篇把这一格藏起来（长篇没有它），可那个数还躺在库行里：进度条不画、
-    // 面板说「没设」，而评分卡照样按它算分。所以这里读的是库行原值，不是 pack 的产物。
-    const leftover = Number(b.target_words) >= TARGET_MIN ? Number(b.target_words) : null;
+    // 面板说「没设」，而评分卡以前还照它算分。所以这里问的是「库里躺着数没有」，
+    // 用与档无关的那一句（targetValue），不是「这一档该不该有它」（targetOf）——
+    // 长篇遗留那一个正是清走的依据。
+    const leftover = Tension.targetValue(b.target_words);
     return FIELDS.flatMap((key) => {
       if (want[key] === undefined) {
         // 只在这一份预设自己把篇幅档换成长篇时才清它：预设没带 format 却顺手抹掉作者定的

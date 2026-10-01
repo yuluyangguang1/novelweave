@@ -260,6 +260,23 @@ test('长篇导出别把 target_words 写出去（没设过就是没有，schema
   const bookJson = JSON.parse(tree[Object.keys(tree).find((k) => k.endsWith('book.json'))]);
   assert.equal(bookJson.format, 'long', '长篇要显式写 long，别让读的一方猜');
   assert.ok(!('target_words' in bookJson), '没设目标字数却写出了这个键：null 会被 schema 判成非法整数');
+
+  // 库里躺着遗留数也一样不许出门：那一格在长篇这一档根本不存在，
+  // 带出去就是让别人的机器收到一份「界面说没设、评分卡却按它算分」的存档。
+  // 脏值放在库行那一级（update 与导入用的 putRow 写得进去），归一发生在装配 ctx 那一步。
+  const dirtyRows = rowsFixture();
+  dirtyRows.novel.target_words = 6000;
+  const dirtyTree = await NWProject.buildProjectTree(NWStory.buildCtx(dirtyRows));
+  const dirtyJson = JSON.parse(dirtyTree[Object.keys(dirtyTree).find((k) => k.endsWith('book.json'))]);
+  assert.ok(!('target_words' in dirtyJson), '长篇那个遗留数跟着导出了');
+
+  // 反方向别误杀：短篇那个合法的目标要照常出门
+  const shortRows = rowsFixture();
+  shortRows.novel.format = 'short';
+  shortRows.novel.target_words = 6000;
+  const shortTree = await NWProject.buildProjectTree(NWStory.buildCtx(shortRows));
+  const shortJson = JSON.parse(shortTree[Object.keys(shortTree).find((k) => k.endsWith('book.json'))]);
+  assert.equal(shortJson.target_words, 6000, '短篇那一格被一起判没了：桥的这一头把档也丢了');
 });
 
 /**
@@ -295,8 +312,13 @@ test('book.json → 库行：字段名与类型都是库里那一格的样子', 
   assert.equal(row.format, 'long', '缺 format 要读成长篇，不能留 undefined');
   assert.equal(row.target_words, null);
   // agent 手改 JSON 常把数字写成字符串，落库前必须收回数字（进度条按数值比较）
-  assert.equal(NWStory.fromBook({ id: 'b', target_words: '8000' }).target_words, 8000);
-  assert.equal(NWStory.fromBook({ id: 'b', target_words: '八千字' }).target_words, null, 'NaN 不许进库');
+  assert.equal(NWStory.fromBook({ id: 'b', format: 'short', target_words: '8000' }).target_words, 8000);
+  assert.equal(NWStory.fromBook({ id: 'b', format: 'short', target_words: '八千字' }).target_words, null, 'NaN 不许进库');
+  // 「这一档有没有字数目标那一格」也在这一步判：文件里写着数不等于这本书有目标
+  assert.equal(NWStory.fromBook({ id: 'b', format: 'long', target_words: 8000 }).target_words, null,
+    '长篇的遗留数被原样搬进库：进度条不画、面板说「没设」，而评分卡照它算分');
+  assert.equal(NWStory.fromBook({ id: 'b', format: 'short', target_words: 500 }).target_words, null,
+    '低于下限的目标存进库，就是一份过不了自己那份 schema 的存档');
 });
 
 test('冲突判定不许静默丢任何一侧的修改', () => {

@@ -59,7 +59,17 @@ test('两种入参长成一个形状：向导 concept 与已写成书的 ctx', (
   assert.equal(v.kind, 'ctx');
   assert.equal(v.logline, '他必须赶在末班车前把信送到，可只剩一站了');
   assert.equal(v.format, 'long');
-  assert.equal(v.targetWords, 60000);
+  // 长篇没有「字数目标」那一格（建档留空、预设要设得连档一起换），库里躺着的那个遗留数不作数：
+  // 以前这张卡按它给分，而同一本书的进度条不画、工作流面板说「这一格没设」。
+  assert.equal(v.targetWords, null, '长篇的遗留目标被当成书定的目标用了');
+  assert.equal(P.viewOf({ book: { title: '归途', format: 'short', target_words: 20000 }, chapters: [] }).targetWords,
+    20000, '短篇那一格是真设过的，别把它一起判没');
+  assert.equal(P.viewOf({ book: { title: '归途', format: 'short', target_words: 500 }, chapters: [] }).targetWords,
+    null, '低于下限的数在 core 这边算没设，评分卡不该替它圆场');
+  // 另一路问的不是库里那一格：concept 是「作者当场打算写多少」。长篇照样能有这个数
+  //（向导的平台档、CLI 的 --words 都给得出），把它按「这一档没有那一格」判没就是白填。
+  assert.equal(P.viewOf({ title: '长夜', format: 'long', targetWords: 200000, chapters: [] }).targetWords,
+    200000, '长篇的规划数被当成库里那一格判没了');
   assert.equal(v.chapters[0].beat, '陈默上夜班，发现多了一个乘客？', 'ctx 的拍点要从 summary 取');
   assert.equal(v.characters[0].role, '主角', 'ctx 的中文定位要从 role_zh 还原');
 });

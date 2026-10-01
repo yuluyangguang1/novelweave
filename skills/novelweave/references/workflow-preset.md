@@ -13,8 +13,10 @@
   `NWTension.FORMATS`（`NWWorkflow.FORMATS` 是它的别名，两份 schema 的 `enum` 与建书下拉都对着它比）。
   这一格在两边规矩不同：**预设**里写一个认不出的档，过闸当场判坏，不会静默落回某档；
   **书**那一格认不出的写法由 `NWTension.formatKey` 归成长篇（不 trim、不改大小写）。
-- **全篇字数目标** —— 只给短篇用；下限与书存档用的是同一个数（见 `schemas/story-bible.v1.json`
-  的 `book.target_words.minimum`），两处不同就会出现「导得出去、进不来」。
+- **全篇字数目标** —— 只给短篇用；「这一档有没有那一格」与「这个数本身算不算一个目标」各有一句，
+  都在 `src/core/tension.js`：打包那一路问 `NWTension.targetOf`（短篇才看那个数），
+  认不出档与长篇一律留空；下限 `NWTension.TARGET_MIN` 与书存档用的是同一个数
+  （见 `schemas/story-bible.v1.json` 的 `book.target_words.minimum`），两处不同就会出现「导得出去、进不来」。
 - **去 AI 味规则包** —— 整包开关、关掉哪几组禁词、作者自添的禁词。
 
 明确不进预设（`NWWorkflow.NOT_SHARED` 里各带一句为什么，界面与文档都引那两句）：

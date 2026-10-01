@@ -195,12 +195,12 @@ async function resequenceChapters(novelId) {
 // ═══════════ 小说 ═══════════
 
 async function createNovel({ title, genre = '玄幻', description = '', format = 'long', targetWords = null }) {
-  // 存进去的档与「这一档有没有字数目标」判的必须是同一个值：一处归一、另一处拿原值比，
-  // 外来那格就可能出现「库里存成短篇、按长篇清了目标」。
+  // 存进去的那一格，与「这一档有没有字数目标」读出来的是同一句话：一处按「非空就算」存、
+  // 另一处按「≥ 下限才算」读，就会出现库里存着 500、进度条画出 0%、导出去过不了 schema 的 minimum。
   const fmt = NWTension.formatKey(format);
   return put('novels', {
     id: newId('novel'), title, genre, description, format: fmt,
-    target_words: NWTension.isShort({ format: fmt }) && targetWords ? Number(targetWords) || null : null,
+    target_words: NWTension.targetOf({ format: fmt, target_words: targetWords }),
     word_count: 0, chapter_count: 0, created_at: Date.now(), updated_at: Date.now(),
   });
 }

@@ -275,10 +275,14 @@
    * 这两个键丢了不报错，只会悄悄变成长篇。
    */
   function fromBook(b) {
+    const format = Tension.formatKey(b.format);
     return {
       id: b.id, title: b.title || '', genre: b.genre || '玄幻', description: b.description || '',
-      format: Tension.formatKey(b.format),
-      target_words: Number(b.target_words) || null,
+      format,
+      // 文件里写着目标不等于这本书有目标：长篇没有这一格，而低于下限的数在 core 这边算没设。
+      // 以前这里照原值存，于是导入一本长篇带回一个 8000 —— 进度条不画、面板说「没设」，
+      // 而评分卡按它算分。归一在这里做，库里就留不下那一档根本不该有的数。
+      target_words: Tension.targetOf({ format, target_words: b.target_words }),
       stylePack: b.stylePack || null,
       styleAnchor: b.styleAnchor || null,
       created_at: T.fromISO(b.created) ?? null,
@@ -414,7 +418,8 @@
       book: { id: rows.novel.id, slug: T.slugify(rows.novel.title), title: rows.novel.title,
         genre: rows.novel.genre, description: rows.novel.description,
         format: Tension.formatKey(rows.novel.format),
-        targetWords: rows.novel.target_words || null,
+        // 过桥的也是那一句话：长篇库里那个遗留数不能既画不出进度条、又跟着 book.json 出门
+        targetWords: Tension.targetOf(rows.novel),
         // 去 AI 味包必须原样过桥：R22 与 prompt 都只认 ctx.book.stylePack，
         // 这里漏掉一项，作者在设置里关掉的词组就只是看起来生效
         stylePack: rows.novel.stylePack || null,

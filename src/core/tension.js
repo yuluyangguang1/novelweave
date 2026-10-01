@@ -181,6 +181,37 @@
    */
   function minFormat(books) { return (books || []).some(isShort) ? 'short' : DEFAULT_FORMAT; }
 
+  /**
+   * 字数目标的下限。**这个数不是这儿首创**：它写在 schemas/story-bible.v1.json 与
+   * schemas/workflow.v1.json 的 `target_words.minimum` 里，也就是「这一格什么算合法」那份声明；
+   * 守卫拿那两份 schema 对着它核。低于下限的数（和不是整数的数）等于没设 ——
+   * 存进去会导出一份过不了自己 schema 的书，读出来会画出一条谁都算不出的进度条。
+   */
+  const TARGET_MIN = 1000;
+
+  /**
+   * 「这一格里躺着一个像样的字数目标吗」—— 只问这个数本身，**不问哪一档**。
+   * 问它的两处都知道档是另一回事：预设过闸要按这份文件写的数判它合不合法，
+   * 逐格 diff 要问库行里那个数还躺着没有（长篇的库里也可能躺着遗留的一个，那正是清走它的依据）。
+   * 布尔与对象不许靠「能转成数」混进来：Number(true) 是 1，那就成了「目标 1 字」。
+   */
+  function targetValue(raw) {
+    const n = (typeof raw === 'string' || typeof raw === 'number') ? Number(raw) : NaN;
+    return Number.isInteger(n) && n >= TARGET_MIN ? n : null;
+  }
+
+  /**
+   * 「这一档有没有字数目标那一格，那个数是多少」—— 一句答完两问。
+   * 长篇没有这一格（建档留空、预设要设得连档一起换），所以库里那个数哪怕躺着也不作数：
+   * 以前建档用「非空就算」、打包用「≥ 下限才算」、评分卡拿原始值就算，一宽一严，
+   * 于是同一个数在界面是「没设」、在评分卡是「目标 8000 字」。
+   * 库行写 `target_words`，ctx.book 写 `targetWords`，两种形状都问这一句。
+   */
+  function targetOf(book) {
+    if (!isShort(book)) return null;
+    return targetValue(book && (book.target_words ?? book.targetWords));
+  }
+
   /** 一本书该用哪档张力配额。 */
   function quotaFor(book) {
     return QUOTAS[fmtOf(book)];
@@ -238,6 +269,7 @@
   return {
     PACK_VERSION, QUOTAS, CHAPTER_RANGE, HOOK_LABEL, rangeLabel,
     FORMATS, DEFAULT_FORMAT, formatKey, fmtOf, minFormat,
+    TARGET_MIN, targetValue, targetOf,
     dialogueSpans, stats, hookKind, tailOf, isShort, quotaFor, chapterRange, tally, promptBlock,
   };
 });
