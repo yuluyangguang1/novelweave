@@ -26,6 +26,7 @@ export const NWStylePack = (globalThis.NWStylePack = require(core('stylepack.js'
 export const NWTension = (globalThis.NWTension = require(core('tension.js')));
 export const NWPitch = (globalThis.NWPitch = require(core('pitch.js')));
 export const NWStyleFit = (globalThis.NWStyleFit = require(core('stylefit.js')));
+export const NWVolume = (globalThis.NWVolume = require(core('volumes.js')));
 export const NWRules = (globalThis.NWRules = require(core('rules.js')));
 export const NWStory = (globalThis.NWStory = require(core('story.js')));
 export const NWProject = (globalThis.NWProject = require(core('project.js')));
@@ -169,6 +170,8 @@ export function loadBook(bookDir, opts = {}) {
     decisions: readJson(path.join(bookDir, 'continuity', 'decisions.json'), { items: [] }).items || [],
     // 信息差账本同上：没有这个文件 = 作者没登记，R20/R21 静默，不报错
     secrets: readJson(path.join(bookDir, 'continuity', 'secrets.json'), { items: [] }).items || [],
+    // 卷同上：没有这个文件 = 作者没建卷，前情摘要退回「更早 N 章只报数」，不报错
+    volumes: readJson(path.join(bookDir, 'continuity', 'volumes.json'), { items: [] }).items || [],
     pending: readJson(path.join(bookDir, 'continuity', 'pending.json'), { items: [] }),
     sync: readJson(path.join(bookDir, 'meta', 'sync.json'), { records: {} }),
     schema: opts.schema === false ? null : readSchema(),

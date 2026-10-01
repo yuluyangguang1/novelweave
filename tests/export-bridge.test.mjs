@@ -596,3 +596,89 @@ test('世界条目在界面上填的那几格，导出→解析→再导出要�
   assert.equal(again.selective, true);
   assert.equal(again.lifecycle['destroyed-in'], 'ch_a1');
 });
+
+// ═══════════════ 卷：前情摘要「更早」那一级的过桥 ═══════════════
+
+/** 每章带摘要的一本长篇；卷层要跨过 12 章的细窗口才看得见，所以给够章数 */
+function longRows(n = 30) {
+  const chapters = Array.from({ length: n }, (_, i) => ({
+    id: `ch_${i + 1}`, order: i + 1, title: `第${i + 1}章`,
+    content: `第${i + 1}章的正文。`, summary: `核心事件：第${i + 1}章的事`,
+  }));
+  return { ...rowsFixture(), chapters };
+}
+
+test('卷在界面上填的那几格，导出→解析→再导出要一格不丢', async () => {
+  const volumes = [{ id: 'vol_1', novel_id: 'novel_bridge', order: 1, title: '卷一·出山',
+    fromChapter: 'ch_1', toChapter: 'ch_6', summary: '林烟火出山、查明师之死', created_at: 1700000000000 }];
+  const ctx = NWStory.buildCtx({ ...longRows(), volumes });
+  const tree = await NWProject.buildProjectTree(ctx);
+  const key = (t) => Object.keys(t).find((k) => k.endsWith('continuity/volumes.json'));
+  const file = JSON.parse(tree[key(tree)]);
+  assert.equal(file.items.length, 1);
+  assert.equal(file.items[0].fromChapter, 'ch_1', '起止是章 id，导出把它翻成章号就全乱了');
+  assert.equal(file.items[0].toChapter, 'ch_6');
+  assert.equal(file.items[0].summary, '林烟火出山、查明师之死');
+  assert.equal(file.items[0].created, '2023-11-14T22:13:20.000Z', '库里毫秒、文件 ISO');
+  assert.equal(file.items[0].created_at, undefined);
+
+  const row = NWProject.parseFileMap(tree).volumes[0];
+  assert.equal(typeof row.created_at, 'number', '落回库行时时间戳要摊平');
+  assert.equal(row.created, undefined, 'ISO 不该混进库行');
+  assert.equal(row.fromChapter, 'ch_1');
+
+  const second = await NWProject.buildProjectTree(NWStory.buildCtx({ ...longRows(), volumes: [row] }));
+  const again = JSON.parse(second[key(second)]).items[0];
+  assert.equal(again.summary, '林烟火出山、查明师之死', '导入后顺手再导出，卷摘要就没了');
+  assert.equal(again.fromChapter, 'ch_1');
+  assert.equal(again.title, '卷一·出山');
+});
+
+test('卷未改动时不许判 new（否则导入用文件版静默盖掉本地那条）', async () => {
+  const volumes = [{ id: 'vol_1', novel_id: 'novel_bridge', order: 1, title: '卷一·出山',
+    fromChapter: 'ch_1', toChapter: 'ch_6', summary: '林烟火出山、查明师之死', created_at: 1700000000000 }];
+  const tree = await NWProject.buildProjectTree(NWStory.buildCtx({ ...longRows(), volumes }));
+  const parsed = NWProject.parseFileMap(tree);
+  const local = { ...longRows(), worldbuilding: rowsFixture().world, volumes: volumes.map((v) => ({ ...v })) };
+  const one = (await NWProject.planMerge(parsed, local)).find((p) => p.kind === 'volume');
+  assert.equal(one.action, 'same', '判成 new 就等于每次导入都重写这一卷');
+
+  const localEdited = { ...local, volumes: [{ ...volumes[0], summary: '本地补的卷摘要' }] };
+  assert.equal((await NWProject.planMerge(parsed, localEdited)).find((p) => p.kind === 'volume').action, 'take-local');
+
+  const fileEdited = structuredClone(parsed);
+  fileEdited.volumes[0].summary = 'agent 在目录里补的卷摘要';
+  assert.equal((await NWProject.planMerge(fileEdited, local)).find((p) => p.kind === 'volume').action, 'take-file');
+  assert.equal((await NWProject.planMerge(fileEdited, localEdited)).find((p) => p.kind === 'volume').action, 'conflict');
+});
+
+test('Web 建的卷，CLI 读盘后前情摘要真的多出那一行（agent 那条路不是断的）', async () => {
+  const volumes = [{ id: 'vol_1', novel_id: 'novel_bridge', order: 1, title: '卷一·出山',
+    fromChapter: 'ch_1', toChapter: 'ch_6', summary: '林烟火出山、查明师之死' }];
+  const tree = await NWProject.buildProjectTree(NWStory.buildCtx({ ...longRows(), volumes }));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-volume-'));
+  try {
+    for (const [rel, text] of Object.entries(tree)) {
+      const f = path.join(tmp, '.novelweave', rel);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, text, 'utf8');
+    }
+    const bookDir = path.join(tmp, '.novelweave', '桥接测试');
+    const c = run('nw-context.mjs', [bookDir, '--chapter', 'ch_30', '--json']);
+    assert.equal(c.code, 0, c.stderr);
+    const built = JSON.parse(c.stdout);
+    const sec = built.sections.find((s) => s.name === '前情摘要');
+    assert.ok(sec, 'CLI 上下文里没有前情摘要节');
+    assert.ok(sec.included.includes('卷一·出山'), '卷没进 included：' + JSON.stringify(sec));
+    assert.ok(built.document.includes('林烟火出山、查明师之死'), 'document 里应看到卷摘要');
+    assert.deepEqual(built.recapTiers.volumes, 1, '分层数要报得出吃到几卷');
+    assert.equal(built.recapTiers.covered, 6);
+    // 作者手敲的是不带 --json 的那一行，卷层数字必须在那儿也说同一份
+    const human = run('nw-context.mjs', [bookDir, '--chapter', 'ch_30']);
+    assert.equal(human.code, 0, human.stderr);
+    assert.match(human.stdout, /前情分层：[^\n]*卷 1 行（压掉 6 章）/,
+      `人读那行与 --json 报的不是同一份：\n${human.stdout.slice(-260)}`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

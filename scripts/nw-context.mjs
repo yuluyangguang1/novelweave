@@ -12,6 +12,8 @@
  * 作者录进矩阵和伏笔表的事实根本没进 prompt。
  *
  * 设计约束：结构化状态文件不整份进 prompt；超预算按固定优先级裁切并如实报告。
+ * 末尾那两行注释报的是「这次吃到哪一层」——细摘要几行、章名几章、卷几行、
+ * 压掉几章、还剩几章只有计数。数字出自 NWVolume.recapPlan，不在这里重算一遍。
  * 退出码：0 · 2 用法错 · 5 IO 错
  */
 import path from 'node:path';
@@ -64,6 +66,18 @@ if (flags.write) {
   out.written = target;
 }
 
+// 分层数字必须出现在人读的那一行里：作者想知道的是「这次模型到底看见了哪一段过去」，
+// 光看摘要那一节的正文数不出未覆盖的章。口径来自 NWVolume.recapPlan，不在这里重算。
+const t = built.usage.recapTiers;
+const tiers = t
+  ? `前情分层：细摘要 ${t.fine} 行 / 章名 ${t.titles} 章 / 卷 ${t.volumes} 行（压掉 ${t.covered} 章）`
+    + `${t.folded ? ` / 更早 ${t.folded} 卷已折` : ''}`
+    + ` / ${t.uncovered} 章只剩计数`
+    + `${t.empty ? ` / ${t.empty} 卷没写摘要` : ''}${t.bad ? ` / ${t.bad} 卷起止读不出来` : ''}`
+    + `${t.overlaps ? ` / ${t.overlaps} 对卷重叠` : ''}`
+  : '';
+
 emit(json, out, document
-  + `\n<!-- ${built.usage.bytes}/${budgetBytes} 字节；裁掉 ${built.usage.droppedSections.length} 节、${built.usage.loreDropped.length} 条世界设定 -->`);
+  + `\n<!-- ${built.usage.bytes}/${budgetBytes} 字节；裁掉 ${built.usage.droppedSections.length} 节、${built.usage.loreDropped.length} 条世界设定 -->`
+  + (tiers ? `\n<!-- ${tiers} -->` : ''));
 process.exit(EXIT.OK);

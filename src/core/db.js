@@ -12,7 +12,7 @@
  */
 
 const DB_NAME = 'novelweave_db';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 let _dbPromise = null;
 
@@ -71,6 +71,13 @@ function openDB() {
         const s = db.createObjectStore('secrets', { keyPath: 'id' });
         s.createIndex('novel_id', 'novel_id', { unique: false });
         s.createIndex('reveal_chapter', 'reveal_chapter', { unique: false });
+      }
+      // v7：卷。一行 = 一段连续章的摘要，前情摘要的「更早」那一级由它说话。
+      // 起止存的是**章 id**而不是章号：删过章以后 order 会重排，按号存的卷一晚上过去
+      // 就可能盖住完全不同的几十章，而作者毫不知情（volumes.js 的判据三）。
+      if (!db.objectStoreNames.contains('volumes')) {
+        const s = db.createObjectStore('volumes', { keyPath: 'id' });
+        s.createIndex('novel_id', 'novel_id', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -208,7 +215,7 @@ async function updateNovel(id, updates) {
 }
 
 /** 删书必须一起清掉的从属表；漏一个就会留下再也查不到的孤儿数据。 */
-const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions', 'decisions', 'usage', 'relations', 'secrets'];
+const CASCADE_STORES = ['chapters', 'characters', 'worldbuilding', 'notes', 'promises', 'timeline', 'suppressions', 'states', 'revisions', 'decisions', 'usage', 'relations', 'secrets', 'volumes'];
 
 async function deleteNovel(id) {
   for (const store of CASCADE_STORES) {
@@ -560,6 +567,7 @@ window.NovelDB = {
   },
   usage:        { list: listUsage, record: recordUsage },
   secrets:      { list: listSecrets, get: (id) => get('secrets', id), save: saveSecret, update: updateSecret, delete: deleteSecret },
+  volumes:      { list: listVolumes, get: (id) => get('volumes', id), save: saveVolume, update: updateVolume, delete: deleteVolume, nextOrder: nextVolumeOrder },
 };
 
 
@@ -677,3 +685,50 @@ async function updateSecret(id, updates) {
 }
 
 async function deleteSecret(id) { await del('secrets', id); }
+
+// ═══════════ 卷（volumes）：前情摘要「更早」那一级的载体 ═══════════
+
+/** 卷序只决定列表顺序与注入的先后；覆盖哪几章看的是起止章（volumes.js 判据三）。 */
+async function nextVolumeOrder(novelId) {
+  const vols = await listVolumes(novelId);
+  return vols.reduce((max, v) => Math.max(max, v.order || 0), 0) + 1;
+}
+
+/**
+ * 起止存的是**章 id**，不是章号：删过章以后 order 会重排，按号存的卷一夜之间
+ * 就可能盖住完全不同的几十章，而那一行摘要看起来依然通顺。
+ *
+ * 摘要允许留空 —— 作者常常先把卷框出来、事后才补那一行；空卷不盖章由 volumes.js
+ * 判据一兜着（它盖的章退回原层级，缺口照样说得出），所以不该拦着不让存。
+ */
+async function saveVolume(novelId, data) {
+  const title = String(data.title || '').trim();
+  if (!title) throw new Error('卷缺少 title（卷名）');
+  if (!data.fromChapter || !data.toChapter) throw new Error(`卷「${title}」没有选起止章`);
+  const id = data.id || newId('vol');
+  const chapters = await listChapters(novelId);
+  const at = (cid) => chapters.findIndex((c) => c.id === cid);
+  const from = at(data.fromChapter), to = at(data.toChapter);
+  if (from === -1 || to === -1) throw new Error(`卷「${title}」的起止章不在这本书里`);
+  if (to < from) throw new Error(`卷「${title}」的起止章选反了：${chapters[from].title} 在后`);
+  const now = Date.now();
+  return put('volumes', {
+    id, novel_id: novelId, title,
+    order: data.order ?? (await nextVolumeOrder(novelId)),
+    fromChapter: data.fromChapter, toChapter: data.toChapter,
+    summary: data.summary || '',
+    created_at: data.created_at || now, updated_at: now,
+  });
+}
+
+async function listVolumes(novelId) {
+  return stableSort(await getByIndex('volumes', 'novel_id', novelId), { byOrder: true });
+}
+
+async function updateVolume(id, updates) {
+  const v = await get('volumes', id);
+  if (!v) throw new Error('卷不存在');
+  return put('volumes', { ...v, ...updates, updated_at: Date.now() });
+}
+
+async function deleteVolume(id) { await del('volumes', id); }

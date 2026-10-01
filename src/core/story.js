@@ -110,6 +110,18 @@
     };
   }
 
+  /** 卷：文件侧 created 是 ISO，库侧 created_at 是毫秒。起止存的是章 id，
+   *  过桥时一个都不许改 —— volumes.js 的判据三靠的就是「按 id 找不回就是坏」，
+   *  这里若把它翻译成章号，删过章的书会安静地盖住别的内容。 */
+  function fromVolume(v) {
+    return {
+      id: v.id, novel_id: null, order: v.order ?? null, title: v.title || '',
+      fromChapter: v.fromChapter ?? null, toChapter: v.toChapter ?? null,
+      summary: v.summary || '',
+      created_at: T.fromISO(v.created) ?? v.created_at ?? null, updated_at: v.updated_at ?? null,
+    };
+  }
+
   function toWorld(w) {
     const keys = (w.keys && w.keys.length ? w.keys : [w.name]).filter(Boolean);
     const type = w.type || 'custom';
@@ -428,11 +440,14 @@
       decisions: rows.decisions || [],
       // 信息差账本同理：R20/R21 只看这一个字段，CLI 侧的 loadBook 也按同名键给
       secrets: rows.secrets || [],
+      // 卷必须原样过桥：前情摘要的卷层只认 ctx.volumes，这里漏了，
+      // 作者建的卷就只是侧栏里的一行字，进不了 prompt
+      volumes: rows.volumes || [],
       chapterNumbers: new Map(chapters.map((c) => [c.id, c.number])),
     };
   }
 
   return { LORE_BUDGET: DEFAULT_BUDGET, LORE_RECURSION, loreIndexConfig, toCharacter, fromCharacter, toWorld, fromWorld, fromBook, toLoreEntry, loreTrigger, toChapter, toPromise, fromAnchor, fromPromise,
-    fromDecision, fromRelation, fromSecret,
+    fromDecision, fromRelation, fromSecret, fromVolume,
     toTimeline, toSuppressions, statesFromRows, stateRowsFromFile, dimsOf, toLines, buildCtx, zhRole };
 });

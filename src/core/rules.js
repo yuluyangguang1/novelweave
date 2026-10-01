@@ -8,10 +8,10 @@
  * 每条规则都必须自带误报控制。误报的检查器会被作者关掉，等于没有。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStylePack, root.NWTension, root.NWStyleFit);
+  const mod = factory(root.NWText, root.NWBible, root.NWStylePack, root.NWTension, root.NWStyleFit, root.NWVolume);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWRules = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack, Tension, StyleFit) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack, Tension, StyleFit, Vol) {
   'use strict';
 
   const ENGINE_VERSION = '1.0.0';
@@ -1523,6 +1523,89 @@
         return out;
       },
     },
+
+    'volume-gap': {
+      code: 'R33',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '建了卷却没真把「更早那一段」压住：章没卷盖、卷是空的、起止读不出来、两卷重叠。',
+      detail:
+        '只对**已经建了卷**的书开口 —— 卷数为 0 是「还没开始用这套东西」，不是缺陷，一条都不报；' +
+        '短篇也不报，它的摘要本来就不封顶，卷层根本不参与。' +
+        '分层与覆盖一律走 NWVolume.recapPlan（把全书末尾当作当前章），也就是侧栏「卷」面板与续写上下文那一份口径，' +
+        '这条规则只负责把它给的桶逐条说出口：empty 是判据一（没写摘要不盖章）、bad 是判据三（起止章读不出来就不按章号猜）、' +
+        'overlaps 是同一章被两卷盖着（那句「压掉 N 章」里有水分）、uncovered 是超出细窗口与章名层、' +
+        '在上下文里只剩一个计数的章。' +
+        '恒为 info：要不要为一卷补那 120 字永远是作者的决定，机器只负责说清没压下来的后果。',
+      run(ctx) {
+        const volumes = ctx.volumes || [];
+        if (!volumes.length) return [];
+        if (ctx.book?.format === 'short') return [];
+        const chapters = ctx.chapters || [];
+        const plan = Vol.recapPlan({ chapters, currentId: null, volumes });
+        const num = ctx.chapterNumbers;
+        const name = (v) => `「${v?.title || '未命名卷'}」`;
+        const out = [];
+
+        if (plan.counts.uncovered > 0) {
+          const first = plan.uncovered[0];
+          out.push(diag('volume-gap', {
+            severity: 'info',
+            confidence: 0.9,
+            evidence: {
+              basis: [
+                `本书 ${plan.counts.head} 章、${plan.counts.book} 卷，卷压掉 ${plan.counts.covered} 章`,
+                `细窗口 ${plan.counts.fine} 行、章名层 ${plan.counts.titles} 章`,
+                `余 ${plan.counts.uncovered} 章`,
+              ],
+            },
+            message: `建了 ${plan.counts.book} 卷，仍有 ${plan.counts.uncovered} 章不在任何卷里`
+              + `（最早约在第 ${num.get(first.id) ?? '?'} 章）—— 续写上下文里这一段只剩一个计数。`,
+            suggestion: '把这一断补成一卷（一卷一行、120 字以内），或者就让它留在计数里 —— 但要知道模型此时看不见细节。',
+          }));
+        }
+        for (const s of plan.empty) {
+          out.push(diag('volume-gap', {
+            entity: s.vol?.id,
+            severity: 'info',
+            confidence: 0.95,
+            evidence: {
+              basis: [`volume.summary 为空`, `区间 ${Vol.rangeText(s, chapters)}·${Vol.coveredCount(s)} 章`],
+            },
+            message: `${name(s.vol)} 框住了 ${Vol.coveredCount(s)} 章却没写摘要，那些章照旧逐章列出 —— 这一卷等于没压。`,
+            suggestion: '补一行 120 字以内的摘要；不打算写就把这一卷删掉，别让它占着区间。',
+          }));
+        }
+        for (const s of plan.bad) {
+          out.push(diag('volume-gap', {
+            entity: s.vol?.id,
+            severity: 'info',
+            confidence: 1,
+            evidence: {
+              basis: [`volume.fromChapter=${s.vol?.fromChapter ?? '空'}`, `volume.toChapter=${s.vol?.toChapter ?? '空'}`, `reason=${s.reason}`],
+            },
+            message: `${name(s.vol)} 的起止章在书里读不出来（${s.reason === 'reversed' ? '结束章排在起始章之前' : '起止章已被删掉或不属于本书'}），`
+              + '这一卷不参与压缩 —— 也不按章号猜区间，猜出来的可能盖住完全不同的几十章。',
+            suggestion: '在「卷」面板里重挑起始章与结束章。',
+          }));
+        }
+        for (const o of plan.overlaps) {
+          out.push(diag('volume-gap', {
+            entity: o.a.vol?.id,
+            severity: 'info',
+            confidence: 1,
+            evidence: {
+              basis: [`${o.a.vol?.title}=${Vol.rangeText(o.a, chapters)}`, `${o.b.vol?.title}=${Vol.rangeText(o.b, chapters)}`,
+                `重叠 ${o.chapters} 章`],
+            },
+            message: `${name(o.a.vol)} 与 ${name(o.b.vol)} 在同一段上重叠 ${o.chapters} 章，`
+              + `那段往事在上下文里出现两遍，「压掉 ${plan.counts.covered} 章」里也有水分。`,
+            suggestion: '把两卷的边界挪开：重叠的那几章归其中一卷，另一卷从它的下一章起。',
+          }));
+        }
+        return out;
+      },
+    },
   };
 
 
@@ -1568,6 +1651,7 @@
     c.timeline = c.timeline || { anchors: [], backstory: [] };
     c.lexicon = c.lexicon || { names: {} };
     c.secrets = c.secrets || [];
+    c.volumes = c.volumes || [];
     c.chapterNumbers = chapterNumberMap(c);
     return c;
   }

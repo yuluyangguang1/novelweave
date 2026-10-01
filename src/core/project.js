@@ -147,6 +147,17 @@
       syncRecords[tagFor('secret', s.id)] = { hash: await hashRecord('secret', s), source: 'web' };
     }
 
+    // 卷：前情摘要「更早」那一级的唯一来源。起止存的是章 id（不是章号），
+    // 所以导出的文件换台机器、删过章以后依然能读出同一批区间 —— 与 volumes.js 同一口径。
+    const volumesOut = (ctx.volumes || []).map((v) => ({
+      ...pick(v, ['id', 'order', 'title', 'fromChapter', 'toChapter', 'summary']),
+      created: v.created || T.toISO(v.created_at),
+    }));
+    files[p('continuity/volumes.json')] = JSON.stringify({ schemaVersion: Bible.SCHEMA_VERSION, items: volumesOut }, null, 2) + '\n';
+    for (const v of volumesOut) {
+      syncRecords[tagFor('volume', v.id)] = { hash: await hashRecord('volume', v), source: 'web' };
+    }
+
     const tl = ctx.timeline || Bible.emptyTimeline();
     const cleanAnchor = (a) => pick(a, ['id', 'chapter', 'label', 'at', 'thread', 'kind', 'entities', 'confidence', 'evidence']);
     const tlOut = {
@@ -272,6 +283,14 @@
           promise_id: row.promise_id ?? null, notes: row.notes || '', enabled: row.enabled !== false,
         };
       }
+      // 卷的摘要就是作者内容本身，起止章与卷名也一样；时间戳照旧不进投影
+      case 'volume': {
+        return {
+          id: row.id, order: row.order ?? null, title: row.title || '',
+          fromChapter: row.fromChapter ?? null, toChapter: row.toChapter ?? null,
+          summary: row.summary || '',
+        };
+      }
       default: throw new Error(`未知投影类型 ${kind}`);
     }
   }
@@ -334,6 +353,7 @@
       relations: (json(files, `${slug}/bible/relations.json`)?.edges || []).map((e) => Story.fromRelation(e)),
       decisions: (json(files, `${slug}/continuity/decisions.json`)?.items || []).map((d) => Story.fromDecision(d)),
       secrets: (json(files, `${slug}/continuity/secrets.json`)?.items || []).map((s) => Story.fromSecret(s)),
+      volumes: (json(files, `${slug}/continuity/volumes.json`)?.items || []).map((v) => Story.fromVolume(v)),
       sync: json(files, `${slug}/meta/sync.json`),
     };
   }
@@ -372,6 +392,7 @@
       ['relations', 'relation', parsed.relations || [], currentRows.relations || []],
       ['decisions', 'decision', parsed.decisions || [], currentRows.decisions || []],
       ['secrets', 'secret', parsed.secrets || [], currentRows.secrets || []],
+      ['volumes', 'volume', parsed.volumes || [], currentRows.volumes || []],
     ];
     for (const [store, kind, fileRows, localRows] of buckets) {
       const localById = new Map((localRows || []).map((r) => [r.id, r]));

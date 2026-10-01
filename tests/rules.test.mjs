@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWRules } from './_load.mjs';
+import { NWRules, NWVolume } from './_load.mjs';
 
 const ch = (n, over = {}) => ({
   id: `ch-00${n}`, number: n, title: `第${n}章`, status: 'draft',
@@ -1016,4 +1016,111 @@ test('R32 遇到脏 styleAnchor 不许崩，也不许凭空造出基准', () => 
     assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed').map((x) => x.message), [], tag);
     assert.deepEqual(of(all, 'style-drift'), [], tag + ' 里没有一个 id 解析得到，必须整条静默');
   }
+});
+
+// ═══════════════ R33 卷级压缩缺口 ═══════════════
+
+const sumCh = (n) => ch(n, { summary: `第${n}章：做了一件事` });
+const manySum = (n) => Array.from({ length: n }, (_, i) => sumCh(i + 1));
+const vol = (from, to, over = {}) => ({
+  id: `vol_${from}_${to}`, order: from, title: `卷${from}`,
+  fromChapter: `ch-00${from}`, toChapter: `ch-00${to}`,
+  summary: `第${from}到${to}章的往事`, ...over,
+});
+
+test('R33 一本没建卷的书一条都不报 —— 那是还没用这套东西，不是缺陷', () => {
+  const c = ctx({ chapters: manySum(60) });
+  assert.deepEqual(of(NWRules.runRules(c), 'volume-gap'), []);
+  assert.deepEqual(of(NWRules.runRules(ctx({ chapters: manySum(60), volumes: [] })), 'volume-gap'), []);
+});
+
+test('R33 建了卷却没盖住：报出「几章不在任何卷里」，数字是超出摘要那两级之后剩下的', () => {
+  const c = ctx({ chapters: manySum(60), volumes: [vol(1, 5)] });
+  const d = of(NWRules.runRules(c), 'volume-gap');
+  assert.equal(d.length, 1, JSON.stringify(d.map((x) => x.message)));
+  assert.equal(d[0].severity, 'info');
+  assert.equal(d[0].chapter, null, '书级诊断不挂章');
+  // 60 章 - 5 章被卷接管 - 细窗口 12 行 - 章名层 24 章 = 19 章真的看不见
+  assert.match(d[0].message, /仍有 19 章不在任何卷里/);
+  assert.match(d[0].message, /最早约在第 6 章/, '要说得出这一断从哪儿开始，否则作者得自己去数');
+  assert.equal(d[0].confidence, 0.9, '「看不见细节」是算出来的，但不是硬事实：留一档不确定');
+  // basis 三行是作者核对这条的唯一依据：总数、两级窗口、余下的数，少一行就得自己重算
+  assert.deepEqual(d[0].evidence.basis, ['本书 60 章、1 卷，卷压掉 5 章', '细窗口 12 行、章名层 24 章', '余 19 章']);
+});
+
+test('R33 该盖的都盖住了就闭嘴：细窗口那 12 章本来逐章列着，不该被说成缺口', () => {
+  const c = ctx({ chapters: manySum(60), volumes: [vol(1, 24), vol(25, 48)] });
+  assert.deepEqual(of(NWRules.runRules(c), 'volume-gap'), [], '两卷连着盖住 1–48，12 章在细窗口里');
+});
+
+test('R33 空摘要的卷：框住了章却没压，单独报这一卷', () => {
+  const c = ctx({ chapters: manySum(60), volumes: [vol(1, 20, { summary: '  ' }), vol(21, 48)] });
+  const d = of(NWRules.runRules(c), 'volume-gap');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].entity, 'vol_1_20');
+  assert.match(d[0].message, /「卷1」 框住了 20 章却没写摘要/);
+  assert.equal(d[0].confidence, 0.95, '这一条是「卷行了但摘要为空」，比推断类硬一档');
+  // 空卷那条也得说得出区间：作者要知道补这 120 字要覆盖多少章
+  assert.deepEqual(d[0].evidence.basis, ['volume.summary 为空', '区间 第 1–20 章·20 章']);
+  assert.match(d[0].suggestion, /删掉/);
+});
+
+test('R33 起止读不出来：说清是被删了还是填反了，绝不按 order 猜区间', () => {
+  const gone = { ...vol(1, 20), id: 'vGone', fromChapter: 'ch-999' };
+  const flip = { ...vol(30, 10), id: 'vFlip', title: '卷反了' };
+  const d = of(NWRules.runRules(ctx({ chapters: manySum(60), volumes: [gone, flip] })), 'volume-gap');
+  const bad = d.filter((x) => /读不出来/.test(x.message));
+  assert.ok(!d.some((x) => /重叠/.test(x.message)), '两卷都没有区间，重叠那条冒出来就是叫作者去挪不存在的边界');
+  assert.equal(bad.length, 2, JSON.stringify(d.map((x) => x.message)));
+  assert.deepEqual(bad.map((x) => x.entity).sort(), ['vFlip', 'vGone']);
+  assert.match(bad.find((x) => x.entity === 'vFlip').message, /结束章排在起始章之前/);
+  assert.match(bad.find((x) => x.entity === 'vGone').message, /已被删掉/);
+  assert.deepEqual(bad.map((x) => x.severity).sort(), ['info', 'info'], '读不出来不等于作者错了');
+  // basis 里那三行是「按不按章号猜」的分界：填的起止与 reason 原样摊开，作者一眼看得出差在哪
+  assert.deepEqual(bad.find((x) => x.entity === 'vGone').evidence.basis,
+    ['volume.fromChapter=ch-999', 'volume.toChapter=ch-0020', 'reason=missing']);
+  assert.equal(bad.find((x) => x.entity === 'vGone').confidence, 1, '起止章在不在书里是事实判断，不该留置信度');
+});
+
+test('R33 两卷的起止都读不出来：不许在 -1 这个下标上算出「重叠」', () => {
+  const a = { ...vol(1, 20), id: 'vA', fromChapter: 'ch-900' };
+  const b = { ...vol(21, 30), id: 'vB', toChapter: 'ch-901' };
+  const d = of(NWRules.runRules(ctx({ chapters: manySum(60), volumes: [a, b] })), 'volume-gap');
+  assert.ok(!d.some((x) => /重叠/.test(x.message)), JSON.stringify(d.map((x) => x.message)));
+  assert.deepEqual(d.filter((x) => /读不出来/.test(x.message)).map((x) => x.entity).sort(), ['vA', 'vB']);
+});
+
+test('R33 两卷重叠：报那对卷，也说清「压掉 N 章」里有水分', () => {
+  const c = ctx({ chapters: manySum(60), volumes: [vol(1, 20), vol(15, 30), vol(31, 48)] });
+  const d = of(NWRules.runRules(c), 'volume-gap');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].entity, 'vol_1_20');
+  assert.match(d[0].message, /在同一段上重叠 6 章/);
+  assert.equal(d[0].confidence, 1, '两卷的区间写在一起就是明摆着的，不用留余地');
+  // 三行按顺序是「谁、谁、重叠几章」：换成写死的 1 章或少一行，作者就没法挪边界
+  assert.deepEqual(d[0].evidence.basis, ['卷1=第 1–20 章', '卷15=第 15–30 章', '重叠 6 章']);
+});
+
+test('R33 短篇不报：它的摘要本来就不封顶，卷层根本不参与', () => {
+  const c = ctx({ book: { id: 'novel_t', title: '测试书', genre: '玄幻', format: 'short' },
+    chapters: manySum(60), volumes: [vol(1, 5)] });
+  assert.deepEqual(of(NWRules.runRules(c), 'volume-gap'), []);
+});
+
+test('R33 遇到脏卷不许崩，也不产出 error', () => {
+  for (const v of [[{}], [null], [{ id: 'v1', title: '没起止' }], [{ id: 'v2', fromChapter: null, toChapter: undefined, summary: 'x' }],
+    [{ id: 'v3', fromChapter: 'ch-001', toChapter: 'ch-002', summary: 42 }]]) {
+    const all = NWRules.runRules(ctx({ chapters: manySum(60), volumes: v }));
+    assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed').map((x) => x.message), [], JSON.stringify(v));
+    assert.deepEqual(of(all, 'volume-gap').filter((x) => x.severity !== 'info'), [], '这条规则不许命令作者');
+  }
+});
+
+test('R33 与侧栏面板同一个数：规则报的缺口章数就是 gapNotice 那句里的数', () => {
+  const chapters = manySum(60);
+  const volumes = [vol(1, 5)];
+  const plan = NWVolume.recapPlan({ chapters, currentId: null, volumes });
+  const d = of(NWRules.runRules(ctx({ chapters, volumes })), 'volume-gap');
+  assert.equal(d[0].message.match(/仍有 (\d+) 章/)[1], String(plan.counts.uncovered));
+  assert.match(NWVolume.gapNotice(plan), new RegExp(`${plan.counts.uncovered} 章不在任何卷里`));
 });

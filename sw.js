@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v8'; // v8: 加 statescope.js —— 旧壳里没有它，状态矩阵的图例与翻页按钮会整块缺席
+const VERSION = 'nw-v9'; // v9: 加 volumes.js —— 旧壳里没有它，「卷」面板与卷摘要注入整块缺席
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 
@@ -26,6 +26,7 @@ const PRECACHE = [
   'src/core/pitch.js',
   'src/core/stylefit.js',
   'src/core/statescope.js',
+  'src/core/volumes.js',
   'src/core/rules.js',
   'src/core/story.js',
   'src/core/context.js',

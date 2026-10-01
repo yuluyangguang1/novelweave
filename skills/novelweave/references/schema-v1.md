@@ -37,6 +37,7 @@
     continuity/
       decisions.json              # 角色决策记录（`items[]`）
       secrets.json                # 信息差账本（R20/R21 的输入，`items[]`）
+      volumes.json                # 卷摘要（前情摘要「更早」那一级的载体，`items[]`）
       snapshot.json               # 最近一次校验汇总（派生，可删重建）
       reports/<时间戳>.json        # 历次诊断报告
       suppressions.json           # 作者显式豁免（「这是闪回，别再报」）

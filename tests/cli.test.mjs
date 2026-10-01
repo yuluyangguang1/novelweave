@@ -160,6 +160,19 @@ test('explain 给出规则规格，供 agent 引用而不是自己编规则', ()
   assert.ok(r.detail.includes('误报') || r.detail.includes('flashback'), '必须说明误报控制');
 });
 
+/**
+ * defaultSeverity 是「声明」而不是「发出来的档位」：R33 每条诊断自带 severity:'info'，
+ * 所以改那一格不会有任何一条诊断变色 —— 唯一读它的人是 explain 的「默认级别」行。
+ * 那就得在这一条里把它读出来，否则「卷级缺口默认只是提醒」只是 rules.js 里一句注释。
+ */
+test('R33 的默认级别由 explain 说出口：补卷是提醒，不是拦路的', () => {
+  const j = JSON.parse(run('nw-continuity.mjs', ['explain', '--rule', 'R33', '--json']).stdout);
+  assert.equal(j.name, 'volume-gap');
+  assert.equal(j.code, 'R33');
+  assert.equal(j.defaultSeverity, 'info', '这一条不许命令作者，只许告诉他哪几章还没被卷盖住');
+  assert.match(run('nw-continuity.mjs', ['explain', '--rule', 'R33']).stdout, /默认级别：info/);
+});
+
 test('--write 落报告并把检查结果如实回写 book._derived', () => {
   run('nw-continuity.mjs', [bookDir, '--write', '--json'], 1);
   const reports = fs.readdirSync(path.join(bookDir, 'continuity', 'reports'));
@@ -185,6 +198,61 @@ test('context 产出 ≤ 预算的上下文文档，并如实报告裁掉了什�
   assert.ok(r.truncated && r.droppedSections.length, '小预算下应当报告被裁掉的节');
   const roomy = JSON.parse(run('nw-context.mjs', [bookDir, '--chapter', 'next', '--json']).stdout);
   assert.equal(roomy.truncated, false, '正常预算下不该有裁切');
+});
+
+/**
+ * 「这次模型到底看见了哪一段过去」是作者判断要不要补卷的唯一依据，
+ * 所以人读的那一行里必须有分层数字，而且必须与 --json 报的是同一份 ——
+ * 两个数各算各的，就等于命令行与界面各说一套。
+ */
+let tierSeq = 0;
+/** 磁盘上的分层夹具：15 章、摘要可填可不填、卷可建可不建。 */
+function tierBook({ summaries = true, volume = true } = {}) {
+  const box = path.join(tmp, `tier-box-${++tierSeq}`);
+  const book = scaffoldBook(box, { slug: `tb${tierSeq}`, id: `novel_tier${tierSeq}`, title: '分层', genre: '仙侠' });
+  for (let i = 1; i <= 15; i++) {
+    const body = `第${i}章的正文。明长老说了一句不可下山。`;
+    const meta = NWBible.newChapter({ id: `ch-0${String(i).padStart(2, '0')}`, number: i, slug: `t${i}`, title: `第${i}章`, status: 'draft' });
+    meta.schemaVersion = NWBible.SCHEMA_VERSION;
+    meta['x-words'] = NWText.countWords(body);
+    if (summaries) meta.summary = `第${i}章：做了一件事。`;
+    writeFileAtomic(path.join(book, 'manuscript', 'chapters', NWBible.chapterFileName(meta)), NWBible.serializeChapterFile(meta, body));
+  }
+  if (volume) {
+    writeJsonAtomic(path.join(book, 'continuity', 'volumes.json'), {
+      schemaVersion: NWBible.SCHEMA_VERSION,
+      items: [{
+        id: 'vol-001', order: 1, title: '卷一·出山',
+        fromChapter: 'ch-001', toChapter: 'ch-002',
+        summary: '林烟火出山、查明师之死', created: '2026-01-01T00:00:00.000Z',
+      }],
+    });
+  }
+  recountBook(book);
+  return book;
+}
+
+test('context 的人读末尾要报分层，数字与 --json 的 recapTiers 同一份', () => {
+  const book = tierBook();
+  const j = JSON.parse(run('nw-context.mjs', [book, '--chapter', 'ch-015', '--json']).stdout);
+  const t = j.recapTiers;
+  assert.ok(t, 'recapTiers 没进 JSON');
+  assert.deepEqual([t.fine, t.volumes, t.covered, t.uncovered], [12, 1, 2, 0], '分层本身错了');
+  const human = run('nw-context.mjs', [book, '--chapter', 'ch-015']).stdout;
+  const line = human.match(/<!-- 前情分层：([^>]*?) -->/)?.[1] || '';
+  assert.ok(line, `人读输出里没有分层那一行：\n${human.slice(-300)}`);
+  for (const frag of [`细摘要 ${t.fine} 行`, `章名 ${t.titles} 章`, `卷 ${t.volumes} 行`, `压掉 ${t.covered} 章`, `${t.uncovered} 章只剩计数`]) {
+    assert.ok(line.includes(frag), `${frag} 没出现在「${line}」里`);
+  }
+});
+
+/** 摘要一章都没填时那一段是空的，不是「0 行 0 章」—— 报出来就是凭空多出一层。 */
+test('没有摘要时分层那一行整个不出现，JSON 也不许填 0', () => {
+  const book = tierBook({ summaries: false, volume: false });
+  const j = JSON.parse(run('nw-context.mjs', [book, '--chapter', 'ch-015', '--json']).stdout);
+  assert.equal(j.recapTiers, null, '没有层可数却报了数');
+  const human = run('nw-context.mjs', [book, '--chapter', 'ch-015']).stdout;
+  assert.doesNotMatch(human, /前情分层/, '没有层也照样打印一行「细摘要 0 行」，作者从此不信这一行');
 });
 
 test('changes：未过门禁的声明绝不落地，过了门禁的要作者 apply 才写库', async () => {

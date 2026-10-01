@@ -527,6 +527,12 @@ select.settings-select { cursor: pointer; }
 .state-scope .btn { font-size: .62rem; padding: 4px 10px; }
 .state-scope-note { padding: 0 12px 10px; }
 
+.volume-gap {
+  padding: 8px 12px; margin-bottom: 10px;
+  border-left: 2px solid var(--warn); background: var(--warn-soft);
+  color: var(--dim); font-size: .72rem; line-height: 1.6;
+}
+
 .state-matrix { border-collapse: collapse; width: 100%; font-size: 12px; }
 .state-matrix th, .state-matrix td {
   padding: 7px 9px; text-align: center; white-space: nowrap;

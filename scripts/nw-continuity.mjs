@@ -29,6 +29,7 @@ const ALIAS = {
   R26: 'repeated-sentence', R27: 'evidence-mismatch', R28: 'world-destroyed-after',
   R29: 'first-appearance-mismatch', R30: 'entry-never-mentioned', R31: 'relation-pair-never-together',
   R32: 'style-drift',
+  R33: 'volume-gap',
 };
 
 function resolveRuleNames(list) {

@@ -22,6 +22,7 @@ export const NWTension = (globalThis.NWTension = require('../src/core/tension.js
 export const NWPitch = (globalThis.NWPitch = require('../src/core/pitch.js'));
 export const NWStyleFit = (globalThis.NWStyleFit = require('../src/core/stylefit.js'));
 export const NWStateScope = (globalThis.NWStateScope = require('../src/core/statescope.js'));
+export const NWVolume = (globalThis.NWVolume = require('../src/core/volumes.js'));
 export const NWRules = (globalThis.NWRules = require('../src/core/rules.js'));
 export const NWStory = (globalThis.NWStory = require('../src/core/story.js'));
 export const NWProject = (globalThis.NWProject = require('../src/core/project.js'));

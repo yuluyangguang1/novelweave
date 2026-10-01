@@ -43,6 +43,7 @@ const AI_TOOLS = [
 
 const TABS = [
   { id: 'chapters',   icon: 'chapter',  label: '章节',     hasAdd: true,  addTitle: '添加章节' },
+  { id: 'volumes',    icon: 'scroll',   label: '卷',       hasAdd: true,  addTitle: '新建一卷' },
   { id: 'characters', icon: 'users',    label: '角色',     hasAdd: true,  addTitle: '添加角色' },
   { id: 'world',      icon: 'globe',    label: '世界设定', hasAdd: true,  addTitle: '添加设定' },
   { id: 'promises',   icon: 'thread',   label: '伏笔',     hasAdd: true,  addTitle: '登记伏笔' },
@@ -964,10 +965,12 @@ const ADD_ACTIONS = {
   'nav-add-decisions': () => showCreateDecision(),
   'nav-add-relations': () => showCreateRelation(),
   'nav-add-secrets': () => showCreateSecret(),
+  'nav-add-volumes': () => showCreateVolume(),
 };
 Object.assign(ACTIONS, ADD_ACTIONS);
 Object.assign(ACTIONS, {
   'edit-promise':    (id) => editPromise(id),
+  'edit-volume':     (id) => editVolume(id),
   'edit-anchor':     (id) => editAnchor(id),
   'edit-state':      (id, el) => showStateEditor(el.dataset.chapter, el.dataset.entity),
   // 翻页与换模式都不重新取库：chapters 与 rows 一格都没变，变的只是画哪几列
@@ -988,6 +991,7 @@ Object.assign(ACTIONS, {
 /** 侧栏面板分派表。旧版定义了四个列表函数却从不调用，导致四个 tab 永远空白。 */
 const SIDEBAR_VIEWS = {
   chapters: renderChapterList,
+  volumes: showVolumeList,
   characters: showCharacterList,
   world: showWorldList,
   promises: showPromiseList,
@@ -2008,15 +2012,16 @@ async function showStateEditor(chapterId, entityId) {
 /** 读全库装配 ctx。与 CLI 唯一的差别是不跑 schema 校验（浏览器里没有那份 JSON）。 */
 async function loadStoryCtx() {
   const novelId = APP.novel.id;
-  const [novel, chapters, characters, world, promises, timeline, suppressions, states, relations, decisions, secrets] = await Promise.all([
+  const [novel, chapters, characters, world, promises, timeline, suppressions, states, relations, decisions, secrets, volumes] = await Promise.all([
     NovelDB.novels.get(novelId), NovelDB.chapters.list(novelId), NovelDB.characters.list(novelId),
     NovelDB.worldbuilding.list(novelId), NovelDB.promises.list(novelId),
     NovelDB.timeline.list(novelId), NovelDB.suppressions.list(novelId), NovelDB.states.list(novelId),
     NovelDB.relations.list(novelId), NovelDB.decisions.list(novelId), NovelDB.secrets.list(novelId),
+    NovelDB.volumes.list(novelId),
   ]);
   APP.chaptersCache = chapters;
   return NWStory.buildCtx({ novel, chapters, characters, world, promises, timeline, suppressions, states,
-    relations: { edges: relations }, decisions, secrets });
+    relations: { edges: relations }, decisions, secrets, volumes });
 }
 
 async function showContinuity(host) {
@@ -2717,6 +2722,7 @@ async function importNovelweave() {
     relations: await NovelDB.relations.list(novel.id),
     decisions: await NovelDB.decisions.list(novel.id),
     secrets: await NovelDB.secrets.list(novel.id),
+    volumes: await NovelDB.volumes.list(novel.id),
   };
   const plan = await NWProject.planMerge(parsed, current);
   const conflicts = plan.filter((p) => p.action === 'conflict');
@@ -3093,6 +3099,108 @@ function editSecret(id) {
   NovelDB.secrets.list(APP.novel.id).then((list) => {
     const s = list.find((x) => x.id === id);
     if (s) showCreateSecret(s);
+  });
+}
+
+// ═══════════════════ 卷（Volumes）═══════════════════
+// 一卷一行摘要，替掉前情摘要里「更早 N 章只报个数」那一段。
+// 覆盖口径一律问 NWVolume / NWContext.recapPlanOf：这里只画它给的桶，
+// 一个窗口数字都不抄 —— 抄第二遍就是给「界面上说盖住了、prompt 里却没有」留后路。
+
+async function showVolumeList(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const rows = await NovelDB.volumes.list(APP.novel.id);
+  const chapters = APP.chaptersCache || await NovelDB.chapters.list(APP.novel.id);
+  if (!rows.length) {
+    host.innerHTML = emptyHint('点击 + 建第一卷：一卷一行摘要，替掉前情里「更早 N 章没提」那一段。'
+      + '建书向导里填的「卷纲」存在笔记里，不会自动变成卷 —— 起止章得人自己挑。');
+    return;
+  }
+  const plan = NWContext.recapPlanOf({ chapters, volumes: rows }, null);
+  const idOf = (list) => new Set(list.map((s) => s.vol.id));
+  const foldedId = idOf(plan.folded);
+  const partialId = idOf(plan.partial), deferredId = idOf(plan.deferred);
+  const emptyId = idOf(plan.empty), badId = idOf(plan.bad);
+  const tagCls = 'novel-card-upgrade';
+  // 五种状态把 recapPlan 的桶逐个说出口；剩下真进了上下文的那几卷不顶标签 ——
+  // 桶是穷尽的（坏/空/越前/压窗/折/注入），兜底分支永远不会走到，所以不写「未参与」。
+  const status = (v) => {
+    if (badId.has(v.id)) return `<span class="${tagCls}">起止章读不出来</span>`;
+    if (emptyId.has(v.id)) return `<span class="${tagCls}">还没写摘要</span>`;
+    if (deferredId.has(v.id)) return `<span class="${tagCls}">写到这一卷了，不注入</span>`;
+    if (partialId.has(v.id)) return `<span class="${tagCls}">压在最近 ${NWContext.RECAP_ITEMS} 章上</span>`;
+    if (foldedId.has(v.id)) return `<span class="${tagCls}">太早，已折成计数</span>`;
+    return '';
+  };
+  const spanOf = (v) => NWVolume.spans([v], chapters)[0];
+  // 缺口那句话直接用 NWVolume.gapNotice：措辞也只有一份，面板说的和 prompt 说的必须是同一句
+  const gap = NWVolume.gapNotice(plan);
+  host.innerHTML = '<div class="char-list">'
+    + (gap ? `<div class="volume-gap">${esc(gap)}</div>` : '')
+    + rows.map((v) => {
+      const s = spanOf(v);
+      const range = s && s.ok ? `${NWVolume.rangeText(s, chapters)}·${NWVolume.coveredCount(s)} 章` : '';
+      return `
+      <div class="char-card" data-action="edit-volume" data-id="${attr(v.id)}">
+        <div class="char-card-name">${esc(v.title || '未命名卷')} ${status(v)}</div>
+        <div class="char-card-desc">${esc(range)}${v.summary ? '<br>' + esc(v.summary.slice(0, 80)) : '<br>（这一卷还没有摘要，它盖住的章仍按章名逐章列出）'}</div>
+      </div>`;
+    }).join('')
+    + '</div>';
+}
+
+function volumeFields(prefix, v = {}) {
+  return `
+    <div class="settings-field"><label class="settings-label">卷名 *</label>
+      <input class="settings-input" id="${prefix}-v-title" value="${attr(v.title || '')}" placeholder="例：卷一·出山" maxlength="40"></div>
+    <div class="settings-field"><label class="settings-label">起始章</label>${chapterSelect(`${prefix}-v-from`, v.fromChapter)}</div>
+    <div class="settings-field"><label class="settings-label">结束章</label>${chapterSelect(`${prefix}-v-to`, v.toChapter)}
+      <div class="settings-hint">存的是章本身，不是章号：删过章以后这一卷会显示「起止章读不出来」，而不是悄悄盖住别的内容。</div></div>
+    <div class="settings-field"><label class="settings-label">这一卷发生了什么（写上下文时一行给模型，约 120 字以内）</label>
+      <textarea class="settings-input" id="${prefix}-v-summary" rows="4" placeholder="例：林烟火出山查明师死，结识沈孤舟，得半枚铜印">${esc(v.summary || '')}</textarea>
+      <div class="settings-hint">留空就等于这一卷不存在：它盖住的章退回逐章列出，缺口会在面板顶部说给你听。</div></div>`;
+}
+
+function readVolumeForm(prefix) {
+  return {
+    title: val(`${prefix}-v-title`),
+    fromChapter: val(`${prefix}-v-from`) || null,
+    toChapter: val(`${prefix}-v-to`) || null,
+    summary: val(`${prefix}-v-summary`),
+  };
+}
+
+function showCreateVolume(existing) {
+  if (!APP.novel) { showToast('先进入一本书'); return; }
+  const isEdit = !!existing;
+  const save = async () => {
+    const data = readVolumeForm('vol');
+    if (!data.title) { showToast('卷名不能为空'); return; }
+    try {
+      await NovelDB.volumes.save(APP.novel.id, isEdit ? { ...existing, ...data } : data);
+    } catch (e) {
+      // saveVolume 会因缺起止章 / 起止选反 / 章不在书里抛错；不接住就是点保存没反应
+      showToast(e.message);
+      return;
+    }
+    closeModal();
+    showToast(isEdit ? '卷已更新' : '卷已建');
+    await renderSidebarPanel();
+  };
+  const del = isEdit ? async () => {
+    if (!confirm('删除这一卷？它盖住的章会退回逐章列出。')) return;
+    await NovelDB.volumes.delete(existing.id);
+    closeModal();
+    await renderSidebarPanel();
+  } : null;
+  showModal(isEdit ? '编辑卷' : '新建一卷', volumeFields('vol', existing), save, del);
+}
+
+function editVolume(id) {
+  NovelDB.volumes.list(APP.novel.id).then((list) => {
+    const v = list.find((x) => x.id === id);
+    if (v) showCreateVolume(v);
   });
 }
 

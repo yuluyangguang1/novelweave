@@ -10,12 +10,13 @@
  *
  * 依赖：NWText / NWBible / NWStory.loreTrigger（世界书匹配在 story.js，故无环）
  *        + NWStyleFit / NWStylePack（风格样例那一节的指纹与本书禁词包）
+ *        + NWVolume（前情摘要的卷级分层，口径只写在 volumes.js）
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStory, root.NWStyleFit, root.NWStylePack);
+  const mod = factory(root.NWText, root.NWBible, root.NWStory, root.NWStyleFit, root.NWStylePack, root.NWVolume);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWContext = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, StyleFit, StylePack) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, StyleFit, StylePack, Vol) {
   'use strict';
 
   const DEFAULTS = {
@@ -73,8 +74,10 @@
     ].join('\n');
   }
 
-  const RECAP_ITEMS = 12;   // 长篇的细摘要窗口；短篇（format:short）不封顶，见 recapBlock
-  const RECAP_MID = 24;     // 细摘要之外再往前的"章名层"数量
+  // 值在 volumes.js：rules.js 算「还剩几章没人盖」时要同一个数，而它排在 context.js 之前、
+  // 够不着这份文件。数字写第二处就会有两处对不上 —— 这两个名字只是别名。
+  const RECAP_ITEMS = Vol.RECAP_FINE;   // 长篇的细摘要窗口；短篇（format:short）不封顶，见 recapBlock
+  const RECAP_MID = Vol.RECAP_MID;      // 细摘要之外再往前的"章名层"数量
   const RECAP_CHARS = 80;
 
   /** 摘要若是 buildSummarizePrompt 的四行结构，只取「核心事件」：位置/伤势/持有物
@@ -86,31 +89,61 @@
     return text.length > RECAP_CHARS ? text.slice(0, RECAP_CHARS) + '…' : text;
   }
 
-  /** 前情摘要：目标章之前的 summary，长篇做三级衰减，不再硬切"更早 N 章未列出"：
+  /**
+   * 前情摘要：目标章之前的 summary，长篇做三级衰减 + 卷级压缩，不再硬切"更早 N 章未列出"：
    *  - 最近 12 章：核心事件行（80 字）
    *  - 再往前 24 章：章名一行列出（网文章名通常自带事件，成本极低）
-   *  - 更早：只报数量（章节名列表超长时也折叠）
+   *  - 更早：建了卷的书改出一行行卷摘要（一卷一行，替掉几十章的逐章出场）；
+   *          卷没盖住的章照旧降级，并且如实说清为什么没压上
    *  短篇（cap=Infinity）体量小，全量细摘要 —— 连"回读"都省了。
-   *  语义检索上线前的过渡方案：把"完全召回不了"变成"至少锚点可见"。 */
-  function recapBlock(chapters, current, cap = RECAP_ITEMS) {
+   *  语义检索上线前的过渡方案：把"完全召回不了"变成"至少锚点可见"。
+   *
+   * 分层本身一律交给 NWVolume.recapPlan：口径写两遍就会有两遍对不上，
+   * 而 rules.js 和侧栏面板问的也是这一份。返回 plan 是给 usage 报层数用的。
+   */
+  function recapText(chapters, current, cap = RECAP_ITEMS, volumes = []) {
     const upto = current ? chapters.findIndex((c) => c.id === current.id) : chapters.length;
     const withSummary = chapters.slice(0, Math.max(0, upto)).filter((c) => (c.summary || '').trim());
-    if (!withSummary.length) return '（各章摘要尚未填写 —— 长篇里它替代"回读全文"）';
-    const fullLine = (c) => `- ${Bible.chapterLabel(c)}：${recapLine(c.summary)}`;
-    if (cap === Infinity) return withSummary.map(fullLine).join('\n');
-
-    const recent = withSummary.slice(-cap);
-    const rest = withSummary.slice(0, withSummary.length - recent.length);
-    const lines = recent.map(fullLine);
-    const mid = rest.slice(-RECAP_MID);
-    if (mid.length) {
-      let titles = mid.map((c) => Bible.chapterLabel(c)).join('、');
-      if (titles.length > 420) titles = titles.slice(0, 420) + '…';
-      lines.unshift(`（更早 ${mid.length} 章：${titles}）`);
+    if (!withSummary.length) {
+      return { text: '（各章摘要尚未填写 —— 长篇里它替代"回读全文"）', plan: null };
     }
-    const older = rest.length - mid.length;
-    if (older > 0) lines.unshift(`（更早 ${older} 章，需要时回读原章）`);
-    return lines.join('\n');
+    const fullLine = (c) => `- ${Bible.chapterLabel(c)}：${recapLine(c.summary)}`;
+    // 短篇全量注入，卷层没有意义（那一段本来就是零），所以不喂卷
+    const plan = Vol.recapPlan({
+      chapters, currentId: current?.id || null,
+      volumes: cap === Infinity ? [] : (volumes || []), fine: cap, mid: RECAP_MID,
+    });
+    const lines = [];
+    const notice = Vol.gapNotice(plan);
+    if (notice) lines.push(`（卷级压缩的缺口：${notice}）`);
+    if (plan.uncovered.length) lines.push(`（更早 ${plan.uncovered.length} 章，需要时回读原章）`);
+    const fold = Vol.foldedText(plan.folded);
+    if (fold) lines.push(fold);
+    for (const s of plan.volumes) lines.push(Vol.lineOf(s, plan.chapters));
+    if (plan.titles.length) {
+      let titles = plan.titles.map((c) => Bible.chapterLabel(c)).join('、');
+      if (titles.length > 420) titles = titles.slice(0, 420) + '…';
+      lines.push(`（更早 ${plan.titles.length} 章：${titles}）`);
+    }
+    lines.push(...plan.fine.map(fullLine));
+    return { text: lines.join('\n'), plan };
+  }
+
+  function recapBlock(chapters, current, cap = RECAP_ITEMS, volumes = []) {
+    return recapText(chapters, current, cap, volumes).text;
+  }
+
+  /**
+   * 分层计划的唯一对外入口：侧栏「卷」面板与 R33 要知道「这一卷到底盖没盖住」，
+   * 用的必须是同一批窗口常量。窗口在界面里再抄一遍字面量，两边就会从此对不上。
+   */
+  function recapPlanOf(ctx, currentId = null) {
+    const isShort = ctx.book?.format === 'short';
+    return Vol.recapPlan({
+      chapters: ctx.chapters || [], currentId,
+      volumes: isShort ? [] : (ctx.volumes || []),
+      fine: RECAP_ITEMS, mid: RECAP_MID,
+    });
   }
 
   // ═══════════════ 相关旧章：按出场分量召回滚动窗口之外的历史章节 ═══════════════
@@ -413,6 +446,9 @@
     const exemplars = stylePick.list;
     const styleText = styleBlock(exemplars, stylePick.fitLine);
 
+    // 前情分层算一次：文本给 section，层数给 usage（CLI 要说「这次吃到哪一层」）
+    const recap = recapText(chapters, current, isShort ? Infinity : RECAP_ITEMS, ctx.volumes || []);
+
     const core = [
       { name: '书目', text: [
         `# ${ctx.book.title}`,
@@ -426,7 +462,7 @@
       { name: '分章状态快照', text: stateBlock(ctx.states, prev, ctx.characters) },
       { name: '未结线索', text: promiseBlock(ctx.promises) },
       ...(decisionBlock(ctx) ? [{ name: '创作决策', text: decisionBlock(ctx) }] : []),
-      { name: '前情摘要', text: recapBlock(chapters, current, isShort ? Infinity : RECAP_ITEMS) },
+      { name: '前情摘要', text: recap.text },
       ...(related.length ? [{ name: '相关旧章', text: relatedBlock(related) }] : []),
       { name: '相关世界设定', text: lore.entries.length
         ? lore.entries.map((e) => `- ${e.name}：${e.content}`).join('\n') : '（未触发任何世界条目）' },
@@ -478,6 +514,11 @@
           ...(s.name === '风格样例' ? { included: exemplars.map((e) => e.label) } : {}),
           ...(s.name === '相关旧章' ? { included: related.map((r) => r.label) } : {}),
           ...(s.name === '活跃关系' ? { included: ['登记关系边'] } : {}),
+          // 卷名列表要能报出来：「这一节里那些行是哪些卷给的」只有 buildSections 知道；
+          // 层数在 usage.recapTiers 那一份里报，节上不再抄一遍（抄两遍就有两遍对不上）
+          ...(s.name === '前情摘要' ? {
+            included: recap.plan ? recap.plan.volumes.map((v) => v.vol.title || '未命名卷') : [],
+          } : {}),
         })),
         loreIncluded: lore.entries.map((e) => e.name),
         loreDropped: lore.dropped,
@@ -487,6 +528,7 @@
         // 样式样例的来源要能说出来：作者勾的基准 / 就近自动 / 勾了但都不合格已退回自动。
         // 第三种最容易骗人 —— 界面显示「已按我指定的基准」，实际注入的是别的章。
         styleSource: useStyle ? stylePick.source : null,
+        recapTiers: recap.plan ? recap.plan.counts : null,
         truncated: dropped.length > 0 || lore.dropped.length > 0,
       },
     };
@@ -518,5 +560,5 @@
       + prose.map((s) => `\n\n${s.block}`).join('');
   }
 
-  return { buildSections, renderDocument, renderPrompt, splitProse, DEFAULTS, characterBlock, promiseBlock, recapBlock, stateBlock, activeCharacters, hardBanBlock, pickStyleExemplars, stylePool, styleBlock, styleOpts, relatedPastChapters, relatedBlock };
+  return { buildSections, renderDocument, renderPrompt, splitProse, DEFAULTS, RECAP_ITEMS, RECAP_MID, characterBlock, promiseBlock, recapBlock, recapText, recapPlanOf, stateBlock, activeCharacters, hardBanBlock, pickStyleExemplars, stylePool, styleBlock, styleOpts, relatedPastChapters, relatedBlock };
 });

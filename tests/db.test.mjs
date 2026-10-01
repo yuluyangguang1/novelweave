@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installFakeIndexedDB } from './_idb.mjs';
-import { NovelDB } from './_load.mjs';
+import { NovelDB, NWVolume } from './_load.mjs';
 
 installFakeIndexedDB();
 
@@ -106,4 +106,48 @@ test('AI 起书建的世界条目：没填的格子落成可用的空值，不�
   assert.deepEqual(w.secondary_keys, []);
   assert.equal(w.selective, false);
   assert.equal(w.lifecycle['destroyed-in'], null, '没标销毁章必须是 null，不能是 undefined');
+});
+
+/**
+ * 卷的起止存的是**章 id**。按章号存的话，删过章的这本书里那一卷会盖住完全不同的几十章，
+ * 而摘要那一行读起来依然通顺。写库这四处拦的都是这类会静默改写的错。
+ */
+test('volumes 表：缺卷名、缺起止、起止选反、章不属于本书都拦在写库之前', async () => {
+  assert.ok(NovelDB.CASCADE_STORES.includes('volumes'), '新表必须进级联清单，否则删书留孤儿');
+  const n = await freshNovel('卷表测试');
+  const cs = [];
+  for (let i = 1; i <= 4; i++) cs.push(await NovelDB.chapters.create(n.id, { title: `第${i}章`, content: '正文。' }));
+  const other = await freshNovel('另一本');
+  const foreign = await NovelDB.chapters.create(other.id, { title: '别书的章', content: '正文。' });
+
+  await assert.rejects(() => NovelDB.volumes.save(n.id, { title: '  ', fromChapter: cs[0].id, toChapter: cs[1].id }), /缺少 title/);
+  await assert.rejects(() => NovelDB.volumes.save(n.id, { title: '卷一', fromChapter: cs[0].id }), /没有选起止章/);
+  await assert.rejects(() => NovelDB.volumes.save(n.id, { title: '卷一', fromChapter: cs[2].id, toChapter: cs[0].id }), /起止章选反了/);
+  await assert.rejects(() => NovelDB.volumes.save(n.id, { title: '卷一', fromChapter: cs[0].id, toChapter: foreign.id }),
+    /不在这本书里/, '别本书的章 id 也框得进来：那一卷盖的是另一本书的章');
+
+  const v = await NovelDB.volumes.save(n.id, { title: '卷一·出山', fromChapter: cs[0].id, toChapter: cs[1].id, summary: '林烟火出山' });
+  assert.match(v.id, /^vol_/);
+  assert.equal(v.order, 1, '卷序自己排，作者不用管');
+  const second = await NovelDB.volumes.save(n.id, { title: '卷二', fromChapter: cs[2].id, toChapter: cs[3].id });
+  assert.equal(second.order, 2);
+  assert.equal(second.summary, '', '摘要允许留空：空卷由 volumes.js 判据一兜着，写库不该拦着不让建');
+
+  const single = await NovelDB.volumes.save(n.id, { title: '单章一卷', fromChapter: cs[1].id, toChapter: cs[1].id, summary: '只盖一章' });
+  assert.equal(single.toChapter, single.fromChapter, '起止同一章是一卷合法的区间，不许被当成填反了拦在写库之前');
+  assert.equal(NWVolume.coveredCount(NWVolume.spans([single], cs)[0]), 1, '单章卷盖住 1 章');
+
+  const edited = await NovelDB.volumes.update(v.id, { summary: '补上的卷摘要' });
+  assert.equal(edited.title, '卷一·出山', 'update 不许把没传的格子冲掉');
+  assert.equal(edited.fromChapter, cs[0].id);
+
+  await NovelDB.chapters.delete(cs[0].id);
+  const rows = await NovelDB.volumes.list(n.id);
+  assert.equal(rows[0].fromChapter, cs[0].id, '删章时悄悄改写卷的起止，等于替作者重画账本');
+  const plan = NWVolume.recapPlan({ chapters: await NovelDB.chapters.list(n.id), currentId: null, volumes: rows });
+  assert.equal(plan.counts.bad, 1, '这一卷必须被判坏，而不是按 order 猜一段区间');
+
+  await NovelDB.novels.delete(n.id);
+  assert.deepEqual(await NovelDB.volumes.list(n.id), [], '删书必须连卷一起清掉');
+  await NovelDB.novels.delete(other.id);
 });

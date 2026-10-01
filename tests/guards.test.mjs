@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWVolume } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -963,4 +963,191 @@ test('翻页条在假 DOM 下真跑得通：按钮名有人接、翻不动时收
   assert.equal(tagOf(wide, 'state-scope-back'), '', '全书模式没有「第几页」，别摆两颗永远点不动的翻页钮');
   assert.equal(tagOf(wide, 'state-scope-recent'), '', wide);
   assert.ok(wide.includes('全书 180 章都画出来了'), wide);
+});
+
+/**
+ * 卷是新长出来的一族表单：四格，其中两格是章节选择器。
+ * 漏读一格的表现是作者填了「起始章」、卷建好了却盖不住任何章 —— 不报错，
+ * 面板上看起来一切正常，只有 prompt 里那段「更早 N 章」永远不减。
+ * 所以既核对名字全被读走，也在假 DOM 下真跑一遍：读回来的必须就是作者填的。
+ */
+test('卷表单的每个控件都要被 readVolumeForm 读走，读回来的就是作者填的', () => {
+  const js = read('src/app.js');
+  const form = js.match(/\nfunction volumeFields\([\s\S]*?\n\}/)?.[0];
+  const valSrc = js.match(/\nfunction val\(id\) \{[\s\S]*?\n\}/)?.[0];
+  const reader = js.match(/\nfunction readVolumeForm\([\s\S]*?\n\}/)?.[0];
+  assert.ok(form && valSrc && reader, 'app.js 里抠不出 volumeFields / val / readVolumeForm');
+  const ids = [...new Set([...form.matchAll(/\$\{prefix\}-([\w-]+)/g)].map((m) => m[1]))].sort();
+  assert.deepEqual(ids, ['v-from', 'v-summary', 'v-title', 'v-to'], '卷表单不是那四格控件，这条守卫得跟着改');
+  const afterReturn = reader.slice(reader.indexOf('return {'));
+  assert.deepEqual(ids.filter((k) => !afterReturn.includes(k)), [], '这些控件的值从来没被读走');
+
+  const run = (fields) => new Function('document', `${valSrc}\n${reader} return readVolumeForm('vol');`)(
+    { getElementById: (id) => fields[id] ?? null });
+  assert.deepEqual(run({
+    'vol-v-title': { value: ' 卷一·出山 ' },
+    'vol-v-from': { value: 'ch_3' },
+    'vol-v-to': { value: 'ch_9' },
+    'vol-v-summary': { value: '林烟火出山查明师死，结识沈孤舟' },
+  }), {
+    title: '卷一·出山', fromChapter: 'ch_3', toChapter: 'ch_9',
+    summary: '林烟火出山查明师死，结识沈孤舟',
+  });
+  // 没选章要落成 null 而不是空串：saveVolume 判「没选起止章」靠的就是 null
+  assert.deepEqual(run({ 'vol-v-title': { value: '卷二' } }),
+    { title: '卷二', fromChapter: null, toChapter: null, summary: '' });
+});
+
+/**
+ * 卷面板上每一句状态话都由 recapPlan 的分桶决定，而窗口判据只有 volumes.js 一份。
+ * 界面一旦自己 `slice(-12)` 或把 12 抄进文案，core 改了口径没人知道，表现是
+ * 面板说「已覆盖」、续写时那段「更早 N 章」却还长着 —— 正是本项目反复犯的病。
+ */
+test('卷面板的分层只问 volumes/context，界面里不许有第二份窗口', () => {
+  const js = read('src/app.js');
+  const panel = js.match(/\nasync function showVolumeList\([\s\S]*?\n\}/)?.[0];
+  assert.ok(panel, 'app.js 里抠不出 showVolumeList，这条守卫的形状变了');
+  assert.match(panel, /NWContext\.recapPlanOf\(/, '分层不是 context 给的那一份，窗口就成了第二份口径');
+  assert.match(panel, /NWVolume\.gapNotice\(/, '缺口那句话自己重写了一遍，面板说的和 prompt 说的就分家');
+  assert.match(panel, /NWVolume\.rangeText\(/, '区间不是 volumes.js 那句，「存章不存号」的口径会走样');
+  assert.match(panel, /NWVolume\.coveredCount\(/, '盖住了几章界面自己数，R33 与 prompt 报的数就对不上');
+  assert.match(panel, /NWContext\.RECAP_ITEMS/, '「压在最近 N 章上」的 N 没从 core 取，两处会各长各的');
+  assert.doesNotMatch(panel, /\.slice\(-\d/, '界面自己按数字裁章，core 那个窗口改了没人知道');
+  assert.doesNotMatch(panel, /\b(?:fine|mid|cap|window|size):\s*\d+/, '界面里出现了分层窗口的字面量');
+});
+
+/**
+ * 上一条只核对「没抄第二份窗口」，这一条真跑一遍：面板上每一张卷卡的那个状态标签，
+ * 是作者唯一的「这一卷到底压住了没有」的依据。标签接错桶看不出来 ——
+ * 空摘要的卷被画成「已覆盖」，作者就再也不会去补那 120 字，而 prompt 里那段「更早」照旧长着。
+ * 面板一律按「整本都算过去」出计划（currentId=null），所以盖到最后一章的那一卷是
+ * 「压在最近 12 章上」，不是「越过本章」—— 这一条也顺手钉住：别把同一件事说成剧透。
+ */
+test('卷面板假 DOM 下真跑：五种状态标签各归各桶，区间与缺口那句用的是 core 的数', async () => {
+  const js = read('src/app.js');
+  const src = js.match(/\nasync function showVolumeList\([\s\S]*?\n\}/)?.[0];
+  assert.ok(src, 'app.js 里抠不出 showVolumeList');
+  const hintSrc = js.match(/\nfunction emptyHint\([\s\S]*?\n\}/)?.[0];
+  assert.ok(hintSrc, '抠不出 emptyHint，那条「没建卷」的话就没被真跑过');
+
+  const chapters = Array.from({ length: 40 }, (_, i) => ({
+    id: 'ch_' + i, order: i + 1, title: '第' + (i + 1) + '章', summary: `事件${i + 1}`,
+  }));
+  const V = (id, order, a, b, summary) => ({ id, order, title: id, fromChapter: 'ch_' + a, toChapter: 'ch_' + b, summary });
+  const rows = [
+    { id: '坏卷', order: 1, title: '坏卷', fromChapter: 'ch_被删了', toChapter: 'ch_12', summary: '有摘要也没用' },
+    V('空卷', 2, 0, 4, '   '),
+    V('压窗卷', 3, 20, 35, '压着最近那 12 章的一段'),
+    ...Array.from({ length: 13 }, (_, i) => V('卷' + (i + 6), 10 + i, i + 6, i + 6, '单章一卷')),
+  ];
+  const emptyHint = new Function('esc', `${hintSrc}\n return emptyHint;`)(NWText.esc);
+  const render = async (list, novel = { id: 'n1' }) => {
+    const host = { innerHTML: '' };
+    const run = new Function('NovelDB', 'NWContext', 'NWVolume', 'APP', 'esc', 'attr', 'document', 'emptyHint',
+      `${src}\n return showVolumeList;`)({ volumes: { list: async () => list } }, NWContext, NWVolume,
+      { novel, chaptersCache: chapters }, NWText.esc, NWText.attr, { getElementById: () => null }, emptyHint);
+    await run(host);
+    return host.innerHTML;
+  };
+  const card = (html, title) => html.split('char-card" ').find((s) => s.includes('>' + title) || s.includes(title + ' <')) || '';
+
+  const html = await render(rows);
+  assert.match(card(html, '坏卷'), /起止章读不出来/, '起止章被删了得说清读不出来，不能画成正常一卷');
+  assert.match(card(html, '空卷'), /还没写摘要/, '空摘要的卷不许顶着「已压缩」的样子');
+  assert.match(card(html, '压窗卷'), /压在最近 12 章上/, '压着细窗口的卷说的是重复，不是缺口');
+  assert.ok(!card(html, '压窗卷').includes('越过本章'), '面板按整本算过去，最后一卷不是剧透');
+  assert.match(card(html, '卷6'), /太早，已折成计数/, '13 卷里折掉最老那一卷要看得出来');
+  assert.ok(!/novel-card-upgrade/.test(card(html, '卷7')), '真进了上下文的那一卷不该再顶一个标签');
+  assert.match(html, /第 7 章·1 章/, '单章卷说「第 7 章」而不是「第 7–7 章」，章号取自库行的 order');
+  assert.match(html, /第 21–36 章·16 章/, '跨段卷的区间与章数都在，且不是「第 undefined 章」');
+  assert.match(html, /class="volume-gap"/, '顶部那句缺口没了，作者就看不到该补哪一卷');
+  assert.match(html, /1 卷还没写摘要[^·]*·[^·]*1 卷的起止章在书里读不出来/, '缺口那句说的是 core 那五种成因里的两种');
+
+  const empty = await render([]);
+  assert.match(empty, /建第一卷/, '没建卷时那句引导必须在');
+  assert.match(empty, /卷纲[^。]*不会自动变成卷/, '向导填的卷纲不会自动变成卷 —— 这句实话不能丢');
+  assert.ok(!empty.includes('volume-gap'), '一卷都没有时不该报缺口');
+});
+
+/**
+ * 浏览器侧装配 ctx 这一环，反验时改坏两次都没人管（取库少取 volumes、buildCtx 少传 volumes）：
+ * 界面照样画得出卷，只是那一行永远进不了 prompt。所以这里不比对字符串，直接拿假库跑一遍，
+ * 再看前情摘要里到底有没有那一行。
+ */
+test('浏览器装配 ctx 在假库下真跑：库里取的卷交进 buildCtx，最后成为前情里那一行', async () => {
+  const src = read('src/app.js').match(/\nasync function loadStoryCtx\(\)[\s\S]*?\n\}/)?.[0];
+  assert.ok(src, 'app.js 里抠不出 loadStoryCtx');
+  const chapters = Array.from({ length: 40 }, (_, i) => ({
+    id: 'ch_' + i, order: i + 1, number: i + 1, title: '第' + (i + 1) + '章',
+    summary: `事件${i + 1}`, content: '正文。',
+  }));
+  const volumes = [{ id: 'vol_1', order: 1, title: '卷一·出山', fromChapter: 'ch_0', toChapter: 'ch_19', summary: '林烟火出山查明师死，得半枚铜印' }];
+  const list = (rows) => async () => rows;
+  const stub = {
+    novels: { get: async () => ({ id: 'n1', title: '烟火纪', format: 'long' }) },
+    chapters: { list: list(chapters) },
+    characters: { list: list([]) }, worldbuilding: { list: list([]) }, promises: { list: list([]) },
+    timeline: { list: list([]) }, suppressions: { list: list([]) }, states: { list: list([]) },
+    relations: { list: list([]) }, decisions: { list: list([]) }, secrets: { list: list([]) },
+    volumes: { list: list(volumes) },
+  };
+  const APP = { novel: { id: 'n1' } };
+  const load = new Function('NovelDB', 'NWStory', 'APP', `${src}\n return loadStoryCtx;`)(stub, NWStory, APP);
+  const ctx = await load();
+  assert.equal(ctx.volumes.length, 1, '卷没交进 buildCtx：侧栏看得见，模型一个字都吃不到');
+  assert.equal(ctx.volumes[0].title, '卷一·出山');
+  assert.equal(APP.chaptersCache, chapters, '章节缓存要跟着更新，矩阵与卷面板都读它');
+  const text = NWContext.buildSections(ctx, { chapterId: 'ch_39' })
+    .sections.find((s) => s.name === '前情摘要').text;
+  assert.match(text, /卷一·出山/, '前情摘要里必须有这一行卷摘要');
+  assert.ok(!text.includes('第20章'), '卷盖住的最后一章仍逐章列着：那一卷等于没压');
+  assert.match(text, /更早 7 章：第21章/, '盖住之后那几章退回章名层 —— 分层只问 core 那一份');
+});
+
+/**
+ * 卷这条通路横跨五个文件，每一处都是字符串级对接：库行在 db.js、过桥在 story.js 的
+ * buildCtx、分层在 context.js、导出在 project.js、读盘在 CLI。接错一边不报错，
+ * 只是作者建的卷永远进不了 prompt —— 而界面上一切看起来正常。
+ */
+test('卷这条通路五段都接通：库 → ctx → 前情分层 → 导出 → CLI 读盘', () => {
+  const db = read('src/core/db.js');
+  assert.match(db, /createObjectStore\('volumes'/, 'volumes store 没建，保存卷会直接抛错');
+  const cascade = db.match(/const CASCADE_STORES = \[[\s\S]*?\]/)?.[0] || '';
+  assert.ok(cascade.includes("'volumes'"), 'volumes 不在级联清单里，删书会留下一堆孤儿卷');
+  assert.match(db, /volumes:\s*\{[^}]*list: listVolumes/, '门面上没有 volumes，界面调不到');
+
+  assert.match(read('src/core/story.js'), /volumes: rows\.volumes/,
+    'buildCtx 没把卷过桥，作者建的卷就只是侧栏里的一行字，进不了 prompt');
+
+  const cx = read('src/core/context.js');
+  assert.match(cx, /Vol\.recapPlan\(/, '分层判据不是 volumes.js 那一份，两处窗口会各长各的');
+  assert.match(cx, /recapText\(chapters, current,[^)]*ctx\.volumes/,
+    'buildSections 造摘要时没把 ctx.volumes 喂进去，建多少卷都不注入');
+
+  const pr = read('src/core/project.js');
+  assert.ok(pr.includes("'continuity/volumes.json'"), '导出没写卷文件，同步时等于从没建过卷');
+  assert.match(pr, /case 'volume':/, 'authorProjection 没有 volume 分支，导入时字段白名单对不上');
+  assert.match(pr, /\['volumes', 'volume'/, 'planMerge 没有卷这一桶，本地与远端改过的卷无人裁决');
+
+  assert.ok(read('scripts/lib/book.mjs').includes("'volumes.json'"),
+    'CLI loadBook 不读卷，Web 建的卷在命令行了不存在');
+});
+
+/**
+ * 文档里那几个数字是作者做决定用的依据（「再往前 24 章只列章名」「一卷摘要 ≤120 字」），
+ * 而它们是抄 core 的。core 改了窗口而文档没跟，作者就照旧的说法去补卷、补完发现压不住 ——
+ * 「宣称与实现对不上」这一族的病，成本最低的一次复发就是文档先烂。
+ */
+test('技能文档与 README 里写死的窗口数字与三条判据，跟着 core 那一份走', () => {
+  const budget = read('skills/novelweave/references/context-budget.md');
+  assert.match(budget, new RegExp(`再往前 ${NWVolume.RECAP_MID} 章只列章名`),
+    `文档说的章名层窗口不是 core 那个 ${NWVolume.RECAP_MID}`);
+  assert.match(budget, new RegExp(`≤${NWVolume.VOL_LINE_CHARS} 字`),
+    '文档里卷摘要的长度与 lineOf 裁的那个数不是同一份');
+  assert.match(budget, /斜率降到每卷一行，不是 O\(1\)/, '「压缩到常数」这种话不许写进文档：卷多到上限仍要折成计数');
+
+  const readme = read('README.md');
+  for (const claim of ['没写摘要的卷不盖章', '盖到本章之后的卷不注入', '起止章被删了就整卷不用']) {
+    assert.ok(readme.includes(claim), `README 少了三条判据里的一条：${claim}`);
+  }
 });
