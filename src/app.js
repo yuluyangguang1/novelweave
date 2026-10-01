@@ -55,6 +55,7 @@ const TABS = [
   { id: 'secrets',    icon: 'target',   label: '信息差',   hasAdd: true,  addTitle: '登记一条信息差' },
   { id: 'notes',      icon: 'note',     label: '写作笔记', hasAdd: true,  addTitle: '添加笔记' },
   { id: 'style',      icon: 'ban',      label: '文体规则', hasAdd: false, addTitle: '' },
+  { id: 'workflow',   icon: 'scroll',   label: '工作流',   hasAdd: false, addTitle: '' },
   { id: 'settings',   icon: 'settings', label: 'AI 设置',  hasAdd: false, addTitle: '' },
 ];
 
@@ -1008,6 +1009,7 @@ const SIDEBAR_VIEWS = {
   secrets: showSecretList,
   notes: showNotesList,
   style: showStylePack,
+  workflow: showWorkflowPanel,
   settings: renderWorkspaceSettings,
 };
 
@@ -3452,6 +3454,123 @@ function readStyleAnchorForm(prefix) {
   return { chapterIds: [...box.querySelectorAll('input[type="checkbox"]')].filter((i) => i.checked).map((i) => i.value) };
 }
 
+// ═══════════════════ 工作流预设（把调顺的那几格搬走） ═══════════════════
+
+/**
+ * 面板上只画 core 给的那几行：格名、格值、以及「为什么不共享基准章」那句。
+ * 界面对这三格不做任何判断 —— 一份预设能不能用、用了改哪几格，全是 NWWorkflow 的事。
+ */
+function workflowRows(fields) {
+  return NWWorkflow.FIELDS.map((key) => `<div class="workflow-row">
+    <span class="workflow-row-label">${esc(NWWorkflow.FIELD_LABEL[key])}</span>
+    <span class="workflow-row-value">${esc(NWWorkflow.valueText(key, fields[key]))}</span></div>`).join('');
+}
+
+function workflowNotShared() {
+  return NWWorkflow.NOT_SHARED.map((n) => `<div class="settings-hint">${esc(n.key)}：${esc(n.why)}</div>`).join('');
+}
+
+async function showWorkflowPanel(host) {
+  host = host || document.getElementById('sidebar-content');
+  if (!host || !APP.novel) return;
+  const own = NWWorkflow.pack(APP.novel);
+  const builtins = NWWorkflow.BUILTINS.map((b, i) => `<div class="workflow-preset">
+      <div class="workflow-preset-name">${esc(b.name)}</div>
+      <div class="settings-hint">${esc(b.note)}</div>
+      ${workflowRows(b.fields)}
+      <button class="btn btn-secondary" data-action="workflow-apply-builtin" data-id="${attr(String(i))}">按这张确认</button>
+    </div>`).join('');
+  host.innerHTML = `<div style="padding:12px;">
+    <div class="settings-hint">工作流就是这几格。换一本书时照搬，不必从头再调一遍。</div>
+    <div class="settings-field"><label class="settings-label">这本书现在的</label>${workflowRows(own.fields)}</div>
+    ${workflowNotShared()}
+    <div class="workflow-bar">
+      <button class="btn btn-primary" data-action="workflow-export">导出为预设文件</button>
+      <button class="btn btn-secondary" data-action="workflow-import">导入预设</button>
+    </div>
+    <div class="settings-field"><label class="settings-label">随货预设</label>${builtins}</div>
+  </div>`;
+}
+
+function showWorkflowExportModal() {
+  const own = NWWorkflow.pack(APP.novel, { name: `${APP.novel.title || '未命名'} 的工作流` });
+  showModal('导出工作流预设', `
+    <div class="settings-field"><label class="settings-label">预设名称</label>
+      <input class="settings-input" id="inp-wf-name" maxlength="40" value="${attr(own.name)}"></div>
+    <div class="settings-field"><label class="settings-label">备注（跟着文件一起给收的人看）</label>
+      <textarea class="settings-input" id="inp-wf-note" rows="2" placeholder="例：段尾金句那组太容易误伤，我关掉了">${esc(own.note)}</textarea></div>
+    <div class="settings-field"><label class="settings-label">这份预设会带上这几格</label>${workflowRows(own.fields)}</div>
+    <div class="settings-hint">只带这几格设置。角色、正文、伏笔、账本一概不在里面。</div>
+  `, async () => {
+    const preset = NWWorkflow.pack(APP.novel, { name: val('inp-wf-name') || own.name, note: val('inp-wf-note') });
+    closeModal();
+    const file = NWWorkflow.fileName(preset);
+    downloadText(file, JSON.stringify(preset, null, 2));
+    showToast(`已导出 ${file}`);
+  }, null);
+}
+
+/** 过不了闸的预设要说清为什么过不了 —— 拒了却不给原因，作者只能拿文本编辑器自己查。 */
+function showWorkflowRejectModal(n) {
+  const lines = [
+    ...n.errors.map((e) => esc(e)),
+    ...n.bad.map((b) => `${esc(NWWorkflow.FIELD_LABEL[b.key] || b.key)}：${esc(b.reason)}`),
+  ];
+  showModal('这份预设没有应用', `
+    <div class="settings-hint">宁可一格都不改，也不改半份再说「已经照做了」。</div>
+    <ul class="workflow-reasons">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+  `, null, null);
+}
+
+/** 内置预设与外来文件走同一道闸、同一张确认框：差别只在来源，判据不该有两套。 */
+function workflowApplyBuiltin(index) {
+  const b = NWWorkflow.BUILTINS[Number(index)];
+  if (!b) { showToast('没有这一张随货预设'); return; }
+  const n = NWWorkflow.normalize({ kind: NWWorkflow.KIND, version: NWWorkflow.FILE_VERSION, name: b.name, note: b.note, fields: b.fields });
+  if (!n.ok) { showWorkflowRejectModal(n); return; }
+  showWorkflowApplyModal(n);
+}
+
+async function workflowImportPreset() {
+  const text = await pickJsonText();
+  if (!text) return;
+  let raw;
+  try { raw = JSON.parse(text); } catch (e) { showToast(`不是合法的 JSON：${e.message}`); return; }
+  const n = NWWorkflow.normalize(raw);
+  if (!n.ok) { showWorkflowRejectModal(n); return; }
+  showWorkflowApplyModal(n);
+}
+
+function showWorkflowApplyModal(n) {
+  const rows = NWWorkflow.diffFields(APP.novel, n.fields);
+  const changed = rows.filter((r) => r.changed).length;
+  const blocked = rows.filter((r) => r.blocked);
+  // 箭头是「这一格会写进库」的记号，落不下的那一格不许借用它：写了箭头又没写，
+  // 与「说已落地其实没接通」是同一件事。
+  const body = rows.map((r) => `<div class="workflow-row${r.changed ? ' is-changed' : ''}">
+      <span class="workflow-row-label">${esc(r.label)}</span>
+      <span class="workflow-row-value">${esc(r.current)}${
+        r.blocked ? ` <em>预设要的是 ${esc(r.incoming)}：${esc(r.blocked)}</em>`
+          : r.changed ? ` → <b>${esc(r.incoming)}</b>` : ' <em>（不变）</em>'}</span></div>`).join('');
+  showModal(`应用预设「${n.name}」`, `
+    <div class="settings-field">${body}</div>
+    ${n.note ? `<div class="settings-hint">作者留的话：${esc(n.note)}</div>` : ''}
+    <div class="settings-hint">只有画了箭头的那 ${changed} 格会写进库。这一本的书名、角色、正文一概不动。</div>
+  `, async () => {
+    closeModal();
+    // 「没动」有两种原因，说成一种就是假话：本来就是这套，或者这一格在这本书里落不下
+    if (!changed) { showToast(blocked.length ? `一格都没动：${blocked[0].blocked}` : '这一本已经就是这套工作流，一格都没动'); return; }
+    // 补丁由 core 算，界面不许自己挑字段：写死一格就在这里红
+    APP.novel = await NovelDB.novels.update(APP.novel.id, NWWorkflow.patchOf(APP.novel, n.fields));
+    showToast(`已应用 ${changed} 格`);
+    await renderSidebar();
+    await renderSidebarPanel();
+  }, null);
+  // 那颗按钮默认写「保存」，可这里存的是别人的设置 —— 说清是按这张确认框去改这本书
+  const go = document.getElementById('modal-save');
+  if (go) go.textContent = changed ? `应用这 ${changed} 格` : blocked.length ? '这一格在这本书里落不下' : '一格都不用改';
+}
+
 Object.assign(ACTIONS, {
   'style-pack-save': async () => {
     if (!APP.novel) { showToast('先进入一本书'); return; }
@@ -3477,4 +3596,17 @@ Object.assign(ACTIONS, {
   },
   // 勾一下就当场重算那一行：点击从 checkbox 冒泡到带 data-action 的容器，所以两处都走这里
   'style-anchor-preview': () => refreshStyleAnchorFit('sty'),
+});
+
+Object.assign(ACTIONS, {
+  'workflow-export': () => {
+    if (!APP.novel) { showToast('先进入一本书'); return; }
+    showWorkflowExportModal();
+  },
+  // 导入只是把文件送进那道闸：判能用、判哪几格要变，全在 NWWorkflow 里
+  'workflow-import': () => {
+    if (!APP.novel) { showToast('先进入一本书 —— 预设是搬给某一本用的，不是凭空建书'); return; }
+    return workflowImportPreset();
+  },
+  'workflow-apply-builtin': (id) => workflowApplyBuiltin(id),
 });

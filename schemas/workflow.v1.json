@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novelweave.local/schemas/workflow.v1.json",
+  "title": "NovelWeave 织文 · 工作流预设 v1",
+  "description": "作者之间搬「调顺了的那几格」用的文件格式。它只带设置，不带书：角色、正文、伏笔、账本一概不在这里 —— 那些归 story-bible.v1.json。判据的唯一出处是 src/core/workflow.js，这份文件是它对外的形状声明；两边改了名必须一起改，tests/guards.test.mjs 拿字段清单对着 FIELDS 核。",
+  "type": "object",
+  "required": ["kind", "version", "name", "fields"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "type": "string", "enum": ["novelweave.workflow"], "description": "认不出这一格的输入直接拒收，不按「大概是我的格式」猜" },
+    "version": { "type": "integer", "enum": [1], "description": "格式号，不是模块版本号。升格式要旧文件被认出来并拒收，不是按新字段校验一遍再应用半套" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+    "note": { "type": "string", "maxLength": 300, "description": "给收的人看的一句话，不参与任何判据" },
+    "fields": { "$ref": "#/$defs/fields" }
+  },
+  "$defs": {
+    "fields": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "description": "可分享的三格。styleAnchor 故意不在这里：它记的是这本书里若干章的身份证，换一本书那些 id 就指不到东西",
+      "properties": {
+        "format": { "type": "string", "enum": ["long", "short"], "description": "织物规格，与 story-bible.v1.json 的 book.format 同一家长" },
+        "target_words": { "type": "integer", "minimum": 1000, "description": "全篇字数目标，只在短篇有意义（长篇建档那一路把它留空）。下限与 book.target_words 同一个数，两处不同就是 bug" },
+        "stylePack": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "去 AI 味规则包的本书开关，形状与 story-bible.v1.json 的 book.stylePack 一致",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "disabled": { "type": "array", "items": { "type": "string" }, "description": "关掉的组 id；组表见 src/core/stylepack.js 的 GROUPS。认不出的 id 整格作废并点名" },
+            "extraBanned": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

@@ -5,17 +5,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  NWBible, NWText, repoRoot, NWProject, NWStyleFit,
+  NWBible, NWText, repoRoot, NWProject, NWStyleFit, NWWorkflow, NWStylePack,
   scaffoldBook, upsertProject, writeJsonAtomic, writeFileAtomic, recountBook,
 } from './_load-cli.mjs';
 
 const script = (name) => path.join(repoRoot, 'scripts', name);
 let tmp, root, bookDir;
 
-function run(name, args = [], expectCode = null) {
+function run(name, args = [], expectCode = null, cwd = null) {
   let res;
   try {
-    const out = execFileSync(process.execPath, [script(name), ...args], { encoding: 'utf8', cwd: tmp, stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = execFileSync(process.execPath, [script(name), ...args], { encoding: 'utf8', cwd: cwd || tmp, stdio: ['ignore', 'pipe', 'pipe'] });
     res = { code: 0, stdout: out, stderr: '' };
   } catch (e) {
     res = { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
@@ -683,4 +683,175 @@ test('关系账本一路走到 prompt：磁盘上 relations.json 里那条师徒
   } finally {
     if (was === null) fs.rmSync(rel); else fs.writeFileSync(rel, was);
   }
+});
+
+// ═══════════════ nw-workflow（V 批：工作流预设）═══════════════
+
+/** 改磁盘上那本书的 book.json：只动回调碰过的格，写完回读一次。 */
+function wfEditBook(fn) {
+  const file = path.join(bookDir, 'book.json');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fn(raw);
+  writeJsonAtomic(file, raw);
+  return raw;
+}
+const wfPresetFile = (name, fields, extra = {}) => {
+  const f = path.join(tmp, name);
+  writeJsonAtomic(f, { kind: NWWorkflow.KIND, version: NWWorkflow.FILE_VERSION, name: name, note: '', fields, ...extra });
+  return f;
+};
+const wfShortBook = () => wfEditBook((b) => {
+  b.format = 'short';
+  b.target_words = 6000;
+  b.stylePack = { enabled: true, disabled: ['aphorism'], extraBanned: ['属实'] };
+  b.styleAnchor = { chapterIds: ['ch-001'] };
+});
+
+test('nw-workflow keys：三格、下限与「为什么不共享基准章」都从包里现取', () => {
+  const j = JSON.parse(run('nw-workflow.mjs', ['keys', '--json'], 0).stdout);
+  assert.deepEqual(j.fields.map((f) => f.key), NWWorkflow.FIELDS, 'CLI 自己数了一遍可分享的格');
+  assert.deepEqual(j.fields.map((f) => f.label), NWWorkflow.FIELDS.map((k) => NWWorkflow.FIELD_LABEL[k]));
+  assert.equal(j.targetMin, NWWorkflow.TARGET_MIN, 'CLI 里抄了第二份下限');
+  assert.deepEqual(j.notShared, NWWorkflow.NOT_SHARED);
+  assert.equal(j.groups.length, NWStylePack.GROUPS.length, '禁词组清单不是现取的');
+  assert.deepEqual(j.builtins.map((b) => b.name), NWWorkflow.BUILTINS.map((b) => b.name));
+
+  const human = run('nw-workflow.mjs', ['keys'], 0).stdout;
+  assert.equal(human.includes(`下限：${NWWorkflow.TARGET_MIN} 字`), true, '那个数要能说出口');
+  assert.equal(human.includes(NWWorkflow.NOT_SHARED[0].why), true, '为什么不共享基准章那句得出自 core，界面与 CLI 各写一遍就会各说各的');
+});
+
+test('nw-workflow pack：写出的文件过自己那道闸，一个章身份都不带', () => {
+  wfShortBook();
+  const f = path.join(tmp, 'wf-pack.json');
+  const j = JSON.parse(run('nw-workflow.mjs', ['pack', '--out', f, '--name', '我的短篇流程', '--json'], 0).stdout);
+  assert.equal(j.ok, true, '自己打出来的包过不了自己的闸，就是导得出去、进不来');
+  const text = fs.readFileSync(f, 'utf8');
+  const p = JSON.parse(text);
+  assert.equal(p.name, '我的短篇流程');
+  assert.deepEqual(Object.keys(p.fields).sort(), [...NWWorkflow.FIELDS].sort());
+  assert.equal(p.fields.target_words, 6000);
+  assert.equal(text.includes('styleAnchor'), false, '基准章是身份不是设置，打包时整个不带');
+  assert.equal(text.includes('ch-001'), false, text);
+
+  // --out 不给值时用 core 那个文件名，界面与 CLI 不许各拼一种名字
+  const named = JSON.parse(run('nw-workflow.mjs', ['pack', '--out', '--json'], 0).stdout);
+  assert.equal(path.basename(named.file), NWWorkflow.fileName(named.preset), '文件名不是 core 那个 fileName 给的');
+});
+
+test('库里躺着一版没有的禁词组：打包要当场红，不许悄悄丢掉那个 id 再装作过了闸', () => {
+  wfShortBook();
+  const stale = wfEditBook((b) => { b.stylePack.disabled = ['aphorism', 'legacy_group']; });
+  const f = path.join(tmp, 'wf-stale.json');
+  const res = run('nw-workflow.mjs', ['pack', '--out', f, '--json'], 1);
+  const j = JSON.parse(res.stdout);
+  assert.equal(j.ok, false, '打完不自查，「导得出去、进不来」就没人看得见');
+  assert.deepEqual(j.preset.fields.stylePack.disabled, stale.stylePack.disabled,
+    '打包那一路自己把认不出的 id 抹平了 —— 红点跟着没了，那就是第二份判据');
+  const human = run('nw-workflow.mjs', ['pack', '--out', f], 1).stdout;
+  assert.ok(human.includes('过不了自己的闸'), human);
+  assert.ok(human.includes('legacy_group'), `那份包红是要红，还得说出是哪一组：${human}`);
+});
+
+test('nw-workflow check 往返：刚打的包对着刚打的那本书，一格都不该要改', () => {
+  wfShortBook();
+  const f = path.join(tmp, 'wf-round.json');
+  run('nw-workflow.mjs', ['pack', '--out', f], 0);
+  const j = JSON.parse(run('nw-workflow.mjs', ['check', f, '--json'], 0).stdout);
+  assert.equal(j.ok, true, JSON.stringify(j));
+  assert.equal(j.diff.length, NWWorkflow.FIELDS.length);
+  assert.deepEqual(j.diff.map((r) => r.changed), NWWorkflow.FIELDS.map(() => false), '同一本书打包再对照，怎么会有格要改');
+  assert.deepEqual(j.diff.map((r) => r.blocked), NWWorkflow.FIELDS.map(() => null));
+  assert.equal(run('nw-workflow.mjs', ['check', f], 0).stdout.includes('一格都不用改'), true);
+
+  // 改一格再对照：只有那一格要改，其余照旧
+  wfEditBook((b) => { b.target_words = 3000; });
+  const after = JSON.parse(run('nw-workflow.mjs', ['check', f, '--json'], 0).stdout);
+  assert.deepEqual(after.diff.filter((r) => r.changed).map((r) => r.key), ['target_words']);
+  assert.equal(run('nw-workflow.mjs', ['check', f], 0).stdout.includes('6000 字 → 3000 字（要改）'), false, '现在与预设的方向写反了');
+});
+
+test('坏预设：退 1、逐条点名，且根本不许谈会改哪几格', () => {
+  wfShortBook();
+  const f = wfPresetFile('wf-bad.json', { format: 'zhong', target_words: 20, stylePack: { disabled: ['nope'], tone: '冷' }, prompt: '别用' });
+  const res = run('nw-workflow.mjs', ['check', f, '--json'], 1);
+  const j = JSON.parse(res.stdout);
+  assert.equal(j.ok, false);
+  assert.deepEqual(j.unknown, ['prompt']);
+  assert.deepEqual(j.diff, null, '一份坏文件配一张「会改这两格」的清单，读的人只记得住清单');
+  assert.deepEqual(j.bad.map((b) => b.key).sort(), ['format', 'stylePack', 'target_words']);
+
+  const human = run('nw-workflow.mjs', ['check', f], 1).stdout;
+  assert.equal(human.includes(`这版程序认不出这些键：prompt`), true, human);
+  assert.equal(human.includes('等这几处改对了再谈它会改哪几格'), true, human);
+  assert.equal(human.includes('（要改）'), false, '坏预设不许给出逐格清单');
+  // 没有逐格清单时那一句「已经就是这套」根本没有依据：文件都读不动，凭什么说书是对的
+  assert.equal(human.includes('一格都不用改'), false, human);
+  assert.equal(human.includes(NWWorkflow.LONG_NO_TARGET), false, 'format 都没过，长篇那句不该被顺嘴带出来');
+
+  const notJson = path.join(tmp, 'wf-notjson.json');
+  fs.writeFileSync(notJson, '{这不是 JSON', 'utf8');
+  const bad = run('nw-workflow.mjs', ['check', notJson], 1);
+  assert.equal(bad.stdout.includes('不是合法 JSON'), true, bad.stdout);
+  assert.equal(bad.stdout.includes('一格都不用改'), false, bad.stdout);
+});
+
+test('长篇遇到只带字数目标的预设：那一格落不下，也不许被说成「已经就是这套」', () => {
+  wfEditBook((b) => { b.format = 'long'; delete b.target_words; });
+  const f = wfPresetFile('wf-only-target.json', { target_words: 5000 });
+  const j = JSON.parse(run('nw-workflow.mjs', ['check', f, '--json'], 0).stdout);
+  assert.equal(j.ok, true, '文件本身没毛病，是这本书落不下 —— 不许退成坏预设');
+  assert.equal(j.diff[0].blocked, NWWorkflow.LONG_NO_TARGET);
+  assert.equal(j.diff[0].changed, false);
+
+  const human = run('nw-workflow.mjs', ['check', f], 0).stdout;
+  assert.equal(human.includes('一格都不会动'), true, human);
+  assert.equal(human.includes('已经就是这套'), false, '落不下不等于已经对了：这句话会让作者以为不用管了');
+  // 那一格自己那一行也得说清为什么落不下：只有汇总那一句，作者看不出是哪一格的哪一句
+  const rowText = human.split('\n').find((l) => l.includes(NWWorkflow.FIELD_LABEL.target_words));
+  assert.ok(rowText && rowText.includes('预设要的是 5000 字'), rowText);
+  assert.ok(rowText.includes(NWWorkflow.LONG_NO_TARGET), rowText);
+  assert.equal(rowText.includes('（要改）'), false, '落不下的一格不许标「要改」');
+
+  // 同一份预设配短篇书就落得下，这一格不许被误拦
+  wfShortBook();
+  const fits = JSON.parse(run('nw-workflow.mjs', ['check', f, '--json'], 0).stdout);
+  assert.equal(fits.diff[0].blocked, null);
+  assert.equal(fits.diff[0].changed, true);
+});
+
+test('预设把短篇换成长篇：那一格的字数目标要说成「要改」，不许留在库里当暗数', () => {
+  wfShortBook();
+  const f = wfPresetFile('wf-to-long.json', { format: 'long' });
+  const j = JSON.parse(run('nw-workflow.mjs', ['check', f, '--json'], 0).stdout);
+  assert.deepEqual(j.diff.map((r) => r.key), ['format', 'target_words'], JSON.stringify(j.diff));
+  assert.equal(j.diff[1].clears, true, JSON.stringify(j.diff[1]));
+  assert.equal(j.diff[1].changed, true, '这一格会被写库（写成空），报「不变」就是把动了的说成没动');
+  assert.deepEqual(j.fields, { format: 'long' }, '清掉不是预设带来的格，不许混进 fields 里冒充来源');
+
+  const human = run('nw-workflow.mjs', ['check', f], 0).stdout;
+  assert.equal(human.includes(`${NWWorkflow.FIELD_LABEL.target_words}：6000 字 → （清掉）`), true, human);
+  // 「这份预设不带 …… 你书里那几格照旧」那一行里不许出现被清走的那一格：
+  // 一句「照旧」配一行「要清掉」，读的人只会记住一句，而两句是相反的。
+  const missingLine = human.split('\n').find((l) => l.includes('这份预设不带：'));
+  assert.ok(missingLine, human);
+  assert.equal(missingLine.includes(NWWorkflow.FIELD_LABEL.target_words), false, missingLine);
+
+  // 不该清的别清：同一本书配只动禁词组的预设，逐格清单里不许冒出这一格
+  const only = wfPresetFile('wf-only-pack.json', { stylePack: { enabled: true, disabled: [], extraBanned: [] } });
+  const j2 = JSON.parse(run('nw-workflow.mjs', ['check', only, '--json'], 0).stdout);
+  assert.deepEqual(j2.diff.map((r) => r.key), ['stylePack'], JSON.stringify(j2.diff));
+});
+
+test('没有可对照的书：只判这份预设能不能用，不编一张逐格清单', () => {
+  const box = fs.mkdtempSync(path.join(os.tmpdir(), 'nw-wf-nobook-'));
+  const f = wfPresetFile('wf-nobook.json', { format: 'short', target_words: 8000 });
+  const j = JSON.parse(run('nw-workflow.mjs', ['check', f, '--json'], 0, box).stdout);
+  assert.equal(j.ok, true);
+  assert.equal(j.book, null);
+  assert.equal(j.diff, null, '没有书却报「会改这两格」，那个数是从哪儿来的');
+  const human = run('nw-workflow.mjs', ['check', f], 0, box).stdout;
+  assert.equal(human.includes('没有可对照的书'), true, human);
+  assert.equal(human.includes('一格都不用改'), false, '根本没有对照过任何一本书，那句是从哪儿算出来的');
+  fs.rmSync(box, { recursive: true, force: true });
 });

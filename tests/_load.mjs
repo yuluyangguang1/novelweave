@@ -24,6 +24,7 @@ export const NWStyleFit = (globalThis.NWStyleFit = require('../src/core/stylefit
 export const NWStateScope = (globalThis.NWStateScope = require('../src/core/statescope.js'));
 export const NWVolume = (globalThis.NWVolume = require('../src/core/volumes.js'));
 export const NWRelationGraph = (globalThis.NWRelationGraph = require('../src/core/relationgraph.js'));
+export const NWWorkflow = (globalThis.NWWorkflow = require('../src/core/workflow.js'));
 export const NWRules = (globalThis.NWRules = require('../src/core/rules.js'));
 export const NWStory = (globalThis.NWStory = require('../src/core/story.js'));
 export const NWProject = (globalThis.NWProject = require('../src/core/project.js'));

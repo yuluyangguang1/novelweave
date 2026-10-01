@@ -53,6 +53,9 @@ test('装到探测得到的 agent，且每个 skill 自包含可运行', () => {
   assert.ok(fs.existsSync(path.join(qoderSkill, 'scripts', 'nw-continuity.mjs')), 'scripts 未随附');
   assert.ok(fs.existsSync(path.join(qoderSkill, 'src', 'core', 'rules.js')), 'src/core 未随附');
   assert.ok(fs.existsSync(path.join(qoderSkill, 'schemas', 'story-bible.v1.json')), 'schemas 未随附');
+  // SKILL.md 里写了 nw-workflow.mjs 与那份预设格式，装出来必须真带着 —— 否则 agent 手上只有一句读不懂的话
+  assert.ok(fs.existsSync(path.join(qoderSkill, 'scripts', 'nw-workflow.mjs')), '工作流预设的 CLI 没随附，SKILL.md 里那行命令跑不起来');
+  assert.ok(fs.existsSync(path.join(qoderSkill, 'schemas', 'workflow.v1.json')), '预设的对外格式声明没随附');
 
   // Hermes 要 category 两级嵌套 + 顶层 version
   const hermesSkill = path.join(home, '.hermes', 'skills', 'writing', 'novelweave');

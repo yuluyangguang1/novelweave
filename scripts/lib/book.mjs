@@ -28,6 +28,7 @@ export const NWPitch = (globalThis.NWPitch = require(core('pitch.js')));
 export const NWStyleFit = (globalThis.NWStyleFit = require(core('stylefit.js')));
 export const NWVolume = (globalThis.NWVolume = require(core('volumes.js')));
 export const NWRelationGraph = (globalThis.NWRelationGraph = require(core('relationgraph.js')));
+export const NWWorkflow = (globalThis.NWWorkflow = require(core('workflow.js')));
 export const NWRules = (globalThis.NWRules = require(core('rules.js')));
 export const NWStory = (globalThis.NWStory = require(core('story.js')));
 export const NWProject = (globalThis.NWProject = require(core('project.js')));

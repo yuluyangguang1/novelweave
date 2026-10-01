@@ -61,6 +61,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 | "这章读着像 AI 写的" | `nw-prose.mjs probe` + `packet`，按引擎清单交接；本机没外部引擎就 `nw-prose.mjs lint`（见 `references/prose-handoff.md`） |
 | "这个选题行不行 / 换个题材试试" | `nw-pitch.mjs score`（打分四维 + 弱项怎么改，见 `references/pitch-card.md`）；要问评分标准本身先 `nw-pitch.mjs rubric` |
 | "写着写着不像这本书了 / 我的笔法是哪几章定的" | `nw-style.mjs <bookDir>`（四格指纹 + 逐章偏离 + 注入预览，见 `references/style-fingerprint.md`）；没勾基准就先问作者勾哪几章，别替他挑 |
+| "把我这套设置搬到另一本书 / 别人给的预设能不能用" | `nw-workflow.mjs check <preset.json> [bookDir]`（先过闸、再说会改哪几格，见 `references/workflow-preset.md`）；要打包就 `nw-workflow.mjs pack`，**写库仍走网页那张逐格确认框** |
 | "把这本书导出给织文网页 / 从网页备份导入" | `references/io.md` |
 | "这是什么格式？字段什么意思" | 读 `references/schema-v1.md` |
 
@@ -206,6 +207,9 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 | `nw-style.mjs [bookDir]` | 作者问「写着写着不像这本书了」：四格指纹 + 逐章偏离 + 注入预览 | **恒不阻断：0** / 2 用法 / 5 读盘错 |
 | `nw-style.mjs keys` | 报告漂移前先讲清那四个数各是什么 | 0 |
 | `nw-style.mjs anchor [bookDir] --set ch-001,ch-002` \| `--clear` | 作者说出基准是哪几章（别替他挑）；`--clear` 删键 | 0 / 2 章 id 不在书里（拒绝时不落盘）/ 5 |
+| `nw-workflow.mjs pack [bookDir] [--name X] [--out f.json]` | 作者要把这本书调顺的那几格发给别人；打完立刻过自己的闸 | 0 / **1 自己打出来的包自己都不认** / 2 找不到书 / 5 |
+| `nw-workflow.mjs check <preset.json> [bookDir]` | 收到别人的预设：先判能不能用，再逐格说会改哪几格。**只看不改** | 0 / **1 不能用（原因逐条点名）** / 2 用法 / 5 读不到文件 |
+| `nw-workflow.mjs keys` | 讲清哪三格能在作者之间搬、哪几格明确不走 | 0 |
 
 统一约定：`--json` 走 stdout 纯结果，人类日志走 stderr。**不要解析 stderr。**
 
@@ -220,6 +224,7 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 | 字数用 `content.length` | 用 `NWText.countWords`（中文按字、标点空白不计） |
 | 手填 `x-words` / `_derived` | 派生字段只能由脚本重算 |
 | 给未建档的人名直接写 `character.status` | 门禁会以"未登记实体"拒绝；先建档 |
+| 预设导入被拒时替作者删掉认不出的键再导一次 | 把 core 那几句原话逐条念给他：删键等于把"我们这版没实现"说成"你这份写错了" |
 
 ## Output Contract（每次交付必须回报这六项）
 

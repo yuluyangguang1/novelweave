@@ -1532,3 +1532,151 @@ test('侧栏章节列表的排序只有一处：界面选档、db 排序，切�
   assert.doesNotMatch(sortCss, /--bg-input/, '这条压在章节行上面，半透明的底挡不住底下滚过的行');
   assert.match(read('src/styles/app.css'), /\.chapter-item-when\s*\{/, '日期那一格没有样式，会把行挤歪');
 });
+
+/**
+ * 工作流预设（V 批）。这一族的风险与别处不同：预设是**别人写的设置**，
+ * 界面一旦自己认值、自己拼补丁、自己写文件名，core 那份闸就变成一句摆设 ——
+ * 于是「分享者关掉了两组禁词」与「接收者以为已经生效」可以同时对不上。
+ * 四条守卫各盯一面：清单只有一处、补丁只由 core 算、外部形状声明与代码同数、假 DOM 下真画得出行。
+ */
+const wfFns = () => {
+  const js = read('src/app.js');
+  const pick = (name, async_) =>
+    js.match(new RegExp(`\\n${async_ ? 'async ' : ''}function ${name}\\([\\s\\S]*?\\n\\}`))?.[0] || '';
+  const fns = {
+    panel: pick('showWorkflowPanel', true),
+    rows: pick('workflowRows'),
+    apply: pick('showWorkflowApplyModal'),
+    imported: pick('workflowImportPreset', true),
+    builtin: pick('workflowApplyBuiltin'),
+    exporter: pick('showWorkflowExportModal'),
+    notShared: pick('workflowNotShared'),
+  };
+  const missing = Object.entries(fns).filter(([, v]) => !v).map(([k]) => k);
+  assert.deepEqual(missing, [], `app.js 里抠不出工作流的这些函数：${missing.join('、')}（守卫的形状变了）`);
+  return { js, all: Object.values(fns).join('\n'), ...fns };
+};
+
+test('哪几格算工作流只有 NWWorkflow 一处清单，界面不写第二份', () => {
+  const { js, all } = wfFns();
+  assert.match(all, /NWWorkflow\.FIELDS/, '格名清单不是 core 给的，加一格就得改两个文件');
+  assert.match(all, /NWWorkflow\.BUILTINS/, '随货预设不是 core 给的，内置就变成界面自己编的');
+  assert.match(all, /NWWorkflow\.NOT_SHARED/, '「为什么不共享基准章」那句是界面自己写的，两处会各说各的');
+  assert.match(all, /NWWorkflow\.fileName\(/, '导出的文件名不是 core 那一个出处，界面与 CLI 就会导出两种名字');
+  // 界面既不认值也不认键：这四类字面量一旦出现，就是第二份判据
+  for (const banned of ['target_words', 'styleAnchor', 'stylePack', "'long'", "'short'"]) {
+    assert.equal(all.includes(banned), false, `界面里出现了「${banned}」—— 这一格的认法住在 NWWorkflow，不在这里`);
+  }
+  assert.equal(js.includes('novelweave-workflow-'), false, '文件名前缀是 core 的 fileName 给的，抄第二份就会导出两种名字');
+  for (const b of NWWorkflow.BUILTINS) {
+    assert.equal(js.includes(b.name), false, `内置预设名「${b.name}」被抄进了界面`);
+  }
+  assert.match(js, /workflow:\s*showWorkflowPanel,/, '页签在 TABS 里而面板没挂上：这一点就是「切到章节去了」');
+});
+
+test('预设写库只交 core 算出来的补丁，且过完闸才谈应用', () => {
+  const { all, apply, imported, builtin } = wfFns();
+  assert.match(all, /NWWorkflow\.patchOf\(APP\.novel, n\.fields\)/, '不是整句就是第二份字段清单 —— 写死一格也照样能过');
+  assert.match(apply, /NWWorkflow\.diffFields\(APP\.novel, n\.fields\)/, '「会不会变」是界面自己比的，core 那个 changed 成了摆设');
+  assert.equal(apply.includes('r.changed'), true, '确认框得按 core 的 changed 说话');
+  for (const [name, src] of [['导入', imported], ['内置', builtin]]) {
+    assert.match(src, /if \(!n\.ok\)/, `${name}那一路没看过闸就把 fields 交出去，坏预设会被应用半份`);
+  }
+  assert.doesNotMatch(all, /novels\.update\(APP\.novel\.id, \{\s*(?:format|target_words|stylePack)/, '手挑字段写库：core 的 changed 判定就被绕过了');
+  assert.doesNotMatch(all, /\.filter\(\(r\) => r\.key ===/, '界面按格名自己筛一遍，等于不信任 diffFields');
+  assert.doesNotMatch(all, /style="color/, '箭头那抹红是几何，该住 app.css，不该内联在拼串里');
+  // 箭头是「这一格会写进库」的记号。core 说落不下的那一格不许借用它：画了箭头又没写，
+  // 与「说已落地其实没接通」是同一件事，而且这回连「没接通」都看不出来。
+  const bIdx = apply.indexOf('r.blocked ?');
+  const cIdx = apply.indexOf(': r.changed ? ` → <b>');
+  assert.ok(bIdx !== -1, '界面对 core 报的「落不下」没有反应，那一格会被画成要改');
+  assert.ok(cIdx !== -1 && bIdx < cIdx, '箭头那一支要排在「落不下」之后，否则落不下的那一格照样画箭头');
+  // 那一格不能只画一句「预设要的是 X」：原因也得在场，否则作者只看到「要 5000 字」，不知道为什么要不上
+  assert.match(apply, /\$\{esc\(r\.blocked\)\}/, '确认框没把 core 那句原因画出来，落不下就成了没头没尾的一句话');
+  // 「没动」的两种原因也要说得分开：本来就是这套 / 这一格在这本书里落不下
+  assert.match(apply, /blocked\.length \? `一格都没动：\$\{blocked\[0\]\.blocked\}`/, '落不下却被报成「已经就是这套工作流」，作者以为不用改了');
+  // 反方向那一格（换长篇时要清掉的字数目标）由 core 的 changed 带着走箭头，
+  // 界面要是为它另开一支，就是第二份「这一格会不会写库」的判断。
+  assert.equal(apply.includes('clears'), false, '界面自己认了「清掉」这一类行，core 那份 changed 就不再是唯一的口径');
+});
+
+test('两份 schema 与建书弹窗都对着 core 那几个数，谁改了另一个人就得红', () => {
+  const wf = JSON.parse(readFileSync(repoPath('schemas', 'workflow.v1.json'), 'utf8'));
+  const bible = JSON.parse(readFileSync(repoPath('schemas', 'story-bible.v1.json'), 'utf8'));
+  assert.deepEqual(Object.keys(wf.$defs.fields.properties).sort(), [...NWWorkflow.FIELDS].sort(),
+    'schema 里的可分享格与 NWWorkflow.FIELDS 不是同一份清单');
+  assert.equal(wf.additionalProperties, false, '顶层放开未知键：一份带新阶设置的文件过了 schema、却被 core 拒收，两处口径就分家了');
+  assert.equal(wf.$defs.fields.additionalProperties, false, 'schema 允许未知键，就等于承认「认不出的键照用半份」');
+  assert.equal(wf.$defs.fields.properties.stylePack.additionalProperties, false, '规则包子键放开未知键，core 那句「认不出的子键」就成了一句话');
+  assert.deepEqual(wf.properties.version.enum, [NWWorkflow.FILE_VERSION]);
+  assert.deepEqual([...wf.$defs.fields.properties.format.enum].sort(), [...NWWorkflow.FORMATS].sort());
+  assert.equal(wf.$defs.fields.properties.target_words.minimum, NWWorkflow.TARGET_MIN,
+    '预设的下限与书存档的下限是同一个数，两处不同就会出现「导得出去、进不来」');
+  assert.equal(bible.$defs.book.properties.target_words.minimum, NWWorkflow.TARGET_MIN,
+    'book 那一份的下限变了，预设这边也得跟着变');
+  assert.deepEqual([...bible.$defs.book.properties.format.enum].sort(), [...NWWorkflow.FORMATS].sort());
+  // 界面上填得出的篇幅档，就是 core 认的那几个值
+  const sel = read('src/app.js').match(/<select[^>]*id="inp-novel-format"[\s\S]*?<\/select>/)?.[0] || '';
+  assert.ok(sel, '建书弹窗里没有篇幅档那个下拉，这条守卫的形状变了');
+  const opts = [...sel.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]).sort();
+  assert.deepEqual(opts, [...NWWorkflow.FORMATS].sort(), '下拉里的档位与 NWWorkflow.FORMATS 对不上：预设会被自己的界面判成坏值');
+});
+
+test('假 DOM 下 workflowRows 真画得出行，多的那一格不许出现', () => {
+  const { rows } = wfFns();
+  const run = new Function('esc', `${rows} return workflowRows;`)(NWText.esc);
+  const html = run({ format: 'short', target_words: 8000, stylePack: { enabled: true, disabled: ['aphorism'], extraBanned: [] } });
+  assert.deepEqual([...html.matchAll(/class="workflow-row"/g)].length, NWWorkflow.FIELDS.length, '行数不是三格');
+  assert.equal(html.indexOf('篇幅档') < html.indexOf('全篇字数目标'), true, html);
+  assert.ok(html.includes('8000 字'), html);
+  assert.ok(html.includes('关掉 1 组：段尾金句'), html);
+  // 不该画的别画：预设没带的格给一句「没设」，混进来的外来键一行都不许出现
+  const sparse = run({ format: 'long' });
+  assert.equal(sparse.includes('全篇字数目标'), true, '三格都得有一行，作者要知道哪格没设');
+  assert.ok(sparse.includes(NWWorkflow.valueText('target_words', undefined)), sparse);
+  assert.equal(sparse.includes('ch_7'), false, '把 styleAnchor 之类的外来键画进来了');
+  const css = read('src/styles/app.css');
+  for (const cls of ['workflow-row', 'workflow-row-label', 'workflow-row-value', 'workflow-preset', 'workflow-bar', 'workflow-reasons']) {
+    assert.match(css, new RegExp(`\\.${cls}\\s*\\{`), `.workflow 系「${cls}」没有样式，行会被挤歪`);
+  }
+  assert.match(css, /\.workflow-row\.is-changed \.workflow-row-value b\s*\{/, '变了的那一格没有颜色，作者看不出要改的是哪几行');
+});
+
+test('nw-workflow.mjs 只搬运 core 的判据，而且它只看不改', () => {
+  const cli = read('scripts/nw-workflow.mjs');
+  assert.match(cli, /NWWorkflow\.FIELDS\.map/, '可分享的格不是现取的，加一格 CLI 就少一格');
+  assert.match(cli, /NWWorkflow\.TARGET_MIN/, 'CLI 自己写一份下限，两处就会各判各的');
+  assert.match(cli, /NWWorkflow\.NOT_SHARED/, '「为什么不共享基准章」那句变成 CLI 自己编的第二份');
+  assert.match(cli, /NWWorkflow\.pack\(input\.book/, '打包不是 core 那个 pack，导出的形状就会与过闸的口径分家');
+  assert.match(cli, /NWWorkflow\.normalize\(preset\)/, '打完不自检一遍，「导得出去、进不来」就没人看得见');
+  assert.match(cli, /NWWorkflow\.diffFields\(input\.book, n\.fields\)/, '「会改哪几格」是 CLI 自己比的，与界面那张框就不是同一个答案');
+  assert.match(cli, /NWWorkflow\.fileName\(/, '文件名前缀是 core 给的，抄第二份就会导出两种名字');
+  // 那个下限只有一个出处：CLI 要念出来，也只能从 core 念
+  assert.equal(cli.includes(String(NWWorkflow.TARGET_MIN)), false, 'CLI 里出现了裸数字，它就是第二份下限');
+  // 只看不改：写库那一路要逐格确认，命令行没有作者的点头
+  assert.doesNotMatch(cli, /book\.json/, 'CLI 直接写书存档：那张逐格确认框就被绕过去了');
+  assert.doesNotMatch(cli, /novels\.update|writeJsonAtomic\(path\.join\(bookDir/, 'CLI 落盘到某本书，退出码再对也是先斩后奏');
+  // 坏预设不许配一张逐格清单：读的人只记得住清单
+  assert.match(cli, /n\.ok && input \? NWWorkflow\.diffFields/, '过不了闸也照样列「会改这两格」，原因就是没人看了');
+  assert.match(cli, /blockedRows\.length/, '落不下那一格被报成「已经就是这套工作流」，作者以为不用管了');
+  // 那句「已经就是这套」必须有逐格清单当依据：预设没过闸、或根本没有对照的书时，
+  // 它凭什么说这本书是对的
+  assert.match(cli, /const noneLine = !rows \? ''/, '没有逐格清单也照样输出「一格都不用改」');
+  // 反方向那一格：它会被清走，所以不许出现在「你书里那几格照旧」里
+  assert.match(cli, /!clearing\.has\(k\)/, '一句「照旧」配一行「要清掉」，读的人只会记住一句，而两句是相反的');
+});
+
+test('工作流预设这条路在技能文档里找得到，文档里的数不出自文档自己', () => {
+  const skill = read('skills/novelweave/SKILL.md');
+  assert.match(skill, /nw-workflow\.mjs check/, 'SKILL.md 没点这份 CLI，agent 手上就只有网页那一条路');
+  assert.match(skill, /nw-workflow\.mjs pack/, '分享的那一半（从磁盘上的书打包）没人写');
+  assert.match(skill, /references\/workflow-preset\.md/, '预设文件的形状没有参考文档，读到外来预设就只能猜');
+  assert.match(skill, /只看不改/, '文档没交代 CLI 不写库，agent 会以为 check 就把它应用了');
+  const ref = read('skills/novelweave/references/workflow-preset.md');
+  assert.ok(ref.includes(NWWorkflow.NOT_SHARED[0].why), '为什么不共享基准章那句要出自 core，不是文档自己另写一遍');
+  assert.equal(ref.includes(String(NWWorkflow.TARGET_MIN)), false, '文档写死了下限，core 一改它就悄悄过期');
+  assert.match(ref, /book\.target_words\.minimum/, '下限要指向那一个出处');
+  assert.match(ref, /`clears`/, '文档只写了「落不下」那一面，反方向（换长篇时清掉目标）没人说，读到「照旧」的人会以为那个数还在');
+  assert.match(read('README.md'), /schemas\/workflow\.v1\.json/, 'README 的格式定义少了一份对外格式，作者与 agent 都不知道有它');
+  assert.match(read('schemas/workflow.v1.json'), /src\/core\/workflow\.js/, 'schema 没说判据在哪，读到它的人只会去猜另一份实现');
+});

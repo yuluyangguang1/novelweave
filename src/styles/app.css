@@ -347,6 +347,19 @@ select.settings-select { cursor: pointer; }
 .chapter-sort .settings-hint { flex-basis: 100%; font-size: .62rem; }
 .chapter-item-when { font-family: var(--mono); font-size: .6rem; color: var(--text-dim); white-space: nowrap; }
 
+/* 工作流预设：一行一格，值在右、名在左；确认框里只有会变那一行把值染成印泥红 */
+.workflow-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 3px 0; font-size: .68rem; }
+.workflow-row-label { color: var(--text-dim); white-space: nowrap; }
+.workflow-row-value { text-align: right; color: var(--mid); }
+.workflow-row-value em { font-style: normal; color: var(--text-dim); }
+.workflow-row.is-changed .workflow-row-value b { color: var(--accent); font-weight: 600; }
+.workflow-preset { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-top: 8px; }
+.workflow-preset-name { font-size: .72rem; font-weight: 600; color: var(--mid); }
+.workflow-preset .btn { margin-top: 8px; }
+.workflow-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.workflow-bar .btn { font-size: .66rem; padding: 6px 12px; }
+.workflow-reasons { margin: 8px 0 0; padding-left: 18px; font-size: .68rem; color: var(--text-secondary); }
+
 .char-card {
   padding: 14px; border-bottom: 1px solid var(--border); cursor: pointer;
   transition: background .2s var(--ease);

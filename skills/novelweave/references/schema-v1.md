@@ -7,6 +7,9 @@
 双端共用实现：`src/core/bible.js` + `src/core/text.js`（浏览器与 Node 加载同一份代码，
 因此 Web 面板与 agent 脚本产出的字节必然一致，`sync.json` 的哈希才能互通）。
 
+这一份只管**一本书**。作者之间要搬的那几格设置是另一种文件（独立一份、不进 `.novelweave/`），
+见 `references/workflow-preset.md` 与 `schemas/workflow.v1.json`。
+
 ## 三条公理
 
 1. **正文用 Markdown + frontmatter，状态用 JSON。** 正文要给人读、要能被 agent 直接
