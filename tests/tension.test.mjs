@@ -292,15 +292,17 @@ test('minFormat：任一本算短篇就按短篇，全长篇、空清单、脏�
 
 // ═══════════════ Y 族：这一档有没有字数目标那一格 ═══════════════
 
-test('targetValue：这个数本身算不算一个目标 —— 下限含端点、字符串收回数字，其余一律算没设', () => {
+test('targetValue：这个数本身算不算一个目标 —— 上下限都含端点、字符串收回数字，其余一律算没设', () => {
   assert.equal(NWTension.targetValue(1000), 1000, '下限含端点：schema 写的是 minimum，不是 exclusiveMinimum');
   assert.equal(NWTension.targetValue('8000'), 8000, 'agent 手改 JSON 常把数写成字符串，落库前收回数字');
-  assert.equal(NWTension.targetValue(200000), 200000, '评分卡那边长篇的规划数可以很大');
-  for (const bad of [999, 0, -5000, 1500.5, '八千字', '', true, false, [], ['8000'], {}, new Date(1700000000000), null, undefined, NaN]) {
+  assert.equal(NWTension.targetValue(NWTension.TARGET_MAX), NWTension.TARGET_MAX, '上限含端点：schema 写的是 maximum');
+  for (const bad of [999, 0, -5000, 1500.5, '八千字', '', true, false, [], ['8000'], {}, new Date(1700000000000), null, undefined, NaN,
+    NWTension.TARGET_MAX * 10, 1.7e12]) {
     assert.equal(NWTension.targetValue(bad), null, `${JSON.stringify(bad)} 不该被当成一个字数目标`);
   }
-  // 后两条是 typeof 那道闸的工作，不是下限的工作：['8000'] 会被 Number 收成 8000，
-  // Date 收成 1.7 万亿 —— 只比下限的话它们都能混进来。
+  // 后三条是 typeof 与上下限几道闸的分工：['8000'] 会被 Number 收成 8000，Date 收成 1.7 万亿 ——
+  // 只比下限的话它们都能混进来；TARGET_MAX*10 是整数但出界，同样算没设。
+  // 评分卡里长篇的规划数不归这一句管：pitch.js 的 concept 那一路拿的是原值，从来不过 targetValue。
   assert.equal(NWTension.targetValue(NWTension.TARGET_MIN), NWTension.TARGET_MIN, '下限自己必须算合法');
 });
 
@@ -314,6 +316,8 @@ test('targetOf：长篇没有那一格，短篇也要先是个像样的数；库
   }
   assert.equal(NWTension.targetOf({ format: 'short', target_words: 500 }), null,
     '低于下限算没设：存进去就是一份过不了自己那份 schema 的存档');
+  assert.equal(NWTension.targetOf({ format: 'short', target_words: 200000 }), null,
+    '超出上限同样算没设：盐选约 5 万是自家承诺过的最贵档，十万只可能是手滑');
   assert.equal(NWTension.targetOf({ format: 'short' }), null);
   assert.equal(NWTension.targetOf(null), null, '残缺输入不许抛');
 });

@@ -138,6 +138,14 @@ test('字数目标只认正整数：字符串数字收，小数、零、负数�
   }
 });
 
+test('字数目标出上限也判坏，且说清是哪一头；上限自己放行', () => {
+  const over = W.normalize(preset({ format: 'short', target_words: W.TARGET_MAX * 10 }));
+  assert.equal(over.ok, false, JSON.stringify(over));
+  assert.match(over.bad[0].reason, /到 \d+ 之间的整数/, '理由要念出上下限这对数');
+  assert.equal(W.normalize(preset({ format: 'short', target_words: W.TARGET_MAX })).ok, true,
+    '上限含端点：schema 写的是 maximum，不是 exclusiveMaximum');
+});
+
 test('篇幅档只认那两个值，写了别的就照实说', () => {
   const n = W.normalize(preset({ format: 'medium' }));
   assert.equal(n.ok, false);

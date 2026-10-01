@@ -1614,6 +1614,10 @@ test('两份 schema 与建书弹窗都对着 core 那几个数，谁改了另一
     '预设的下限与书存档的下限是同一个数，两处不同就会出现「导得出去、进不来」');
   assert.equal(bible.$defs.book.properties.target_words.minimum, NWWorkflow.TARGET_MIN,
     'book 那一份的下限变了，预设这边也得跟着变');
+  assert.equal(wf.$defs.fields.properties.target_words.maximum, NWWorkflow.TARGET_MAX,
+    '上限同理：schema 收了个 core 不认的数，就是「过了 schema、过不了闸」');
+  assert.equal(bible.$defs.book.properties.target_words.maximum, NWWorkflow.TARGET_MAX,
+    'book 那一份的上限变了，预设这边也得跟着变');
   assert.deepEqual([...bible.$defs.book.properties.format.enum].sort(), [...NWWorkflow.FORMATS].sort());
   // 界面上填得出的篇幅档，就是 core 认的那几个值
   const sel = read('src/app.js').match(/<select[^>]*id="inp-novel-format"[\s\S]*?<\/select>/)?.[0] || '';
@@ -1646,6 +1650,7 @@ test('nw-workflow.mjs 只搬运 core 的判据，而且它只看不改', () => {
   const cli = read('scripts/nw-workflow.mjs');
   assert.match(cli, /NWWorkflow\.FIELDS\.map/, '可分享的格不是现取的，加一格 CLI 就少一格');
   assert.match(cli, /NWWorkflow\.TARGET_MIN/, 'CLI 自己写一份下限，两处就会各判各的');
+  assert.match(cli, /NWWorkflow\.TARGET_MAX/, 'CLI 自己写一份上限，两处就会各判各的');
   assert.match(cli, /NWWorkflow\.NOT_SHARED/, '「为什么不共享基准章」那句变成 CLI 自己编的第二份');
   assert.match(cli, /NWWorkflow\.pack\(input\.book/, '打包不是 core 那个 pack，导出的形状就会与过闸的口径分家');
   assert.match(cli, /NWWorkflow\.normalize\(preset\)/, '打完不自检一遍，「导得出去、进不来」就没人看得见');
@@ -1653,6 +1658,7 @@ test('nw-workflow.mjs 只搬运 core 的判据，而且它只看不改', () => {
   assert.match(cli, /NWWorkflow\.fileName\(/, '文件名前缀是 core 给的，抄第二份就会导出两种名字');
   // 那个下限只有一个出处：CLI 要念出来，也只能从 core 念
   assert.equal(cli.includes(String(NWWorkflow.TARGET_MIN)), false, 'CLI 里出现了裸数字，它就是第二份下限');
+  assert.equal(cli.includes(String(NWWorkflow.TARGET_MAX)), false, 'CLI 里出现了裸数字，它就是第二份上限');
   // 只看不改：写库那一路要逐格确认，命令行没有作者的点头
   assert.doesNotMatch(cli, /book\.json/, 'CLI 直接写书存档：那张逐格确认框就被绕过去了');
   assert.doesNotMatch(cli, /novels\.update|writeJsonAtomic\(path\.join\(bookDir/, 'CLI 落盘到某本书，退出码再对也是先斩后奏');
@@ -1855,6 +1861,8 @@ test('「这个数算不算一个目标」与「这一档有没有那一格」�
   };
   second(/TARGET_MIN\s*=\s*\d/, '下限被另写成一个字面量');
   second(/[<>]=?\s*(?:Tension\.)?TARGET_MIN/, '有人在自己这边比这个下限');
+  second(/TARGET_MAX\s*=\s*\d/, '上限被另写成一个字面量');
+  second(/[<>]=?\s*(?:Tension\.)?TARGET_MAX/, '有人在自己这边比这个上限');
   second(/Number\.isInteger\([^)]*target/i, '「得是整数」那一句被抄了第二遍');
   second(/isShort\([^)]*\)\s*&&[^&]*target/i, '问过档之后又自己判一次「这一档有没有目标」');
   second(/\.target_words\s*(?:\|\||\?|\s*>=\s*)/, '拿库行原值判有没有目标：这三处各判各的就是这么开始的');
@@ -1874,11 +1882,15 @@ test('目标那一格的六个读写点各自点名 core 那一句，绕过它�
     '两种入参混成一句：要么把长篇的规划数判死，要么把库里的遗留数当目标用');
 });
 
-test('下限只有一个数：workflow 那份是别名，schema 与 CLI 念的都是它', () => {
+test('上下限只有一对数：workflow 那份是别名，schema 与 CLI 念的都是它', () => {
   assert.equal(NWWorkflow.TARGET_MIN, NWTension.TARGET_MIN,
     '不是同一个数就是抄了一遍下限：core 一改，预设那道闸还在按旧的拦');
+  assert.equal(NWWorkflow.TARGET_MAX, NWTension.TARGET_MAX,
+    '上限抄了第二份，core 一改，预设那道闸还在按旧的拦');
   assert.equal(NWTension.TARGET_MIN, 1000, '这个数一改，两份 schema 的 minimum 与全部夹具都要跟着想清楚');
+  assert.equal(NWTension.TARGET_MAX, 100000, '这个数一改，两份 schema 的 maximum 与全部夹具都要跟着想清楚');
   assert.match(read('scripts/nw-workflow.mjs'), /NWWorkflow\.TARGET_MIN/, 'CLI 自己写一份下限');
+  assert.match(read('scripts/nw-workflow.mjs'), /NWWorkflow\.TARGET_MAX/, 'CLI 自己写一份上限');
 });
 
 test('Y 的规格写进了文档，且点名 core 那两句', () => {
@@ -1890,6 +1902,21 @@ test('Y 的规格写进了文档，且点名 core 那两句', () => {
   assert.match(wf, /`NWTension\.targetOf`/, '预设文档没点名打包那一句，加一档时它会跟着抄一份门槛');
   const schema = read('skills/novelweave/references/schema-v1.md');
   assert.match(schema, /`NWTension\.TARGET_MIN`/, 'schema 文档里的下限没点名出处');
+  assert.match(schema, /`NWTension\.TARGET_MAX`/, 'schema 文档里的上限没点名出处');
+});
+
+// ═══════════════ C 族：模型输出的残缺不许裸抛 ═══════════════
+
+test('parseConceptJSON 的闸只认清洗过的清单，残缺元素不许滑到 .slice 才炸', () => {
+  const llm = read('src/core/llm.js');
+  assert.match(llm, /const characters = objsOf\(j\.characters\)/,
+    '闸读的是原数组的话，[null] 会过了闸再在 .name 上 TypeError');
+  assert.match(llm, /!characters\.length/, '缺人物得红在那句人话上，不是 undefined 的 TypeError');
+  assert.match(llm, /梗概缺少人物/, '缺人物的报错要能说出口，modal 才好把「请重试」递给作者');
+  for (const key of ['chapters', 'world', 'volumes']) {
+    assert.match(llm, new RegExp(`objsOf\\(j\\.${key}\\)`),
+      `${key} 还是原数组：残缺元素会在同一个函数里换个门再炸一次`);
+  }
 });
 
 // ═══════════════ Z 族：那一档对人叫什么 ═══════════════

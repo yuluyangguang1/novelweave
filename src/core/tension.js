@@ -197,22 +197,31 @@
   }
 
   /**
-   * 字数目标的下限。**这个数不是这儿首创**：它写在 schemas/story-bible.v1.json 与
-   * schemas/workflow.v1.json 的 `target_words.minimum` 里，也就是「这一格什么算合法」那份声明；
-   * 守卫拿那两份 schema 对着它核。低于下限的数（和不是整数的数）等于没设 ——
+   * 字数目标的上下限。**这两个数不是这儿首创**：它们写在 schemas/story-bible.v1.json 与
+   * schemas/workflow.v1.json 的 `target_words.minimum` / `maximum` 里，也就是「这一格什么算合法」
+   * 那份声明；守卫拿那两份 schema 对着它们核。出界的数（和不是整数的数）等于没设 ——
    * 存进去会导出一份过不了自己 schema 的书，读出来会画出一条谁都算不出的进度条。
    */
   const TARGET_MIN = 1000;
+
+  /**
+   * 上限的数取十万：自家承诺过的最贵短篇平台档是「盐选约 50000」，十倍于此只可能是
+   * 手滑（多敲一个 0）。长篇没有这一格（建档留空、换档清走），所以这个上限不挡长篇 ——
+   * 评分卡里长篇的规划数也不打这里过（pitch.js 的 concept 那一路拿的是原值）。
+   */
+  const TARGET_MAX = 100000;
 
   /**
    * 「这一格里躺着一个像样的字数目标吗」—— 只问这个数本身，**不问哪一档**。
    * 问它的两处都知道档是另一回事：预设过闸要按这份文件写的数判它合不合法，
    * 逐格 diff 要问库行里那个数还躺着没有（长篇的库里也可能躺着遗留的一个，那正是清走它的依据）。
    * 布尔与对象不许靠「能转成数」混进来：Number(true) 是 1，那就成了「目标 1 字」。
+   * 上下限一起问：schema 只收这一段里的整数，出界的数（哪怕当初真存进去了）
+   * 本来就哪都画不出来 —— 进度条分母是它、导出桥过不了自己那份 schema。
    */
   function targetValue(raw) {
     const n = (typeof raw === 'string' || typeof raw === 'number') ? Number(raw) : NaN;
-    return Number.isInteger(n) && n >= TARGET_MIN ? n : null;
+    return Number.isInteger(n) && n >= TARGET_MIN && n <= TARGET_MAX ? n : null;
   }
 
   /**
@@ -284,7 +293,7 @@
   return {
     PACK_VERSION, QUOTAS, CHAPTER_RANGE, HOOK_LABEL, rangeLabel,
     FORMATS, DEFAULT_FORMAT, formatKey, fmtOf, minFormat, FORMAT_LABEL, formatLabel,
-    TARGET_MIN, targetValue, targetOf,
+    TARGET_MIN, TARGET_MAX, targetValue, targetOf,
     dialogueSpans, stats, hookKind, tailOf, isShort, quotaFor, chapterRange, tally, promptBlock,
   };
 });

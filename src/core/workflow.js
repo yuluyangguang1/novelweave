@@ -50,11 +50,13 @@
   const formatLabel = Tension.formatLabel;
 
   /**
-   * 字数目标的下限。**不在这里定**：出处是 `NWTension.TARGET_MIN`（那一份又对着 schemas
-   * 的 `target_words.minimum` 核）。这里是别名，因为打包、过闸、逐格 diff 与 CLI 那句说明
-   * 都要念同一个数 —— 抄一份就意味着 core 改了下限而预设那边还在按旧的拦。
+   * 字数目标的上下限。**不在这里定**：出处是 `NWTension.TARGET_MIN` / `TARGET_MAX`
+   * （那两份又对着 schemas 的 `target_words.minimum` / `maximum` 核）。这里是别名，
+   * 因为打包、过闸、逐格 diff 与 CLI 那句说明都要念同一对数 —— 抄一份就意味着
+   * core 改了界而预设那边还在按旧的拦。
    */
   const TARGET_MIN = Tension.TARGET_MIN;
+  const TARGET_MAX = Tension.TARGET_MAX;
 
   const FIELD_LABEL = {
     format: '篇幅档',
@@ -161,7 +163,7 @@
         const raw = src.target_words;
         const n = Tension.targetValue(raw);
         if (n === null) {
-          out.bad.push({ key, reason: `字数目标得是 ${TARGET_MIN} 以上的整数（与书存档同一个下限），这份写的是「${String(raw)}」` });
+          out.bad.push({ key, reason: `字数目标得是 ${TARGET_MIN} 到 ${TARGET_MAX} 之间的整数（与书存档同一套上下限），这份写的是「${String(raw)}」` });
           continue;
         }
         out.fields.target_words = n;
@@ -289,7 +291,7 @@
 
   return {
     WORKFLOW_VERSION, KIND, FILE_VERSION, FIELDS, NOT_SHARED, FORMATS, FIELD_LABEL, PACK_KEYS, BUILTINS,
-    TARGET_MIN, LONG_NO_TARGET, CLEAR_NO_TARGET,
+    TARGET_MIN, TARGET_MAX, LONG_NO_TARGET, CLEAR_NO_TARGET,
     pack, normalize, diffFields, patchOf, fileName, packSummary, valueText, normalizePack, groupIds,
   };
 });

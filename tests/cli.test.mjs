@@ -742,12 +742,13 @@ test('nw-workflow keys：三格、下限与「为什么不共享基准章」都�
   assert.deepEqual(j.fields.map((f) => f.key), NWWorkflow.FIELDS, 'CLI 自己数了一遍可分享的格');
   assert.deepEqual(j.fields.map((f) => f.label), NWWorkflow.FIELDS.map((k) => NWWorkflow.FIELD_LABEL[k]));
   assert.equal(j.targetMin, NWWorkflow.TARGET_MIN, 'CLI 里抄了第二份下限');
+  assert.equal(j.targetMax, NWWorkflow.TARGET_MAX, 'CLI 里抄了第二份上限');
   assert.deepEqual(j.notShared, NWWorkflow.NOT_SHARED);
   assert.equal(j.groups.length, NWStylePack.GROUPS.length, '禁词组清单不是现取的');
   assert.deepEqual(j.builtins.map((b) => b.name), NWWorkflow.BUILTINS.map((b) => b.name));
 
   const human = run('nw-workflow.mjs', ['keys'], 0).stdout;
-  assert.equal(human.includes(`下限：${NWWorkflow.TARGET_MIN} 字`), true, '那个数要能说出口');
+  assert.equal(human.includes(`上下限：${NWWorkflow.TARGET_MIN} 到 ${NWWorkflow.TARGET_MAX} 字`), true, '那对数要能说出口');
   assert.equal(human.includes(NWWorkflow.NOT_SHARED[0].why), true, '为什么不共享基准章那句得出自 core，界面与 CLI 各写一遍就会各说各的');
 });
 

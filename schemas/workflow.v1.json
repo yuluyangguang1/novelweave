@@ -21,7 +21,7 @@
       "description": "可分享的三格。styleAnchor 故意不在这里：它记的是这本书里若干章的身份证，换一本书那些 id 就指不到东西",
       "properties": {
         "format": { "type": "string", "enum": ["long", "short"], "description": "织物规格，与 story-bible.v1.json 的 book.format 同一家长" },
-        "target_words": { "type": "integer", "minimum": 1000, "description": "全篇字数目标，只在短篇有意义（长篇建档那一路把它留空）。下限与 book.target_words 同一个数，两处不同就是 bug" },
+        "target_words": { "type": "integer", "minimum": 1000, "maximum": 100000, "description": "全篇字数目标，只在短篇有意义（长篇建档那一路把它留空）。上下限与 book.target_words 同一对数，两处不同就是 bug" },
         "stylePack": {
           "type": "object",
           "additionalProperties": false,

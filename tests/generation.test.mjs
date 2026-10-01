@@ -497,7 +497,7 @@ test('AI 长篇起书 prompt：带想法 / 卷数 / 世界与卷纲要求', () =
 });
 
 test('parseConceptJSON：world 与 volumes 一并解析（长篇骨架）', () => {
-  const raw = '```json\n{"title":"长篇","logline":"x","characters":[],"world":[{"name":"青雾山","content":"大雾"}],"volumes":[{"title":"卷一","summary":"出山"}],"chapters":[{"title":"第一章","beat":"出场"}]}\n```';
+  const raw = '```json\n{"title":"长篇","logline":"x","characters":[{"name":"沈砚","role":"主角"}],"world":[{"name":"青雾山","content":"大雾"}],"volumes":[{"title":"卷一","summary":"出山"}],"chapters":[{"title":"第一章","beat":"出场"}]}\n```';
   const c = NovelLLM.parseConceptJSON(raw);
   assert.equal(c.world.length, 1);
   assert.equal(c.world[0].name, '青雾山');
@@ -611,6 +611,21 @@ test('parseConceptJSON：容忍代码块围栏与前后废话', () => {
 test('parseConceptJSON：缺书名或缺章节必须拒绝，不能带病建档', () => {
   assert.throws(() => NovelLLM.parseConceptJSON('{"title":"只有书名"}'), /章节/);
   assert.throws(() => NovelLLM.parseConceptJSON('我觉得这个故事不错'), /JSON/);
+});
+
+test('parseConceptJSON：缺人物必须拒绝、残缺元素不许裸抛，说是 TypeError 不如说清缺什么', () => {
+  const chs = '"chapters":[{"title":"第一章","beat":"拍点"}]';
+  // characters 缺失 / 空表 / 全是残缺元素，三样都得红在那句「缺人物」上 ——
+  // 以前前两样里的第一样会一路滑到 .slice 才 TypeError，第三样会在 .name 上 TypeError
+  assert.throws(() => NovelLLM.parseConceptJSON(`{"title":"有书名",${chs}}`), /人物/);
+  assert.throws(() => NovelLLM.parseConceptJSON(`{"title":"有书名","characters":[],${chs}}`), /人物/);
+  assert.throws(() => NovelLLM.parseConceptJSON(`{"title":"有书名","characters":[null,3],"beat":1,${chs}}`), /人物/);
+  // 残缺元素混在好元素里：滤掉残的，好的照收
+  const mixed = NovelLLM.parseConceptJSON(`{"title":"有书名","characters":[null,{"name":"李四"}],"world":[3,{"name":"北城"}],"volumes":[null],"chapters":[null,{"title":"第一章","beat":"拍点"}]}`);
+  assert.deepEqual(mixed.characters.map((c) => c.name), ['李四']);
+  assert.deepEqual(mixed.world.map((w) => w.name), ['北城']);
+  assert.deepEqual(mixed.volumes, []);
+  assert.equal(mixed.chapters.length, 1);
 });
 
 /**

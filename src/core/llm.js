@@ -263,31 +263,41 @@ ${chText}
 {"title":"书名","logline":"一句话梗概","characters":[{"name":"名字","role":"主角","personality":"一句话性格"}],"chapters":[{"title":"章标题","beat":"该章拍点与章末钩子"}]}`;
   }
 
+  /** 数组来路只留对象元素：模型偶尔给出 [null] 这类残缺元素，留着它后面就是裸抛。 */
+  function objsOf(v) {
+    return Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : [];
+  }
+
   /** 从模型输出里稳健地抠出梗概 JSON（容忍代码块围栏与前后废话）。 */
   function parseConceptJSON(text) {
     const m = String(text || '').match(/\{[\s\S]*\}/);
     if (!m) throw new Error('模型没有返回可解析的梗概 JSON');
     const j = JSON.parse(m[0]);
-    if (!j.title || !Array.isArray(j.chapters) || !j.chapters.length) {
+    const chapters = objsOf(j.chapters);
+    const characters = objsOf(j.characters);
+    if (!j.title || !chapters.length) {
       throw new Error('梗概缺少书名或章节，请重试或换个说法');
+    }
+    if (!characters.length) {
+      throw new Error('梗概缺少人物，请重试或换个说法');
     }
     return {
       title: String(j.title).slice(0, 50),
       logline: String(j.logline || '').slice(0, 200),
-      characters: j.characters.slice(0, 6).map((c) => ({
+      characters: characters.slice(0, 6).map((c) => ({
         name: String(c.name || '').slice(0, 20),
         role: String(c.role || '配角').slice(0, 10),
         personality: String(c.personality || '').slice(0, 60),
       })).filter((c) => c.name),
-      world: (Array.isArray(j.world) ? j.world : []).slice(0, 6).map((w) => ({
+      world: objsOf(j.world).slice(0, 6).map((w) => ({
         name: String(w.name || '').slice(0, 30),
         content: String(w.content || '').slice(0, 120),
       })).filter((w) => w.name),
-      volumes: (Array.isArray(j.volumes) ? j.volumes : []).slice(0, 6).map((v) => ({
+      volumes: objsOf(j.volumes).slice(0, 6).map((v) => ({
         title: String(v.title || '').slice(0, 40),
         summary: String(v.summary || '').slice(0, 200),
       })).filter((v) => v.title),
-      chapters: j.chapters.slice(0, 12).map((c) => ({
+      chapters: chapters.slice(0, 12).map((c) => ({
         title: String(c.title || '').slice(0, 40),
         beat: String(c.beat || '').slice(0, 300),
       })).filter((c) => c.title),
