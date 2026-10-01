@@ -139,7 +139,7 @@ Web 端目前的 5 个 store 到新格式的映射。完整字段表在实现导
 | — | `language` | 新，默认 `"zh-CN"` |
 | — | `audience` / `target` / `voice` | 新，默认 `""` / `{chapters:0,wordsPerChapter:3000}` / 空对象 |
 | `stylePack` | `stylePack` | 去 AI 味规则包的本书开关（`enabled` / `disabled[]` 组 id / `extraBanned[]`）。Web 侧栏「文体规则」页写它，导出原样带、没设过就不写这个键；组 id 见 `src/core/stylepack.js` 的 `GROUPS` |
-| `format` | `format` | `"long"` / `"short"`。短篇靠它换上下文口径与规则阈值（R17 的 300 字门槛、前情全量注入）；**必须显式写 `"long"`**，别让读的一方猜 |
+| `format` | `format` | 只有 `"long"` / `"short"` 两个值，出处是 `NWTension.FORMATS`。短篇靠它换上下文口径与规则阈值（R17 的评审门槛、前情全量注入）。**认不出与没写一律按 `"long"`**，归一那一句是 `NWTension.formatKey`（不 trim、不改大小写，`"SHORT"` 就是认不出）；导出写的是归一后的值。显式写出来是为了让人读得懂，不是为了教机器猜 |
 | `target_words` | `target_words` | 目标字数（短篇由「目标平台」定：6k / 2 万 / 5 万）。没设过就**不写这个键** —— schema 只收整数，写 `null` 会被判违规 |
 
 ### `chapters` → `manuscript/chapters/*.md`

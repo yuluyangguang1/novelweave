@@ -372,7 +372,7 @@ async function renderHomePage() {
     // 这里再 slice 一次、CSS 那边再 max-height 裁一次，就会出现「代码说要 6 个字、画出来 3 个」。
     const coverTitle = NWText.coverTitle(n.title);
     return `<div class="novel-card" data-action="open-novel" data-id="${attr(n.id)}">
-      <div class="novel-card-cover${n.format === 'short' ? ' short' : ''}" aria-hidden="true"><span>${esc(coverTitle)}</span></div>
+      <div class="novel-card-cover${NWTension.isShort(n) ? ' short' : ''}" aria-hidden="true"><span>${esc(coverTitle)}</span></div>
       <div class="novel-card-body">
       <div class="novel-card-actions">
         <button class="del-btn" data-action="del-novel" data-id="${attr(n.id)}" title="删除作品">${icon('trash')}</button>
@@ -386,7 +386,7 @@ async function renderHomePage() {
         <span>${esc(n.genre)}</span>
         <span>${n.chapter_count || 0} 章</span>
         <span>${formatWordCount(n.word_count)}</span>
-        ${n.format === 'short' ? '<span>短篇</span>' : ''}
+        ${NWTension.isShort(n) ? '<span>短篇</span>' : ''}
         <span>${esc(d)}</span>
       </div>
       </div>
@@ -936,7 +936,7 @@ async function renderSidebar() {
       <div style="margin-top:2px; font-size:12px; color:var(--text-secondary);">${counts.chapters} 章 · ${formatWordCount(novel.word_count)}</div>
     </div>
     <div style="padding:8px;">
-      ${(novel.format === 'short'
+      ${(NWTension.isShort(novel)
         ? // 短篇收敛：时间线/状态矩阵是长篇的重型机械，短篇面板里折叠掉（数据仍在，导出照带）
           TABS.filter((t) => t.id !== 'timeline' && t.id !== 'states')
         : TABS
@@ -946,12 +946,12 @@ async function renderSidebar() {
           ${counts[t.id] != null ? `<span class="sidebar-nav-count">${counts[t.id]}</span>` : ''}
           ${t.hasAdd ? `<span class="sidebar-nav-add" data-action="${attr('nav-add-' + t.id)}" title="${attr(t.addTitle)}">${icon('plus')}</span>` : ''}
         </div>`).join('')}
-      ${novel.format === 'short' && novel.target_words ? `
+      ${NWTension.isShort(novel) && novel.target_words ? `
       <div class="target-progress" title="按汉字计，不含标点">
         <div class="target-progress-bar"><span style="width:${Math.min(100, Math.round((novel.word_count || 0) / novel.target_words * 100))}%"></span></div>
         <div class="target-progress-text">${formatWordCount(novel.word_count || 0)} / ${formatWordCount(novel.target_words)}${(novel.word_count || 0) >= novel.target_words ? ' · 已达标' : ''}</div>
       </div>` : ''}
-      ${novel.format === 'short' ? `
+      ${NWTension.isShort(novel) ? `
       <div style="padding:10px 4px 2px;">
         <button class="btn btn-secondary" style="width:100%;font-size:12px;" data-action="batch-generate">连续生成正文</button>
       </div>` : ''}

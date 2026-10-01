@@ -195,9 +195,12 @@ async function resequenceChapters(novelId) {
 // ═══════════ 小说 ═══════════
 
 async function createNovel({ title, genre = '玄幻', description = '', format = 'long', targetWords = null }) {
+  // 存进去的档与「这一档有没有字数目标」判的必须是同一个值：一处归一、另一处拿原值比，
+  // 外来那格就可能出现「库里存成短篇、按长篇清了目标」。
+  const fmt = NWTension.formatKey(format);
   return put('novels', {
-    id: newId('novel'), title, genre, description, format: format === 'short' ? 'short' : 'long',
-    target_words: format === 'short' && targetWords ? Number(targetWords) || null : null,
+    id: newId('novel'), title, genre, description, format: fmt,
+    target_words: NWTension.isShort({ format: fmt }) && targetWords ? Number(targetWords) || null : null,
     word_count: 0, chapter_count: 0, created_at: Date.now(), updated_at: Date.now(),
   });
 }
@@ -213,7 +216,7 @@ async function listNovels() {
   return sorted.map((n) => ({
     id: n.id, title: n.title, genre: n.genre, description: n.description,
     // format / demo_version 首页书封与示例书升级提示要用，投影漏掉会让那两处 UI 静默失效
-    format: n.format === 'short' ? 'short' : 'long', demo_version: n.demo_version,
+    format: NWTension.formatKey(n.format), demo_version: n.demo_version,
     word_count: n.word_count || 0, chapter_count: n.chapter_count || 0, updated_at: n.updated_at,
   }));
 }

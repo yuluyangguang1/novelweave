@@ -195,6 +195,32 @@ test('长篇与短篇各按自己的区间判分（改错一档就会红）', ()
   assert.ok(dim(P.scorePitch(c, { targetWords: per, format: 'long' }), 'length').score < 3, '长篇单章 500 字不该算成立');
 });
 
+test('梗概自己写着短篇就按短篇评：minFormat 那一句要真被用上', () => {
+  // 评分卡的档不只从 opts 来：向导把 concept.format 一起交过来，而 CLI 那条路把
+  // 本书与对照书一起算。写死 format:'long' 时上面那条测试照样绿 —— 因为它给的是 opts.format。
+  const c = { title: 'x', logline: '甲？', characters: [], chapters: [{ title: '一', beat: '乙？' }], format: 'short' };
+  const r = P.scorePitch(c, { targetWords: 500 });
+  assert.equal(r.basis.format, 'short', '没给 opts.format 时这一格被丢了：短篇的梗概会按长篇那一档扣分');
+  assert.equal(dim(r, 'length').score, 3);
+  assert.match(dim(r, 'length').reason, /400 字以上/);
+
+  const plain = P.scorePitch({ title: 'x', logline: '甲？', characters: [], chapters: [{ title: '一', beat: '乙？' }] }, { targetWords: 500 });
+  assert.equal(plain.basis.format, 'long');
+  assert.equal(dim(plain, 'length').score, 1);
+  assert.match(dim(plain, 'length').reason, /下限 1200 字/);
+});
+
+test('opts.format 里写脏档名：按长篇评、不抛，也不把脏值原样带进 basis', () => {
+  // CLI 那一路自己先拦过一道（认不出就说一句、不参与评分），但评分卡不只在 CLI 上被调用：
+  // 界面、以后的别的入口都会直接把外来值送到这里。
+  const c = { title: 'x', logline: '甲？', characters: [], chapters: [{ title: '一', beat: '乙？' }] };
+  for (const dirty of ['zhong', 'SHORT', ' short', true, 7, ['short']]) {
+    const r = P.scorePitch(c, { targetWords: 500, format: dirty });
+    assert.equal(r.basis.format, 'long', `${String(dirty)} 被当成了一档：${JSON.stringify(r.basis)}`);
+    assert.equal(dim(r, 'length').score, 1, JSON.stringify(dim(r, 'length')));
+  }
+});
+
 test('短篇上不封顶：向导自己承诺的「微型 6k 字 1 章」不许被判成坏计划', () => {
   // 短篇的「章」是一节，长度由总字数与投放平台定。界面那三档写着 3k-6k/1-2 章、
   // 盐选 5 万字摊 6-10 章（单章可达 8300），给它安一个更小的上限就是机器天天报作者照着界面选的规划。

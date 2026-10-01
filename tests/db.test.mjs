@@ -266,3 +266,25 @@ test('「最近编辑」档与行的插入顺序无关：同一份库两次打�
     '时间与章号都一样：排出来的次序不能取决于谁先写进库');
   await Promise.all([n1, n2, n3].map((n) => NovelDB.novels.delete(n.id)));
 });
+
+/**
+ * 篇幅档这一格以前在建书与列表两处各归一遍，而 update / putRow 那条路根本没归：
+ * 库里可以躺着一格 'zhong'，首页按长篇画、侧栏按长篇画，而 R35 拿到的是原值。
+ * 现在两处都问 NWTension，写进去与读出来必须同一句。
+ */
+test('篇幅档：脏档名存不进库（存成缺档），已经在库里的脏档名在列表里归一', async () => {
+  const n = await NovelDB.novels.create({ title: '归一测试', format: 'zhong', targetWords: 8000 });
+  try {
+    assert.equal(n.format, 'long', '认不出的档名要存成缺档，库里不许留第三种值');
+    assert.equal(n.target_words, null, '存成长篇就不该留下那个数：进度条不画、面板说没设，而评分卡照它算分');
+
+    // 归一不住在写库那一路：update 与导入用的 putRow 都能把脏值塞进库行
+    await NovelDB.novels.update(n.id, { format: 'short' });
+    await NovelDB.putRow('novels', { ...(await NovelDB.novels.get(n.id)), format: 'zhong' });
+    assert.equal((await NovelDB.novels.get(n.id)).format, 'zhong', '原始行照原样躺在库里（归一不是洗数据）');
+    const row = (await NovelDB.novels.list()).find((x) => x.id === n.id);
+    assert.equal(row.format, 'long', '首页那一读必须归一，否则书封与「短篇」那枚标记各按各的档画');
+  } finally {
+    await NovelDB.novels.delete(n.id);
+  }
+});

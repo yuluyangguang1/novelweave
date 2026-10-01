@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { NWStory, NWProject, NWRules, NWText, NWBible, NWContext, NWStylePack, repoRoot } from './_load.mjs';
+import { NWStory, NWProject, NWRules, NWText, NWBible, NWContext, NWStylePack, repoRoot, readSchema } from './_load.mjs';
 
 /**
  * 阶段三的契约核心：Web 导出的 .novelweave/ 目录，CLI 必须原样读得懂。
@@ -233,6 +233,25 @@ test('短篇规格一路走通：库行 → book.json → 读回来还是短篇�
     .some((d) => d.rule === 'chapter-end-hook' && d.chapter === 'ch_x');
   assert.ok(hooked('short'), '短篇那一支该报：没换档说明 format 在桥两头断了');
   assert.ok(!hooked('long'), '长篇不评这一章：两条都报说明阈值根本没看 format');
+});
+
+/**
+ * 归一住在导出口：库行里那格可能被 update/导入写成认不出的值，而 book.json 是要给
+ * 别人的存档 —— 带着 'zhong' 出去，那本书在对方机器上过不了自己这份 schema。
+ */
+test('库行里的脏档名不许跟着导出走：写出去的是归一后的值，读回来还是长篇', async () => {
+  const ctx = NWStory.buildCtx(rowsFixture());
+  // 归一不住在装配那一路 —— update 与导入用的原样写库能把脏值放进 ctx.book，
+  // 所以导出这一口自己也得归一次，否则脏值直接进存档。
+  ctx.book.format = 'zhong';
+  const tree = await NWProject.buildProjectTree(ctx);
+  const key = Object.keys(tree).find((k) => k.endsWith('book.json'));
+  const bookJson = JSON.parse(tree[key]);
+  assert.equal(bookJson.format, 'long', '导出前没归一，脏值就进了存档');
+  const root = readSchema();
+  assert.deepEqual(NWBible.validate(root.$defs.book, bookJson, root), [],
+    '归一之后仍不合法：白名单与 schema 又对不上了');
+  assert.equal(NWProject.parseFileMap(tree).book.format, 'long', '读回来也必须同一个档');
 });
 
 test('长篇导出别把 target_words 写出去（没设过就是没有，schema 只收整数）', async () => {

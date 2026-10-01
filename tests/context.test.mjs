@@ -199,6 +199,18 @@ test('recapPlanOf 在短篇里不喂卷：卷层是空的，不是算完再藏�
   assert.equal(long.counts.book, 1, '长篇照常喂，这一条不是把卷层整个关死');
 });
 
+/**
+ * 换挡问的必须是归一那一句：库里那格可能是 'zhong'（手改的文件、旧版本的导入）。
+ * 拿 `format !== 'long'` 当短篇，脏档就会走「全量注入 + 不喂卷」那一支，
+ * 于是长篇的窗口与卷层一起消失，而界面上没有任何一处说它换了档。
+ */
+test('认不出的档名按长篇处理：卷层照喂，细摘要窗口还是 12 行', () => {
+  const plan = NWContext.recapPlanOf(
+    { book: { format: 'zhong' }, chapters: many40(), volumes: [vol(0, 19)] }, 'ch_20');
+  assert.equal(plan.counts.book, 1, '脏档不算短篇：那一卷要参与，不是被藏起来');
+  assert.equal(plan.fine.length, 12, '长篇的细摘要窗口是 12 行，短篇那条「不封顶」不许误套上来');
+});
+
 test('多行摘要在库行与文件记录两种形状下哈希一致，否则导入必误报冲突', async () => {
   const dbRow = { id: 'ch_a', order: 1, title: '山门', content: '正文', summary: '核心事件：甲\n状态变化：乙' };
   const fileRow = { id: 'ch_a', number: 1, title: '山门', body: '正文', content: '正文', status: 'draft', summary: '核心事件：甲\n状态变化：乙' };

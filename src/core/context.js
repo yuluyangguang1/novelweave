@@ -15,10 +15,10 @@
  */
 (function (root, factory) {
   const mod = factory(root.NWText, root.NWBible, root.NWStory, root.NWStyleFit, root.NWStylePack,
-    root.NWVolume, root.NWRelationGraph);
+    root.NWVolume, root.NWRelationGraph, root.NWTension);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWContext = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, StyleFit, StylePack, Vol, Rel) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, StyleFit, StylePack, Vol, Rel, Tension) {
   'use strict';
 
   const DEFAULTS = {
@@ -140,7 +140,7 @@
    * 用的必须是同一批窗口常量。窗口在界面里再抄一遍字面量，两边就会从此对不上。
    */
   function recapPlanOf(ctx, currentId = null) {
-    const isShort = ctx.book?.format === 'short';
+    const isShort = Tension.isShort(ctx.book);
     return Vol.recapPlan({
       chapters: ctx.chapters || [], currentId,
       volumes: isShort ? [] : (ctx.volumes || []),
@@ -427,7 +427,7 @@
     const scanText = [prev?.body, current?.body].filter(Boolean).join('\n');
     const lore = Story.loreTrigger(scanText, ctx.world, { loreBytes: b.loreBytes });
     // 短篇换挡：体量小（几千至三万字），前情摘要全量列出，不做滚动窗口
-    const isShort = ctx.book?.format === 'short';
+    const isShort = Tension.isShort(ctx.book);
     const related = isShort ? [] : relatedPastChapters(ctx, current, prev, chars, opts.embedHits);
 
     const hasBody = !!(current?.body || '').trim();

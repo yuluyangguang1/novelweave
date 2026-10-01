@@ -9,6 +9,9 @@
  *
  * 和 stylepack.js 同构：同一份数字要喂三处 —— 写之前的 prompt（llm.js）、
  * 写之后的机检（rules.js R23/R25）、命令行兜底（nw-prose）。分成三份必然自相矛盾。
+ *
+ * 另外这里还是**篇幅档那一格的家**：FORMATS / formatKey / fmtOf / isShort 四句是「这本书算哪一档」
+ * 的唯一出处（库行、导出、预设、CLI、界面都问它们）。这一格以前在八个地方各归一遍。
  */
 (function (root, factory) {
   const mod = factory(root.NWText, root.NWStylePack);
@@ -151,17 +154,41 @@
     return s.length <= TAIL_WINDOW ? s : s.slice(-TAIL_WINDOW);
   }
 
-  /** 「这本书算不算短篇」只写在这一行。format 只有 long/short 两个值，认不出一律按长篇。 */
-  function isShort(book) { return !!(book && book.format === 'short'); }
+  /**
+   * 篇幅档的清单与缺档。**「一本书算哪一档」的全部答案就在这一节**：
+   * 归一（库行、导出、预设、CLI 拿到的外来值认不出算长篇）与换挡（短篇走另一套
+   * 配额、窗口、界面）都从这里念。X 之前这一格在 19 处各归一遍，其中九处就是这一句三元表达式。
+   * 桥两头各写一遍的意思是：谁改一处而漏了另一处，导出去再导回来，短篇就变长篇，没人报错。
+   * 顺序照 UI 的下拉与预设的话术（短篇在前）；schema 那两份 enum 是字母序，守卫比对时各自排序。
+   */
+  const FORMATS = ['short', 'long'];
+  const DEFAULT_FORMAT = 'long';
+
+  /** 把任何来路（界面、库行、外来文件、命令行）的篇幅档归一成两值之一。认不出按长篇。 */
+  function formatKey(value) { return value === 'short' ? 'short' : DEFAULT_FORMAT; }
+
+  /** 一本书算哪一档。库行、ctx.book、预设的 fields 三种形状都有 format 这一格，都问这句。 */
+  function fmtOf(book) { return formatKey(book && book.format); }
+
+  /** 「这本书算不算短篇」只写在这一行。 */
+  function isShort(book) { return fmtOf(book) === 'short'; }
+
+  /**
+   * 几本书放一起算一档：只要有一本算短篇就按短篇。
+   * 目前只有评分卡拿对照书算「这个体量按短篇够不够」用它。放在这里是为了让
+   * `'short' : 'long'` 这一对字面量在全仓只出现在 tension.js —— 别处再写一遍，
+   * 就分不清它是在归一还是在换挡，而那正是这次要拆开的两种判据。
+   */
+  function minFormat(books) { return (books || []).some(isShort) ? 'short' : DEFAULT_FORMAT; }
 
   /** 一本书该用哪档张力配额。 */
   function quotaFor(book) {
-    return QUOTAS[isShort(book) ? 'short' : 'long'];
+    return QUOTAS[fmtOf(book)];
   }
 
   /** 一本书的单章字数区间。换挡与 quotaFor 用的是同一个判据，不许有第二套「算不算短篇」。 */
   function chapterRange(book) {
-    return CHAPTER_RANGE[isShort(book) ? 'short' : 'long'];
+    return CHAPTER_RANGE[fmtOf(book)];
   }
 
   /**
@@ -210,6 +237,7 @@
 
   return {
     PACK_VERSION, QUOTAS, CHAPTER_RANGE, HOOK_LABEL, rangeLabel,
+    FORMATS, DEFAULT_FORMAT, formatKey, fmtOf, minFormat,
     dialogueSpans, stats, hookKind, tailOf, isShort, quotaFor, chapterRange, tally, promptBlock,
   };
 });

@@ -244,3 +244,48 @@ test('tally 是公用助手：账本里有空条目、章节不是数组，也�
   assert.deepEqual(NWTension.tally({ promises: { items: [{ type: 'promise', status: 'planted' }] }, chapters: [null] }), { open: 1, overdue: 0, oldest: 0 });
   assert.deepEqual(NWTension.tally(null), { open: 0, overdue: 0, oldest: 0 });
 });
+
+// ═══════════════ 篇幅档：归一与换挡（X 批收成一处） ═══════════════
+
+test('formatKey：两个合法值原样，其余一律长篇 —— 认不出不猜、不 trim、不改大小写', () => {
+  assert.equal(NWTension.formatKey('short'), 'short');
+  assert.equal(NWTension.formatKey('long'), 'long');
+  for (const bad of [undefined, null, '', 'zhong', 'SHORT', 'Short', 'short ', ' short',
+    true, false, 0, 1, [], {}, ['short']]) {
+    assert.equal(NWTension.formatKey(bad), 'long', `认不出的来路 ${JSON.stringify(bad)} 必须落回长篇`);
+  }
+});
+
+test('fmtOf：库行、ctx.book、预设的 fields 三种形状问的是同一句，缺格式那一格算长篇', () => {
+  assert.equal(NWTension.fmtOf({ format: 'short' }), 'short');
+  assert.equal(NWTension.fmtOf({ format: 'long' }), 'long');
+  assert.equal(NWTension.fmtOf({}), 'long', '库行根本没写 format（旧数据）算长篇');
+  assert.equal(NWTension.fmtOf({ id: 'novel_t' }), 'long');
+  assert.equal(NWTension.fmtOf(null), 'long');
+  assert.equal(NWTension.fmtOf(undefined), 'long');
+  // 传错东西（把档名本身当成书）不许侥幸算短篇 —— 那是「认不出」的一种
+  assert.equal(NWTension.fmtOf('short'), 'long');
+  assert.equal(NWTension.fmtOf(7), 'long');
+  assert.equal(NWTension.fmtOf([]), 'long');
+});
+
+test('归一与换挡是同一句：脏档的书，配额与区间都得走长篇那一支（数字写死）', () => {
+  for (const book of [{ format: 'zhong' }, { format: 'SHORT' }, {}, { format: null }, null]) {
+    assert.equal(NWTension.isShort(book), false, `${JSON.stringify(book)} 不算短篇`);
+    assert.equal(NWTension.quotaFor(book).minWords, 1500, '长篇的对话占比门槛');
+    assert.deepEqual(NWTension.chapterRange(book), [1200, 4000], '长篇的单章区间');
+  }
+  assert.equal(NWTension.isShort({ format: 'short' }), true);
+  assert.equal(NWTension.quotaFor({ format: 'short' }).minWords, 400);
+  assert.deepEqual(NWTension.chapterRange({ format: 'short' }), [400, null]);
+});
+
+test('minFormat：任一本算短篇就按短篇，全长篇、空清单、脏元素都按长篇', () => {
+  assert.equal(NWTension.minFormat([{ format: 'long' }, { format: 'short' }]), 'short');
+  assert.equal(NWTension.minFormat([{ format: 'short' }, { format: 'short' }]), 'short');
+  assert.equal(NWTension.minFormat([{ format: 'long' }, { format: 'long' }]), 'long');
+  assert.equal(NWTension.minFormat([{ format: 'long' }, {}]), 'long', '缺 format 不等于短篇');
+  assert.equal(NWTension.minFormat([]), 'long');
+  assert.equal(NWTension.minFormat([null, 'x', 7]), 'long', '脏元素不许抛');
+  assert.equal(NWTension.minFormat(null), 'long');
+});

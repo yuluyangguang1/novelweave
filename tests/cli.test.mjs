@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,13 +13,10 @@ const script = (name) => path.join(repoRoot, 'scripts', name);
 let tmp, root, bookDir;
 
 function run(name, args = [], expectCode = null, cwd = null) {
-  let res;
-  try {
-    const out = execFileSync(process.execPath, [script(name), ...args], { encoding: 'utf8', cwd: cwd || tmp, stdio: ['ignore', 'pipe', 'pipe'] });
-    res = { code: 0, stdout: out, stderr: '' };
-  } catch (e) {
-    res = { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+  // spawnSync 而不是 execFileSync：后者成功返回时把 stderr 丢了，于是「退 0、但在 stderr 说一句」
+  // 这类提示根本测不到 —— 而 --format 认不出档位、评分不阻断，正是这一类。
+  const r = spawnSync(process.execPath, [script(name), ...args], { encoding: 'utf8', cwd: cwd || tmp, stdio: ['ignore', 'pipe', 'pipe'] });
+  const res = { code: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
   if (expectCode !== null) assert.equal(res.code, expectCode, `${name} ${args.join(' ')} 退出码应为 ${expectCode}\n${res.stdout}${res.stderr}`);
   return res;
 }
@@ -493,6 +490,39 @@ test('nw-pitch --concept 吃向导那份 JSON，没填字数按 0 分并提示�
   assert.match(r.stderr, /不是合法 JSON/);
 });
 
+test('nw-pitch --format 认不出那一档：说一句、不猜档，分数按书自己的档走', () => {
+  const file = path.join(tmp, 'fmt-concept.json');
+  writeJsonAtomic(file, {
+    title: '最后一班地铁',
+    logline: '末班车司机发现多出来的乘客三年前就死了，谁来把她送回去？',
+    characters: [{ name: '陈默', role: '主角', personality: '认死理' }, { name: '红衣女', role: '反派', personality: '总在笑' }],
+    chapters: [{ title: '首班车', beat: '陈默数乘客，发现多了一个？' }, { title: '末班车', beat: '突然，红衣女在终点站下车了' }],
+  });
+  const args = (extra) => ['score', '--concept', file, '--words', '8000', ...extra, '--json'];
+  const lenOf = (j) => j.dims.find((d) => d.id === 'length');
+
+  const plain = JSON.parse(run('nw-pitch.mjs', args([]), 0).stdout);
+  assert.equal(plain.basis.format, 'long', '梗概没写档，缺档就是长篇');
+  assert.equal(lenOf(plain).reason, '2 章摊 8000 字，单章约 4000 字，落在 1200–4000 的合理区间');
+
+  // 脏值不猜档：既不悄悄当短篇（那样同一份梗概会因为一个错字换个分数），也不报错退出
+  const dirty = run('nw-pitch.mjs', args(['--format', 'zhong']), 0);
+  assert.match(dirty.stderr, /--format 只认 short 或 long，这里给的是「zhong」/);
+  assert.deepEqual(JSON.parse(dirty.stdout), plain, '认不出的档位参与了评分');
+
+  const upper = JSON.parse(run('nw-pitch.mjs', args(['--format', 'SHORT']), 0).stdout);
+  assert.equal(upper.basis.format, 'long', '归一那句不改大小写：SHORT 是认不出，不是短篇');
+  assert.equal(upper.total, 12, '认不出这一格照样要给分，不能整张卡作废');
+
+  const novalue = run('nw-pitch.mjs', ['score', '--concept', file, '--words', '8000', '--format', '--json'], 0);
+  assert.match(novalue.stderr, /这里给的是「\(没给值\)」/, '只写了 --format 没跟值：要说这一格没参与，不能说成参数错误');
+
+  const short = run('nw-pitch.mjs', args(['--format', 'short']), 0);
+  assert.equal(short.stderr, '', '认得出的档位不许附带任何提示');
+  assert.equal(JSON.parse(short.stdout).basis.format, 'short');
+  assert.match(lenOf(JSON.parse(short.stdout)).reason, /400 字以上/);
+});
+
 test('nw-pitch --against 才查撞车，且绝不跟自己比', () => {
   const other = path.join(tmp, 'against-box');
   const twin = scaffoldBook(other, {
@@ -737,6 +767,24 @@ test('nw-workflow pack：写出的文件过自己那道闸，一个章身份都�
   // --out 不给值时用 core 那个文件名，界面与 CLI 不许各拼一种名字
   const named = JSON.parse(run('nw-workflow.mjs', ['pack', '--out', '--json'], 0).stdout);
   assert.equal(path.basename(named.file), NWWorkflow.fileName(named.preset), '文件名不是 core 那个 fileName 给的');
+});
+
+test('长篇库里躺着字数目标：pack 那几行要念逐格 diff，不许只报当前值让人以为预设带着它', () => {
+  const file = path.join(bookDir, 'book.json');
+  const keep = fs.readFileSync(file, 'utf8');
+  try {
+    wfEditBook((b) => { b.format = 'long'; b.target_words = 8000; });
+    const j = JSON.parse(run('nw-workflow.mjs', ['pack', '--json'], 0).stdout);
+    assert.equal('target_words' in j.preset.fields, false, JSON.stringify(j.preset.fields));
+    const human = run('nw-workflow.mjs', ['pack'], 0).stdout;
+    // 打出来的预设没有这一格，屏幕上那一行就不许停在「8000 字」上 —— 只报数等于说预设带了它
+    const row = human.split('\n').find((l) => l.includes(NWWorkflow.FIELD_LABEL.target_words));
+    assert.ok(row && row.includes('（清掉）'), row);
+    assert.equal(human.includes(`${NWWorkflow.FIELD_LABEL.target_words}：8000 字（不变）`), false, human);
+    assert.match(human, /打包这一步什么都没改/);
+  } finally {
+    fs.writeFileSync(file, keep);
+  }
 });
 
 test('库里躺着一版没有的禁词组：打包要当场红，不许悄悄丢掉那个 id 再装作过了闸', () => {

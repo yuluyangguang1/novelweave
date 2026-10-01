@@ -6,10 +6,10 @@
  * 映射写两遍必然分叉，所以只有这一份。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible);
+  const mod = factory(root.NWText, root.NWBible, root.NWTension);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWStory = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Tension) {
   'use strict';
 
   /** DB 行 → 角色卡。appearance 在库里是字符串，这里拆成 schema 的 {summary, tokens}。 */
@@ -277,7 +277,7 @@
   function fromBook(b) {
     return {
       id: b.id, title: b.title || '', genre: b.genre || '玄幻', description: b.description || '',
-      format: b.format === 'short' ? 'short' : 'long',
+      format: Tension.formatKey(b.format),
       target_words: Number(b.target_words) || null,
       stylePack: b.stylePack || null,
       styleAnchor: b.styleAnchor || null,
@@ -413,7 +413,7 @@
     return {
       book: { id: rows.novel.id, slug: T.slugify(rows.novel.title), title: rows.novel.title,
         genre: rows.novel.genre, description: rows.novel.description,
-        format: rows.novel.format === 'short' ? 'short' : 'long',
+        format: Tension.formatKey(rows.novel.format),
         targetWords: rows.novel.target_words || null,
         // 去 AI 味包必须原样过桥：R22 与 prompt 都只认 ctx.book.stylePack，
         // 这里漏掉一项，作者在设置里关掉的词组就只是看起来生效

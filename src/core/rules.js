@@ -1735,9 +1735,9 @@
         '那几类本来就允许只写几百字。恒为 info，永不进退出码：一章多长是排版与节奏的决定，' +
         '机器只负责把「这一章落在哪一档的哪一头」说出来；过了 4000 字的高潮章不需要谁来判它该拆。',
       run(ctx) {
-        const short = Tension.isShort(ctx.book);
+        const fmt = Tension.fmtOf(ctx.book);
         const [lo, hi] = Tension.chapterRange(ctx.book);
-        const fmt = short ? '短篇' : '长篇';
+        const zh = fmt === 'short' ? '短篇' : '长篇';
         const out = [];
         for (const ch of ctx.chapters) {
           if (isExempt(ch)) continue;
@@ -1754,12 +1754,12 @@
             severity: 'info',
             confidence: 1,
             evidence: {
-              basis: [`countWords ${words} 字`, `本书按${fmt}那一档 ${Tension.rangeLabel(short ? 'short' : 'long')}`,
+              basis: [`countWords ${words} 字`, `本书按${zh}那一档 ${Tension.rangeLabel(fmt)}`,
                 `body ${body.length} 字符（含标点，不参与判定）`],
             },
             message: low
-              ? `${at} 正文 ${words} 字，低于${fmt}那一档的下限 ${lo} 字 —— 差 ${lo - words} 字。`
-              : `${at} 正文 ${words} 字，高于${fmt}那一档的上限 ${hi} 字 —— 溢出 ${words - hi} 字。`,
+              ? `${at} 正文 ${words} 字，低于${zh}那一档的下限 ${lo} 字 —— 差 ${lo - words} 字。`
+              : `${at} 正文 ${words} 字，高于${zh}那一档的上限 ${hi} 字 —— 溢出 ${words - hi} 字。`,
             suggestion: low
               ? '这一章大概还没把一件事做完：接着写，或者并进相邻那章去。刻意写短章（收束、间章）忽略即可。'
               : '先看是不是两件事挤在一章里：在中间那个转折处拆一刀，比删字更省力。刻意写长章忽略即可。',

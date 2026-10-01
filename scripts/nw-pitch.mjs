@@ -24,7 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  loadBook, resolveBookDir, parseArgs, emit, log, EXIT, NWPitch,
+  loadBook, resolveBookDir, parseArgs, emit, log, EXIT, NWPitch, NWTension,
 } from './lib/book.mjs';
 
 const { positional, flags } = parseArgs(process.argv.slice(2));
@@ -95,10 +95,19 @@ for (const d of againstDirs) {
   if (text) others.push({ title: b.title || path.basename(p), logline: text });
 }
 
+// --format 认不出就**不猜一档**（按书自己的档评），但必须说一句：
+// 把用户填的那一格静默丢掉，正是这套工具反复犯过的病 —— 他会以为评的是短篇。
+const fmtWanted = flags.format === undefined ? undefined
+  : (flags.format === true ? '' : String(flags.format));
+const fmtOk = fmtWanted !== undefined && NWTension.FORMATS.includes(fmtWanted);
+if (fmtWanted !== undefined && !fmtOk) {
+  log(`--format 只认 ${NWTension.FORMATS.join(' 或 ')}，这里给的是「${fmtWanted || '(没给值)'}」—— 这一格不参与评分，按书自己的档评`);
+}
+
 const opts = {
   genre: flags.genre ? String(flags.genre) : '',
   targetWords: flags.words ? Number(flags.words) || null : null,
-  format: flags.format === 'short' || flags.format === 'long' ? flags.format : undefined,
+  format: fmtOk ? fmtWanted : undefined,
   others,
 };
 const result = NWPitch.scorePitch(input, opts);

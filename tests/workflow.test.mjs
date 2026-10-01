@@ -48,6 +48,16 @@ test('长篇打包不会把字数目标带出来（建档那一路本来就把�
   assert.equal('target_words' in p.fields, false, JSON.stringify(p.fields));
 });
 
+test('库里那格写着认不出的档名：打包先归一成缺档，不把外人认不出的值装进预设', () => {
+  // 库行是 updateNovel/putRow 直接写的，那道闸不在这条路上，'SHORT'、'zhong' 都可能躺在库里。
+  // 不归一就打出一份 format:'SHORT' 的预设 —— 它过不了自己的闸，而它是从一本能打开的书里打出来的。
+  const p = W.pack({ format: 'SHORT', target_words: 8000 }, { name: '脏档' });
+  assert.equal(p.fields.format, 'long', JSON.stringify(p.fields));
+  assert.equal('target_words' in p.fields, false, '认不出的档不算短篇，那个遗留的字数目标不该被当短篇的设置打包');
+  const n = W.normalize(p);
+  assert.equal(n.ok, true, JSON.stringify(n));
+});
+
 // ═══════════════ 过闸：三堆各有说法 ═══════════════
 
 test('认不出的键：整份拒收，并把键名说出口', () => {

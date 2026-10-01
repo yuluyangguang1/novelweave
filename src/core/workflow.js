@@ -20,10 +20,10 @@
  * 不自动应用 —— 预设必须经过那一张逐格 diff 的确认框才写库。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWStylePack);
+  const mod = factory(root.NWText, root.NWStylePack, root.NWTension);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWWorkflow = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, SP) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, SP, Tension) {
   'use strict';
 
   const WORKFLOW_VERSION = '1.0.0';
@@ -41,8 +41,12 @@
     { key: 'title / genre / description', why: '这一本是什么书，不是怎么写书' },
   ];
 
-  /** 篇幅档只有这两个值，判据与建档那一路一致（见 tests/guards 里对着建书弹窗选项核的那条）。 */
-  const FORMATS = ['short', 'long'];
+  /**
+   * 篇幅档只有这两个值 —— **不在这里定**：出处是 `NWTension.FORMATS`。
+   * 这里是别名（同一个数组，不是复制），因为建书弹窗的下拉、两份 schema 的 enum、
+   * 预设过闸那一句「篇幅档只认 …」都要对着同一份清单核（见 tests/guards 那三条）。
+   */
+  const FORMATS = Tension.FORMATS;
   const FORMAT_LABEL = { short: '短篇', long: '长篇连载' };
 
   /**
@@ -104,8 +108,8 @@
   /** 从一本书的库行打包成预设。写预设只走这里 —— 界面不许自己挑字段。 */
   function pack(book, { name, note } = {}) {
     const b = book || {};
-    const fields = { format: b.format === 'short' ? 'short' : 'long' };
-    if (fields.format === 'short' && Number.isInteger(Number(b.target_words)) && Number(b.target_words) >= TARGET_MIN) {
+    const fields = { format: Tension.fmtOf(b) };
+    if (Tension.isShort(fields) && Number.isInteger(Number(b.target_words)) && Number(b.target_words) >= TARGET_MIN) {
       fields.target_words = Number(b.target_words);
     }
     fields.stylePack = normalizePack(SP && SP.optsFrom ? SP.optsFrom(b) : {});
@@ -190,6 +194,9 @@
       }
     }
     // 两格的搭配在这儿一次判完 —— 放在整轮之后，所以「fields 里谁先谁后」不影响判决。
+    // 这里问的是**这份预设自己声明了哪一档**（`format` 这一格可能根本没写，没写就不算它说了长篇：
+    // 只带字数目标的预设要退 0、由 diffFields 判它在这本书上落不落得下），
+    // 不是「某本书算哪一档」，所以不走 isShort。
     if (out.fields.format === 'long' && out.fields.target_words !== undefined) {
       delete out.fields.target_words;
       out.bad.push({ key: 'target_words', reason: LONG_NO_TARGET });
@@ -214,7 +221,7 @@
     if (want.stylePack) want.stylePack = normalizePack(want.stylePack);
     // 这一格在这本书里到底落不落得下，按**应用之后**的篇幅档判：预设把长篇换成短篇时，
     // 它带来的目标字数是有落点的，拿换之前的档拦就等于把整套短篇工作流挡在门外。
-    const after = want.format !== undefined ? want.format : (b.format === 'short' ? 'short' : 'long');
+    const after = want.format !== undefined ? want.format : Tension.fmtOf(b);
     // pack 会替长篇把这一格藏起来（长篇没有它），可那个数还躺在库行里：进度条不画、
     // 面板说「没设」，而评分卡照样按它算分。所以这里读的是库行原值，不是 pack 的产物。
     const leftover = Number(b.target_words) >= TARGET_MIN ? Number(b.target_words) : null;

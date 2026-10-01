@@ -1740,3 +1740,105 @@ test('两份文档里那句单章区间跟着 core 走，不写自己的数', ()
   assert.match(card, new RegExp(`long: \\[${R.long[0]}, ${R.long[1]}\\], short: \\[${R.short[0]}, ${R.short[1]}\\]`),
     'pitch-card.md 写死了自己的档位数字');
 });
+
+// ═══════════════ X 族：篇幅档那一格 ═══════════════
+
+const X_CODE = (() => {
+  const list = [];
+  const walk = (d) => {
+    for (const e of readdirSync(repoPath(d), { withFileTypes: true })) {
+      const p = `${d}/${e.name}`;
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|mjs)$/.test(e.name)) list.push(p);
+    }
+  };
+  ['src', 'scripts', 'tools'].forEach(walk);
+  return list.filter((f) => f !== 'src/core/tension.js');
+})();
+
+test('「认不出算长篇」与「这本书算不算短篇」只写在 tension.js：全仓扫第二处', () => {
+  // X 之前这一格在 19 处各归一遍：九处手写那个三元、十处直接比字面量。它们当时恰好同义，
+  // 所以没出事；这一条守的是下一处 —— 19 份抄本里改一份，规则与桥两头就会各认一档。
+  const ternary = X_CODE.filter((f) => /'short'\s*:\s*'long'/.test(read(f)));
+  assert.deepEqual(ternary, [], `换挡的三元表达式有了第二处：${ternary.join('、')}`);
+  const cmp = X_CODE.filter((f) => /\.format\s*[!=]==\s*'short'/.test(read(f)));
+  assert.deepEqual(cmp, [], `还在拿原始 format 跟 'short' 比字面量：${cmp.join('、')}`);
+  const copy = X_CODE.filter((f) => /\[\s*'?(?:short|long)'?\s*,\s*'?(?:short|long)'?\s*\]/.test(read(f)));
+  assert.deepEqual(copy, [], `档位清单被另抄了一遍：${copy.join('、')}`);
+});
+
+test('档位清单那一份只有一个家：workflow 引它，缺档必须落在清单里', () => {
+  assert.equal(NWWorkflow.FORMATS, NWTension.FORMATS, '不是同一个数组就是抄了一份清单：加一档时预设闸与评分卡会各认一半');
+  assert.deepEqual([...NWTension.FORMATS].sort(), ['long', 'short'],
+    '这一格只有两个值；要添第三档，得先把每一路的换挡落点一起想清楚');
+  assert.ok(NWTension.FORMATS.includes(NWTension.DEFAULT_FORMAT), '归一的落点不在清单里：脏值会变成一个谁都认不出的档');
+  assert.equal(NWTension.DEFAULT_FORMAT, 'long', '缺档改成短篇等于把所有没写档的老书一起换档');
+});
+
+test('界面不许用「不等于长篇」代替「等于短篇」', () => {
+  // 改之前界面那五处比的也是 'short'（脏值按长篇，与规则一致），这一条守的是别改口：
+  // 界面读的是库行原值，谁写成「不是 long」（干净数据上等价、还少打两个字），'zhong' 就会
+  // 让时间线与状态矩阵两栏凭空消失，而同一本书在规则那边还是长篇。
+  const app = read('src/app.js');
+  assert.doesNotMatch(app, /\.format\s*[!=]==\s*'long'/, '脏档会被当成短篇，这一句要换成 NWTension.isShort(…)');
+  assert.equal((app.match(/NWTension\.isShort\(/g) || []).length, 5,
+    '书封、短篇标记、侧栏折叠、目标进度条、连续生成各一处；多一处少一处都先说清是哪一路');
+});
+
+test('每一条路都过同一句归一：落库、列表投影、导出、建上下文、预设打包', () => {
+  const db = read('src/core/db.js');
+  assert.match(db, /const fmt = NWTension\.formatKey\(format\);/, '建档那一路没归一，脏档先进了库');
+  assert.match(db, /format: NWTension\.formatKey\(n\.format\)/, '列表不投影，界面就照脏档换挡');
+  assert.match(read('src/core/project.js'), /format: Tension\.formatKey\(ctx\.book\.format\)/,
+    '导出跟着库行原值走，脏档就出了门，下一本书从导入开始带着它');
+  const story = read('src/core/story.js');
+  assert.match(story, /format: Tension\.formatKey\(b\.format\)/, '导入建档没归一');
+  assert.match(story, /format: Tension\.formatKey\(rows\.novel\.format\)/, 'buildCtx 没归一，规则与上下文就各拿原始值比');
+  assert.equal((read('src/core/context.js').match(/const isShort = Tension\.isShort\(ctx\.book\);/g) || []).length, 2,
+    '分层前情与上下文分段各判一次档：短篇就会一边喂卷、一边不召回旧章');
+  // 这两处各有行为测试盯着，但行为测试只挑得出「打过一本脏档的书」那种差异，
+  // 而脏档书在测试与真实使用里都少见 —— 句子本身也钉住。
+  assert.match(read('src/core/workflow.js'), /const fields = \{ format: Tension\.fmtOf\(b\) \};/,
+    '预设打包那一路不再问归一，脏档会被装进预设里');
+  assert.match(read('src/core/pitch.js'), /format: Tension\.minFormat\(\[book, src\]\),/,
+    '评分卡不再把本书与梗概/对照书一起算档');
+});
+
+test('打包与对照那两份逐格文案各只有一处：pack 不许手拼「格名：当前值」', () => {
+  // 以前 pack 自己拼了一遍「这一格现在写着什么」，于是长篇库里那个遗留字数目标被报成
+  // 「全篇字数目标：8000 字」，而打出来的预设根本没有这一格 —— 面板说的与库里做的两样。
+  const cli = read('scripts/nw-workflow.mjs');
+  assert.match(cli, /\.\.\.NWWorkflow\.diffFields\(input\.book, preset\.fields\)\.map\(rowLine\)/,
+    '打包那一路不再问 core 的逐格 diff，就会把「现在写着什么」说成「预设带了什么」');
+  assert.equal((cli.match(/FIELD_LABEL\[\w+\]\}：/g) || []).length, 0, 'CLI 里手拼了一遍格名，等于有了第二份逐格文案');
+  assert.equal((cli.match(/const rowLine = /g) || []).length, 1, '一行格的画法出现两处，pack 与 check 就会各说各的');
+});
+
+test('R35 那句档名跟在归一后面；CLI 与技能文档的档位清单跟在 FORMATS 后面', () => {
+  const rules = read('src/core/rules.js');
+  assert.match(rules, /const fmt = Tension\.fmtOf\(ctx\.book\);/, 'R35 的档名是从没归一的值来的');
+  assert.match(rules, /本书按\$\{zh\}那一档 \$\{Tension\.rangeLabel\(fmt\)\}/,
+    '机检报的那句区间不是 core 那份，评分卡与机检就又会各说一个数');
+  const needle = `--format ${NWTension.FORMATS.join('|')}`;
+  const cli = read('scripts/nw-pitch.mjs');
+  assert.equal(cli.split(needle).length - 1, 2, '注释里那句用法与报错文案对不上，或清单不是从 FORMATS 算的');
+  assert.ok(read('skills/novelweave/references/pitch-card.md').includes(needle),
+    'pitch-card.md 的 --format 参数说明不跟 FORMATS 走');
+  assert.match(cli, /NWTension\.FORMATS\.includes\(fmtWanted\)/, 'CLI 认档不认清单，脏值会被当成一档去评分');
+});
+
+test('三份文档都点名 core 那个出处，不各留一份规矩', () => {
+  const schema = read('skills/novelweave/references/schema-v1.md');
+  assert.match(schema, /归一那一句是 `NWTension\.formatKey`/, 'schema 文档没点名归一那一句，读者只能按字面猜');
+  assert.doesNotMatch(schema, /别让读的一方猜|必须显式写 `"long"`/,
+    '旧话术还在教人「别让读的一方猜」，而 core 已经明写了缺档落哪一档');
+  const wf = read('skills/novelweave/references/workflow-preset.md');
+  assert.match(wf, /`NWTension\.FORMATS`/, '预设文档没点名档位清单的出处，加一档时它会被改成第二份清单');
+  assert.match(wf, /预设\*\*里写一个认不出的档，过闸当场判坏/, '文档没分清「预设拒绝」与「书归一」两种规矩');
+  assert.match(wf, /`NWTension\.formatKey` 归成长篇/);
+  const rules = read('skills/novelweave-continuity/references/rules.md');
+  assert.match(rules, /## X 族：篇幅档那一格/, '换挡的共用前提没有规格段，W 那句「都从 isShort 走」就没人核对');
+  assert.match(rules, /不 trim、不改大小写、不猜/);
+  assert.match(rules, /行为变化只有两处可见/, '改了行为不写下来，下一批就会把差异当遗留');
+  assert.match(rules, /`nw-workflow\.mjs pack` 的人读输出/, 'pack 那一行的改口没记进规格，读文档的人会以为预设带着遗留目标');
+});

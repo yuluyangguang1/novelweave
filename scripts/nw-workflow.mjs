@@ -93,7 +93,10 @@ if (sub === 'pack') {
   const n = NWWorkflow.normalize(preset);
   emit(!!flags.json, { book: input.book.title || input.book.slug, file: outFile, ok: n.ok, preset }, () => [
     `《${input.book.title || input.book.slug}》→ 预设「${preset.name}」`,
-    ...NWWorkflow.diffFields(input.book, preset.fields).map((r) => `  ${r.label}：${r.current}`),
+    // 这里念的是 core 那一句逐格 diff 的整行，不是「这一格现在写着什么」：长篇库里那个
+    // 遗留的字数目标，只报数就等于让人以为预设把它带上了。
+    '  逐格对照（「要改」＝应用这一份时会动这一格，打包这一步什么都没改）：',
+    ...NWWorkflow.diffFields(input.book, preset.fields).map(rowLine),
     outFile ? `文件：${outFile}` : '（没给 --out，只打到屏幕上）',
     n.ok ? '这份预设过自己那道闸：能导入。' : `这份预设过不了自己的闸：${[...n.errors, ...n.bad.map((b) => b.reason)].join('；')}`,
   ].join('\n'));

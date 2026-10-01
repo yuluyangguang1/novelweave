@@ -385,8 +385,8 @@ R33 不查正文，查的是**这套压缩本身有没有被用歪**：作者建
 「一章该多长」这个数在项目里写过三遍：生成 prompt 承诺 3000-5000，规则按 1200-4000 判，
 评分卡又是第三档。三方各自成立，合起来是模型照 prompt 的上限写满 5000 字，回头机检报它超上限 ——
 两头都按自己那份数说话，于是谁也不用改。现在只有一处：`src/core/tension.js` 的 `CHAPTER_RANGE`
-（长篇那一档 1200-4000 字；短篇那一档 400 字起，上不封顶），`NWTension.chapterRange(book)` 按 `book.format` 取档；
-prompt、评分卡（`NWPitch.LENGTH_RANGE` 是同一个对象的别名）、R35 都问它。
+（长篇那一档 1200-4000 字；短篇那一档 400 字起，上不封顶），`NWTension.chapterRange(book)` 先问
+`fmtOf(book)` 归一、再取档；prompt、评分卡（`NWPitch.LENGTH_RANGE` 是同一个对象的别名）、R35 都问它。
 「算不算短篇」也收成一处 `NWTension.isShort`，R17/R23/R25/R33/R35 的换挡都从那里走。
 那一档怎么说人话也有一个出处（`NWTension.rangeLabel`），文档与 CLI 的 rubric 文案都念它。
 
@@ -412,6 +412,39 @@ prompt、评分卡（`NWPitch.LENGTH_RANGE` 是同一个对象的别名）、R35
 
 恒为 `info`、不进退出码：一章多长是节奏与排版的决定，机器只负责报出这一章落在哪一档的哪一头。
 过了 4000 字的高潮章不需要谁来判它该拆，所以建议那句给的是「在中间那个转折处拆一刀」而不是「删字」。
+
+## X 族：篇幅档那一格（不是新规则，是上面每一条换挡的共用前提）
+
+W 说「换挡都从 `isShort` 走」，但那一句话当时还写在 19 处各归一遍：三元归一九处（建档落库、库行列表投影、
+导出、导入建档、`buildCtx`、预设打包、预设逐格 diff、评分卡取档、CLI 传进评分卡那一格），
+拿原始值比 `'short'` 九处（界面五处、`context.js` 两处、「这一档有没有字数目标」的门槛两处），
+CLI 自己认一遍清单还有一处。写的形状也不止一种（`=== 'short' ? 'short' : 'long'`、
+`book.format === 'short' || src.format === 'short' ? …`、`flags.format === 'short' || === 'long' ? …`）。
+档位清单另有五份：`workflow.js` 的数组、两份 schema 的 `enum`、建书下拉、CLI 那句 `--format short|long`。
+它们当时恰好同义，所以没出事；**恰好**不是测试：谁添第三档、谁把缺档换成短篇、谁漏改一处，
+规则就按一档评这一章而界面按另一档收栏，两边各自的测试都能绿。
+
+现在只有 `src/core/tension.js` 一家：
+
+| 句 | 管什么 |
+|---|---|
+| `FORMATS` | 这一格只有哪几个值。`NWWorkflow.FORMATS` 是它的别名（同一个数组），两份 schema 的 `enum`、建书下拉、CLI 那句 `--format short\|long` 都对着它比 |
+| `DEFAULT_FORMAT` | 认不出/没写时落哪一档，现在是 `long` |
+| `formatKey(value)` | 归一那一句：**不 trim、不改大小写、不猜**，`'SHORT'`、`'short '`、`'zhong'`、`true` 统统是缺档 |
+| `fmtOf(book)` | 库行、`ctx.book`、预设 `fields` 三种形状都问这一句 |
+| `isShort(book)` | 唯一的换挡判断，界面也用它 —— 「不等于长篇」不等于「等于短篇」，脏值会被前一句判成短篇，时间线与状态矩阵两栏就此凭空消失 |
+| `minFormat(books)` | 评分卡把本书与对照书取更短的那一档，目前只有它用 |
+
+**行为变化只有两处可见**：`nw-pitch.mjs --format` 认不出那个值时，以前悄悄按书自己的档评，
+现在会在 stderr 说一句「这一格不参与评分」，退 0 不变。只写 `--format` 没跟值也算认不出，
+说的是「(没给值)」而不是参数错误 —— 它确实不影响别的四维。
+另一处是 `nw-workflow.mjs pack` 的人读输出：以前逐行打印「这一格现在写着什么」，于是长篇库里
+那个遗留的字数目标被报成「全篇字数目标：8000 字」，而打出来的预设根本没有这一格；现在念的是
+`NWWorkflow.diffFields` 那一份逐格 diff（与 `check` 同一句、同一行画法）。
+
+`workflow.js` 里剩下两处直接比 `'long'` 是刻意的，不是漏改：那两句问的是「这份预设**声明**了
+长篇没有」，不是「这本书算哪一档」（预设没带 `format` 时必须什么都别清，归一成 `long` 反而会把
+作者定的目标字数抹掉）。守卫里对这两句另有说明。
 
 
 `nw-validate.mjs` / `nw-continuity.mjs` 先跑 schema 校验；**不通过则其余规则全部不跑**，

@@ -81,7 +81,8 @@
       title: txt(src.title || book.title),
       logline: txt(src.logline || book.description),
       genre: txt(src.genre || book.genre),
-      format: book.format === 'short' || src.format === 'short' ? 'short' : 'long',
+      // 与对照书取更短的那一档：两边都算长篇才按长篇评
+      format: Tension.minFormat([book, src]),
       targetWords: Number(isCtx ? book.target_words : (src.targetWords ?? src.target_words)) || null,
       chapters, characters, world, openPromises,
     };
@@ -219,7 +220,7 @@
     if (opts.genre && !v.genre) v.genre = String(opts.genre);
     if (opts.targetWords && !v.targetWords) {
       v.targetWords = Number(opts.targetWords) || null;
-      if (opts.format) v.format = opts.format === 'short' ? 'short' : 'long';
+      if (opts.format) v.format = Tension.formatKey(opts.format);
     }
     const dims = DIMS.map((d) => {
       const r = d.fn(v, others);

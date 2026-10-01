@@ -6,10 +6,10 @@
  * 文件布局，迟早会变成导出的书 agent 读不懂。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStory);
+  const mod = factory(root.NWText, root.NWBible, root.NWStory, root.NWTension);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWProject = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, Tension) {
   'use strict';
 
   async function sha256Hex(text) {
@@ -54,7 +54,7 @@
       // 白名单里没有这两个键 = 导出去再导回来，短篇就变成长篇（没人会想到是这里丢的）。
       // 名字按 schema 写（target_words），schemas/story-bible.v1.json 的 book 是
       // additionalProperties:false，写成 targetWords 会被 nw-validate 判违规。
-      format: ctx.book.format === 'short' ? 'short' : 'long',
+      format: Tension.formatKey(ctx.book.format),
       target_words: ctx.book.targetWords || null,
       audience: ctx.book.audience || '', target: ctx.book.target || { chapters: 0, wordsPerChapter: 3000 },
       voice: ctx.book.voice || { person: '', tense: '', povDefault: null, notes: '' },

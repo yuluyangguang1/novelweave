@@ -535,6 +535,35 @@ test('相关旧章：按出场分量召回窗口外旧章，苏晚的高光章�
   assert.ok(usage.present && usage.included.includes('第20章《并肩》'), 'usage 要如实列出召回了哪些');
 });
 
+/**
+ * 换挡问的必须是归一那一句：'zhong' 这类脏档名（手改的存档、旧版本留下的库行）按长篇处理。
+ * 写成「与长篇那一次一字不差」而不是「出现了」：走错短篇那一支时长句整段消失，
+ * 而那一句若是「不相等就算红」也挡不住两处都空。
+ */
+test('认不出的档名按长篇处理：相关旧章照常召回，且与长篇那一次一字不差', () => {
+  const many = [];
+  for (let i = 1; i <= 40; i++) {
+    many.push({ id: `ch-${String(i).padStart(3, '0')}`, order: i, title: `事件${i}`, content: '正文。', summary: `核心事件：第${i}件事` });
+  }
+  many[4] = { id: 'ch-005', order: 5, title: '药庐初见', content: ('苏晚教林烟火认药。').repeat(6), summary: '核心事件：苏晚与林烟火初见' };
+  many[19] = { id: 'ch-020', order: 20, title: '并肩', content: ('苏晚替林烟火挡了一箭。').repeat(8), summary: '核心事件：苏晚为林烟火挡箭' };
+  many.push({ id: 'ch-041', order: 41, title: '重逢', content: '', characters: [], summary: '核心事件：苏晚与林烟火重逢' });
+  const cast = [
+    { id: 'c_lin', name: '林烟火', role: '主角', status: 'alive' },
+    { id: 'c_su', name: '苏晚', role: '配角', status: 'alive' },
+  ];
+  const relOf = (format) => NWContext.buildSections(NWStory.buildCtx(rows({
+    novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format },
+    chapters: many, characters: cast,
+  })), { chapterId: 'ch-041' }).sections.find((s) => s.name === '相关旧章');
+
+  const long = relOf('long');
+  const dirty = relOf('zhong');
+  assert.ok(long, '夹具坏了：长篇本来就该召回，后面那句比较是空的');
+  assert.ok(dirty, '脏档走了短篇那一支：召回被关掉，而界面上一句换档的话都没有');
+  assert.equal(dirty.text, long.text, '脏档与长篇算的是同一档，两段召回必须一字不差');
+});
+
 test('相关旧章：细摘要窗口内与上一章不重复召回；短篇不启用', () => {
   const many = [];
   for (let i = 1; i <= 40; i++) {
