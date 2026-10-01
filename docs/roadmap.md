@@ -1948,7 +1948,7 @@ W 收尾时留了一句「换挡都从 `isShort` 走」。这一批去数那句�
   `db.js:216`(列表投影)、`project.js:57`(导出)、`story.js:280`(导入建档)、`story.js:416`(`buildCtx`)、
   `workflow.js:107`(预设打包)、`workflow.js:217`(逐格 diff 的 `after`)、`pitch.js:84`(本书与梗概取更短)、
   `pitch.js:222`(CLI 传进来的那格);
-- **拿原始值直接比字面量十处** —— `app.js:375/389/939/949/954`(书封 short 类、「短篇」标记、
+- **拿原始值直接比字面量九处** —— `app.js:375/389/939/949/954`(书封 short 类、「短篇」标记、
   侧栏 TABS 折叠、目标进度条、连续生成按钮)、`context.js:143/430`(W 遗留那两处)、
   `db.js:200` 与 `workflow.js:108`(「这一档有没有字数目标」那两处门槛);
 - **CLI 自己再认一遍档一处** —— `nw-pitch.mjs:101` 的 `flags.format === 'short' || flags.format === 'long'`。
