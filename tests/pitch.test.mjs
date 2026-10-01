@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWPitch, NWText } from './_load.mjs';
+import { NWPitch, NWTension, NWText } from './_load.mjs';
 
 const P = NWPitch;
 
@@ -168,9 +168,9 @@ test('张力来源三种都认：反派、梗概里的冲突词、已写成书�
 test('篇幅匹配：单章字数落在版式区间才算成立', () => {
   const ok = dim(P.scorePitch(cleanConcept(), { targetWords: 8000, format: 'short' }), 'length');
   assert.equal(ok.score, 3);
-  assert.match(ok.reason, /落在 400–4000/);
-  const big = dim(P.scorePitch(cleanConcept({ chapters: [{ title: '第一章', beat: '陈默上夜班？' }] }), { targetWords: 8000, format: 'short' }), 'length');
-  assert.equal(big.score, 2, '超出一倍以内算「能调」');
+  assert.match(ok.reason, /落在 400 字以上/);
+  const big = dim(P.scorePitch(cleanConcept({ chapters: [{ title: '第一章', beat: '陈默上夜班？' }] }), { targetWords: 8000, format: 'long' }), 'length');
+  assert.equal(big.score, 2, '长篇超出一倍以内算「能调」');
   const huge = dim(P.scorePitch(cleanConcept(), { targetWords: 200000, format: 'long' }), 'length');
   assert.equal(huge.score, 1);
   assert.match(huge.advice, /拆细章纲/);
@@ -193,6 +193,22 @@ test('长篇与短篇各按自己的区间判分（改错一档就会红）', ()
   const c = { title: 'x', logline: '甲？', characters: [], chapters: [{ title: '一', beat: '乙？' }] };
   assert.equal(dim(P.scorePitch(c, { targetWords: per, format: 'short' }), 'length').score, 3, '短篇单章 500 字该算成立');
   assert.ok(dim(P.scorePitch(c, { targetWords: per, format: 'long' }), 'length').score < 3, '长篇单章 500 字不该算成立');
+});
+
+test('短篇上不封顶：向导自己承诺的「微型 6k 字 1 章」不许被判成坏计划', () => {
+  // 短篇的「章」是一节，长度由总字数与投放平台定。界面那三档写着 3k-6k/1-2 章、
+  // 盐选 5 万字摊 6-10 章（单章可达 8300），给它安一个更小的上限就是机器天天报作者照着界面选的规划。
+  const one = { title: 'x', logline: '甲？', characters: [], chapters: [{ title: '一', beat: '乙？' }] };
+  assert.equal(dim(P.scorePitch(one, { targetWords: 6000, format: 'short' }), 'length').score, 3,
+    '微型档一章写完 6000 字是本书自己承诺的形状');
+  assert.equal(dim(P.scorePitch(one, { targetWords: 8300, format: 'short' }), 'length').score, 3, '盐选摊到单章 8300 也接受');
+  // 反方向：同样这两个数在长篇档要照旧扣分，别把「不封顶」做成两边都不封顶
+  assert.ok(dim(P.scorePitch(one, { targetWords: 6000, format: 'long' }), 'length').score < 3, '长篇 6000 字单章要扣分');
+  assert.match(dim(P.scorePitch(one, { targetWords: 8300, format: 'long' }), 'length').reason, /超出合理区间上限 4000/);
+  // 下限那一头对短篇仍然有效
+  assert.match(dim(P.scorePitch(one, { targetWords: 200, format: 'short' }), 'length').reason, /低于合理区间下限 400 字/);
+  assert.deepEqual(P.LENGTH_LABEL, { long: NWTension.rangeLabel('long'), short: NWTension.rangeLabel('short') },
+    '话术不是从 CHAPTER_RANGE 算出来的，就是另抄了一份');
 });
 
 test('总分等于四维之和、满分恒 12，分档只换话术不换门禁', () => {

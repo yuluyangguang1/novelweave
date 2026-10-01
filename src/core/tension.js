@@ -32,6 +32,31 @@
     short: { minWords: 400, minBody: 300, ratioLow: 0.10, plainInfo: 600, hookRun: 3 },
   };
 
+  /**
+   * 单章正文字数的合理区间（含端点），按版式两档。**这是这一个数的唯一出处**：
+   * 评分卡的规划区间（pitch.js）、动笔前 prompt 那句「字数要求」（llm.js）、
+   * 写完后的机检 R35（rules.js）三处都从这里念 —— 此前它写了三遍（3000–5000 / 1200–4000 /
+   * 界面另一档），于是模型照着 prompt 的承诺写 5000 字，回头机检报它「超上限」，
+   * 而作者看到的是「我自己写的要求惩罚了我」。
+   * 下限不是「必须写满」，是「这一章起码做成了一件事」；上限是网文读者的单次耐心，
+   * 再长就该拆章。区间外不等于写坏了，所以 R35 恒为 info、永不进退出码。
+   *
+   * 短篇那一档**上不封顶**（`null`）：短篇的「章」是一节，长度由总字数与投放平台定，
+   * 而本书的短篇向导自己就承诺「微型 3k-6k 字，1-2 章」与「盐选 5 万字 / 6-10 章」——
+   * 摊到单章最坏 8300 字。给短篇安一个比这小的上限，等于机器天天报一个作者照着界面
+   * 选出来的计划，那是凭空造出来的档位。长篇有上限，是因为长篇的章数由作者拆。
+   */
+  const CHAPTER_RANGE = { long: [1200, 4000], short: [400, null] };
+
+  /**
+   * 一档区间对人怎么说：「1200-4000 字」或「400 字起，上不封顶」。
+   * 文档、CLI 的 rubric 文案、R35 的 evidence 都念它 —— 话术抄三遍就会有三遍的旧。
+   */
+  function rangeLabel(key) {
+    const [lo, hi] = CHAPTER_RANGE[key];
+    return hi == null ? `${lo} 字起，上不封顶` : `${lo}-${hi} 字`;
+  }
+
   /** 成对引号。只认前引号会把「他说：“……」之后的整段都算成台词，占比虚高。 */
   const QUOTE_PAIRS = [['“', '”'], ['「', '」'], ['『', '』']];
   /** 超过这个长度还没等到后引号，按漏写引号处理，不算对话 —— 否则一处漏引号能吃掉一整章。 */
@@ -126,10 +151,17 @@
     return s.length <= TAIL_WINDOW ? s : s.slice(-TAIL_WINDOW);
   }
 
-  /** 一本书该用哪档配额。format 只有 long/short 两个值，认不出一律按长篇。 */
+  /** 「这本书算不算短篇」只写在这一行。format 只有 long/short 两个值，认不出一律按长篇。 */
+  function isShort(book) { return !!(book && book.format === 'short'); }
+
+  /** 一本书该用哪档张力配额。 */
   function quotaFor(book) {
-    const key = (book && book.format === 'short') ? 'short' : 'long';
-    return QUOTAS[key];
+    return QUOTAS[isShort(book) ? 'short' : 'long'];
+  }
+
+  /** 一本书的单章字数区间。换挡与 quotaFor 用的是同一个判据，不许有第二套「算不算短篇」。 */
+  function chapterRange(book) {
+    return CHAPTER_RANGE[isShort(book) ? 'short' : 'long'];
   }
 
   /**
@@ -177,7 +209,7 @@
   }
 
   return {
-    PACK_VERSION, QUOTAS, HOOK_LABEL,
-    dialogueSpans, stats, hookKind, tailOf, quotaFor, tally, promptBlock,
+    PACK_VERSION, QUOTAS, CHAPTER_RANGE, HOOK_LABEL, rangeLabel,
+    dialogueSpans, stats, hookKind, tailOf, isShort, quotaFor, chapterRange, tally, promptBlock,
   };
 });

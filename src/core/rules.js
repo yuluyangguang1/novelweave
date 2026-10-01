@@ -774,17 +774,19 @@
       detail:
         '机器只能查结构信号：本章是否新埋了 promise（setup 指向本章），或结尾 300 字内' +
         '是否出现问号 / 突转 / 留白类标记。两者皆无时给 info。钩子的质量无法机器判定，' +
-        '本条恒为 info，永不计入退出码；带 flashback 等豁免标记的章节跳过。',
+        '本条恒为 info，永不计入退出码；带 flashback 等豁免标记的章节跳过。' +
+        '正文太短的章也不评，门槛与 R23/R25 是同一份（NWTension.QUOTAS 的 minBody：长篇 800、短篇 300），' +
+        '计数走 NWText.countWords 而不是 body.length —— 后者把标点算成字，对话密的章凭空多两成。',
       run(ctx) {
         const out = [];
         const items = ctx.promises?.items || [];
-        // 短篇换挡：短篇一章往往只有几百字（一章≈一屏到三屏），800 字门槛会漏掉大半
-        const isShort = ctx.book?.format === 'short';
-        const minBody = isShort ? 300 : 800;
+        // 档位与门槛都问 tension.js：短篇一章往往只有几百字（一章≈一屏到三屏），800 字门槛会漏掉大半
+        const isShort = Tension.isShort(ctx.book);
+        const q = Tension.quotaFor(ctx.book);
         for (const ch of ctx.chapters) {
           if (isExempt(ch)) continue;
           const body = (ch.body || '').trim();
-          if (body.length < minBody) continue; // 短章与空章不评钩子
+          if (T.countWords(body) < q.minBody) continue; // 短章与空章不评钩子
           const plants = items.some(
             (i) => i.type === 'promise' && i.setup?.chapter === ch.id && i.status !== 'cancelled',
           );
@@ -1579,7 +1581,7 @@
       run(ctx) {
         const volumes = ctx.volumes || [];
         if (!volumes.length) return [];
-        if (ctx.book?.format === 'short') return [];
+        if (Tension.isShort(ctx.book)) return [];
         const chapters = ctx.chapters || [];
         const plan = Vol.recapPlan({ chapters, currentId: null, volumes });
         const num = ctx.chapterNumbers;
@@ -1708,6 +1710,59 @@
             evidence: { basis: [...sides, `角色卡上有唯一的「${l.via.from === 'name' ? l.edge.from : l.edge.to}」`] },
             message: `关系边 ${name(l.from)}→${name(l.to)}（${l.kind || '未写关系类型'}）有一端写的是名字不是角色 id：连得上，但改一次名字就断。`,
             suggestion: '在面板里重选一次两端（保存即写成 id），这条边就不会随改名失联。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'chapter-length': {
+      code: 'R35',
+      defaultSeverity: 'info',
+      scope: 'chapter',
+      summary: '单章正文字数落在本书那一档区间之外：低于下限多半这一章还没做成一件事，高于上限是拆章信号。',
+      detail:
+        '区间只有一个出处：src/core/tension.js 的 CHAPTER_RANGE（长篇 1200-4000，短篇 400 字起、上不封顶），' +
+        '换挡读 book.format —— 与生成 prompt 里那句字数要求、评分卡、张力配额问的都是同一份判据。' +
+        '此前这个数写了三遍（prompt 承诺 3000-5000、规则按 1200-4000 判、界面另有第三档），' +
+        '于是模型照 prompt 的上限写满 5000 字，回头机检报它超上限 —— 两边都按自己那份数说话，谁也没错也谁都改不了。' +
+        '**短篇不封顶**是这份区间的一部分，不是漏写：短篇的「章」是一节，长度由总字数与投放平台定，' +
+        '而本书的短篇向导自己就写着「微型 3k-6k 字，1-2 章」「盐选 5 万字 / 6-10 章」，摊到单章最坏 8300 字 —— ' +
+        '给它安一个更小的上限等于机器天天报一个作者照着界面选出来的计划。' +
+        '计数一律走 NWText.countWords（汉字与英文单词各算一字，标点与空白不算），不是 body.length：' +
+        '后者把标点算成字，对话密一点的章凭空多出两成，正好和最不该误报的那类章撞上。' +
+        '正文空着的章不评（还没开写不是缺陷），带 flashback/dream/quoted/offscreen 标记的章不评 —— ' +
+        '那几类本来就允许只写几百字。恒为 info，永不进退出码：一章多长是排版与节奏的决定，' +
+        '机器只负责把「这一章落在哪一档的哪一头」说出来；过了 4000 字的高潮章不需要谁来判它该拆。',
+      run(ctx) {
+        const short = Tension.isShort(ctx.book);
+        const [lo, hi] = Tension.chapterRange(ctx.book);
+        const fmt = short ? '短篇' : '长篇';
+        const out = [];
+        for (const ch of ctx.chapters) {
+          if (isExempt(ch)) continue;
+          const body = (ch.body || '').trim();
+          if (!body) continue;
+          const words = T.countWords(body);
+          const low = words < lo;
+          const high = hi != null && words > hi;
+          if (!low && !high) continue;
+          const n = ctx.chapterNumbers.get(ch.id);
+          const at = n ? `第 ${n} 章` : ch.id;
+          out.push(diag('chapter-length', {
+            chapter: ch.id,
+            severity: 'info',
+            confidence: 1,
+            evidence: {
+              basis: [`countWords ${words} 字`, `本书按${fmt}那一档 ${Tension.rangeLabel(short ? 'short' : 'long')}`,
+                `body ${body.length} 字符（含标点，不参与判定）`],
+            },
+            message: low
+              ? `${at} 正文 ${words} 字，低于${fmt}那一档的下限 ${lo} 字 —— 差 ${lo - words} 字。`
+              : `${at} 正文 ${words} 字，高于${fmt}那一档的上限 ${hi} 字 —— 溢出 ${words - hi} 字。`,
+            suggestion: low
+              ? '这一章大概还没把一件事做完：接着写，或者并进相邻那章去。刻意写短章（收束、间章）忽略即可。'
+              : '先看是不是两件事挤在一章里：在中间那个转折处拆一刀，比删字更省力。刻意写长章忽略即可。',
           }));
         }
         return out;

@@ -48,7 +48,7 @@ if (sub === 'rubric') {
       { id: 'hook', label: '开篇钩子', judge: `一句话梗概／首章拍点／首章成稿结尾（≥${NWPitch.BODY_MIN_FOR_HOOK} 字才算）里有几处收在问句或突转上` },
       { id: 'diff', label: '题材差异', judge: `内置手写套路词表 ${NWPitch.CLICHE_WORDS.length} 个词命中数；给了 --against 再加一条大字符重合 ≥${NWPitch.SIMILAR_CUT} 算撞车` },
       { id: 'structure', label: '结构完整', judge: '每章有拍点／主角有性格／有对抗方或未收的伏笔，三项各一分' },
-      { id: 'length', label: '篇幅匹配', judge: `目标字数 ÷ 章数 落在单章区间：长篇 ${NWPitch.LENGTH_RANGE.long.join('–')}，短篇 ${NWPitch.LENGTH_RANGE.short.join('–')}` },
+      { id: 'length', label: '篇幅匹配', judge: `目标字数 ÷ 章数 落在单章区间：长篇 ${NWPitch.LENGTH_LABEL.long}，短篇 ${NWPitch.LENGTH_LABEL.short}` },
     ],
     thresholds: NWPitch.VERDICTS,
     words: NWPitch.CLICHE_WORDS,

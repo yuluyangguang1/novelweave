@@ -34,11 +34,13 @@
   const SIMILAR_CUT = 0.5;
 
   /**
-   * 单章字数的合理区间（含端点）。下限取自 NWTension.QUOTAS 的 minBody ——
-   * 低于它那一章连「基本成形」都不算；上限是网文读者的单次耐心，再长要拆章。
-   * 区间外但没超出 2 倍/低到 0.5 倍的，算「能调」而不是「崩了」。
+   * 单章字数的合理区间（含端点）—— **不在这里定，也不在这里抄**：
+   * 出处是 `NWTension.CHAPTER_RANGE`（同一份数字还要喂 prompt 与机检 R35，写第二遍就会各说各话）。
+   * 这里只是评分卡那一路的别名（同一个对象，不是复制）。区间外但没超出 2 倍/低到 0.5 倍的，算「能调」而不是「崩了」。
+   * 短篇那一档的 `hi` 是 null = 上不封顶，`LENGTH_LABEL` 负责把这一档说成人话。
    */
-  const LENGTH_RANGE = { long: [1200, 4000], short: [400, 4000] };
+  const LENGTH_RANGE = Tension.CHAPTER_RANGE;
+  const LENGTH_LABEL = { long: Tension.rangeLabel('long'), short: Tension.rangeLabel('short') };
   /** 张力来源：梗概里出现这些词，说明作者至少写清了「谁跟谁拧着」。 */
   const CONFLICT_RE = /但|却|然而|被迫|只能|必须|只剩|倒计时|秘密|隐瞒|追杀|对决|赌|欠|誓|不肯|无法|错过|来不及/;
   /** 首章正文要够长才值得按「成稿结尾」判钩子，否则拿大纲尾巴凑数。 */
@@ -178,7 +180,7 @@
   }
 
   function scoreLength(v) {
-    const range = LENGTH_RANGE[v.format === 'short' ? 'short' : 'long'];
+    const range = Tension.chapterRange({ format: v.format });
     if (!v.targetWords) {
       return { score: 0, reason: '没填目标字数', advice: '短篇在向导里选投放平台，长篇自己定一个总字数' };
     }
@@ -186,14 +188,17 @@
       return { score: 0, reason: `目标 ${v.targetWords} 字却一章都没有`, advice: '先出章纲，字数才有落点' };
     }
     const per = Math.round(v.targetWords / v.chapters.length);
-    if (per >= range[0] && per <= range[1]) {
-      return { score: 3, reason: `${v.chapters.length} 章摊 ${v.targetWords} 字，单章约 ${per} 字，落在 ${range[0]}–${range[1]} 的合理区间` };
+    const capped = range[1] != null;
+    if (per >= range[0] && (!capped || per <= range[1])) {
+      const hint = capped ? `${range[0]}–${range[1]}` : `${range[0]} 字以上`;
+      return { score: 3, reason: `${v.chapters.length} 章摊 ${v.targetWords} 字，单章约 ${per} 字，落在 ${hint} 的合理区间` };
     }
-    const outside = per > range[1] ? per / range[1] : range[0] / per;
-    const d = { score: outside <= 2 ? 2 : 1,
-      reason: `单章约 ${per} 字，${per > range[1] ? '超出' : '低于'}合理区间 ${range[0]}–${range[1]}`,
-      advice: per > range[1] ? '拆细章纲：把一章要做的事分成两三章，每章各留一个钩子' : '合并章纲：现在的章数撑不起这个字数' };
-    return d;
+    // 短篇那一档不封顶：走到这里只可能是「低于下限」（那一档的章是节，长度跟着总字数与投放平台走）
+    const over = capped && per > range[1];
+    const outside = over ? per / range[1] : range[0] / per;
+    return { score: outside <= 2 ? 2 : 1,
+      reason: over ? `单章约 ${per} 字，超出合理区间上限 ${range[1]}` : `单章约 ${per} 字，低于合理区间下限 ${range[0]} 字`,
+      advice: over ? '拆细章纲：把一章要做的事分成两三章，每章各留一个钩子' : '合并章纲：现在的章数撑不起这个字数' };
   }
 
   const DIMS = [
@@ -261,7 +266,7 @@
   }
 
   return {
-    PACK_VERSION, MAX_PER_DIM, CLICHE_WORDS, SIMILAR_CUT, LENGTH_RANGE, CONFLICT_RE,
+    PACK_VERSION, MAX_PER_DIM, CLICHE_WORDS, SIMILAR_CUT, LENGTH_RANGE, LENGTH_LABEL, CONFLICT_RE,
     BODY_MIN_FOR_HOOK, VERDICTS,
     viewOf, similarity, scorePitch, verdictOf, renderLines,
   };

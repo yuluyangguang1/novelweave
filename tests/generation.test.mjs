@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWContext, NWRules, NWSelfCheck, NWStory, NWStyleFit, NWText, NovelLLM } from './_load.mjs';
+import { NWContext, NWRules, NWSelfCheck, NWStory, NWStyleFit, NWTension, NWText, NovelLLM } from './_load.mjs';
 
 // ═══════════════ 夹具 ═══════════════
 
-// 960 字、无钩子词的"平淡正文"——够 R17 的 800 字门槛，结尾也不含悬念标记
+// 1080 字（NWText.countWords 口径，1260 字符）、无钩子词的"平淡正文"——够 R17 的 800 字门槛，结尾也不含悬念标记
 const PLAIN = '他往前走着，山道蜿蜒，两侧的松柏静静立着。'.repeat(60);
 // 夹带"风格锚点"的正文：锚点放在约 30% 处，风格样例从中段节选时必然带上
 const STYLED = '前'.repeat(250) + '风格锚点甲句。山影在他背后慢慢合拢。' + '后'.repeat(400);
@@ -327,6 +327,17 @@ test('runSelfCheck：干净草稿 → actionable 为空；书里既有的陈年�
   assert.ok(!sc.actionable.some((d) => d.rule === 'promise-overdue'));
 });
 
+test('runSelfCheck：R35 那条草稿太短的提示不许触发自修轮（info 不进 actionable）', () => {
+  const ctx = NWStory.buildCtx(rows());
+  const draft = '他往前走。'.repeat(30); // 120 字，低于长篇那一档的下限 1200 字
+  const sc = NWSelfCheck.runSelfCheck(ctx, { chapterId: 'ch-003', draft });
+  const hit = sc.diags.find((d) => d.rule === 'chapter-length' && d.chapter === 'ch-003');
+  assert.ok(hit, '草稿只有 120 字，R35 该说一句话');
+  assert.equal(hit.severity, 'info', '长度是节奏决定，不是缺陷');
+  assert.ok(!sc.actionable.some((d) => d.rule === 'chapter-length'),
+    '把 R35 抬成 warn 等于让机器花用户的 API 额度去凑字数');
+});
+
 test('runSelfCheck：空草稿直接短路', () => {
   const ctx = NWStory.buildCtx(rows());
   const sc = NWSelfCheck.runSelfCheck(ctx, { chapterId: 'ch-003', draft: '  ' });
@@ -395,8 +406,8 @@ test('前情摘要三级衰减：12 细 / 24 章名 / 更早只报数量', () =>
   assert.ok(recap.includes('更早 4 章，需要时回读原章'), '最老 4 章只报数量');
 });
 
-test('R17 短篇阈值：400 字章节长篇不评、短篇评', () => {
-  const body = '平淡叙事。'.repeat(66) + '灯灭了。'; // ~330 字 + 钩子词被去掉
+test('R17 短篇阈值：320 字（404 字符）的章长篇不评、短篇评', () => {
+  const body = '平淡叙事。'.repeat(80) + '灯灭了。'; // 404 字符 / 323 字，去掉钩子词
   const noHook = (fmt) => {
     const r = rows({
       novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: fmt },
@@ -410,7 +421,7 @@ test('R17 短篇阈值：400 字章节长篇不评、短篇评', () => {
 });
 
 test('R17 短篇：提示语知道自己是短篇', () => {
-  const body = '平淡叙事。'.repeat(66);
+  const body = '平淡叙事。'.repeat(80);
   const r = rows({
     novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: 'short' },
     chapters: [{ id: 'ch-001', order: 1, title: '一', content: body }],
@@ -419,6 +430,24 @@ test('R17 短篇：提示语知道自己是短篇', () => {
   const diags = NWRules.runRules(NWStory.buildCtx(r), { only: ['chapter-end-hook'] });
   const hit = diags.find((d) => d.rule === 'chapter-end-hook');
   assert.ok(hit.suggestion.includes('屏末'), '短篇的钩子话术应该是"屏末"');
+});
+
+test('R17 的门槛按 countWords 数：标点密的章不会被字符数抬进评审（两个方向都钉）', () => {
+  // 这一条钉的是本批的**行为变化**：旧口径 body.length 会把 350 字符的章当 350 字评，
+  // 新口径按 NWText.countWords 只算 280 字 —— 一章对话密、标点多的短章从此不被催补钩子。
+  // 门槛本身也问 NWTension，R17 不再自己写 300/800。
+  const dense = '平淡叙事。'.repeat(70); // 350 字符 / 280 字
+  const loose = '平淡叙事'.repeat(88);  // 352 字符 / 352 字
+  assert.equal(NWText.countWords(dense), 280);
+  assert.ok(dense.length >= NWTension.QUOTAS.short.minBody,
+    '夹具得是「旧口径会进评审、新口径不会」那种，否则这条断言什么都没钉');
+  const run = (body) => NWRules.runRules(NWStory.buildCtx(rows({
+    novel: { id: 'n', title: '问剑', genre: '仙侠', description: '', format: 'short' },
+    chapters: [{ id: 'ch-001', order: 1, title: '一', content: body }],
+    promises: [],
+  })), { only: ['chapter-end-hook'] });
+  assert.equal(run(dense).filter((d) => d.rule === 'chapter-end-hook').length, 0, '280 字没到短篇 300 门槛：不评');
+  assert.ok(run(loose).some((d) => d.rule === 'chapter-end-hook'), '352 字过了门槛：要评');
 });
 
 // ═══════════════ R18 物品失而复得 ═══════════════
@@ -722,6 +751,24 @@ test('短篇版式用的是短篇那一档门槛', () => {
   const prompt = CONT({ novel: { id: 'novel_g', title: '问剑', genre: '仙侠', format: 'short' } });
   assert.match(prompt, /对话占到 10% 以上，连续 600 字/);
   assert.ok(!prompt.includes('连续 800 字'), '长篇的门槛串进了短篇');
+});
+
+test('prompt 那句字数要求与机检同一档：长篇 1200-4000、短篇 400 字起不封顶', () => {
+  assert.match(CONT(), /字数要求：单章正文 1200-4000 字/);
+  const s = CONT({ novel: { id: 'novel_g', title: '问剑', genre: '仙侠', format: 'short' } });
+  assert.match(s, /字数要求：单章正文 400 字以上/);
+  assert.ok(!s.includes('400-4000'), '短篇没有上限，prompt 不该编一个出来');
+  assert.ok(!CONT().includes('3000-5000'), '旧的那份写死数字不许回来');
+});
+
+test('模型照 prompt 的上限写满，机检不许报它超上限（两处数字分家就红）', () => {
+  const [, lo, hi] = CONT().match(/字数要求：单章正文 (\d+)-(\d+) 字/);
+  const run = (n) => NWRules.runRules(NWStory.buildCtx(rows({
+    chapters: [{ id: 'ch-001', order: 1, title: '一', content: '字'.repeat(n) }],
+  }))).filter((d) => d.rule === 'chapter-length');
+  assert.equal(run(Number(hi)).length, 0, `prompt 让模型写到 ${hi} 字，R35 却报它超上限`);
+  assert.equal(run(Number(lo)).length, 0, `prompt 让模型写到 ${lo} 字，R35 却报它低于下限`);
+  assert.equal(run(Number(hi) + 1).length, 1, '端点之内都免报，超出一个字才报');
 });
 
 test('复述约束在写作要求那一串里（R26 的预防那一半，不只事后报）', () => {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWVolume, NWRelationGraph } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWTension, NWPitch, NWVolume, NWRelationGraph } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -1679,4 +1679,64 @@ test('工作流预设这条路在技能文档里找得到，文档里的数不�
   assert.match(ref, /`clears`/, '文档只写了「落不下」那一面，反方向（换长篇时清掉目标）没人说，读到「照旧」的人会以为那个数还在');
   assert.match(read('README.md'), /schemas\/workflow\.v1\.json/, 'README 的格式定义少了一份对外格式，作者与 agent 都不知道有它');
   assert.match(read('schemas/workflow.v1.json'), /src\/core\/workflow\.js/, 'schema 没说判据在哪，读到它的人只会去猜另一份实现');
+});
+
+// ═══════════════ W 族：单章字数那一份数字 ═══════════════
+
+test('单章字数那三个数只写在 tension.js：数组字面量不许有第二处', () => {
+  // 「3000-5000 / 1200-4000 / 界面另一档」写过三遍的代价是：模型照 prompt 的上限写满，
+  // 机检按另一档报它超上限，两边各自的测试都绿。现在数字只有一个家。
+  const files = [...readdirSync(repoPath('src/core')).filter((f) => f.endsWith('.js')).map((f) => `src/core/${f}`),
+    'src/app.js',
+    ...readdirSync(repoPath('scripts')).filter((f) => f.endsWith('.mjs')).map((f) => `scripts/${f}`)];
+  const re = /\[\s*1200\s*,\s*4000\s*\]|\[\s*400\s*,\s*(?:4000|null)\s*\]/;
+  const hits = files.filter((f) => f !== 'src/core/tension.js' && re.test(read(f)));
+  assert.deepEqual(hits, [], `这几份文件里抄了字数区间：${hits.join('、')}`);
+  assert.deepEqual(NWTension.CHAPTER_RANGE, { long: [1200, 4000], short: [400, null] },
+    '改了档位就得把这条与它的下游（prompt / R35 / 评分卡）一起改口');
+  assert.equal(NWTension.CHAPTER_RANGE.short[1], null,
+    '短篇这一档的上限必须是 null：界面自己承诺「微型 6k 字 1 章」「盐选 5 万 / 6-10 章」，写个数就是天天报作者照着向导选的规划');
+});
+
+test('规则里不许有第二份「算不算短篇」，也不许有第二份评审门槛', () => {
+  const rules = read('src/core/rules.js');
+  assert.doesNotMatch(rules, /format\s*===\s*'short'/,
+    '换挡判断在规则里再写一遍，就会出现「R23 按短篇档、R17 按长篇档」这种同书两档');
+  assert.doesNotMatch(rules, /isShort\s*\?\s*\d+\s*:\s*\d+/, '门槛数字抄进规则就与 QUOTAS 分家');
+  assert.doesNotMatch(rules, /body\.length\s*<\s*\w*[Mm]in/,
+    '按字符数评门槛会把标点算成字，对话密的章被凭空抬进评审');
+  assert.match(rules, /const isShort = Tension\.isShort\(ctx\.book\);/);
+  assert.match(rules, /if \(T\.countWords\(body\) < q\.minBody\) continue;/);
+  assert.match(rules, /const \[lo, hi\] = Tension\.chapterRange\(ctx\.book\);/);
+  assert.match(rules, /hi != null && words > hi/, '上限可能是 null（短篇不封顶），直接比较会把 null 当 0 判成超标');
+  // 动笔前那句承诺是这一串判据的上游：它一旦写死数字，模型照它写满、机检照另一档报超标，
+  // 两条测试各绿各的。
+  const llm = read('src/core/llm.js');
+  assert.match(llm, /const \[lo, hi\] = Tension\.chapterRange\(book\);/,
+    'prompt 那句字数要求没问同一份区间');
+  assert.doesNotMatch(llm, /单章正文 \d/, '字数直接写在 prompt 里就是第三份区间');
+});
+
+test('评分卡那份区间与 core 是同一个对象：别名可以，抄表不行', () => {
+  // CLI 的人读文案念的是 NWPitch.LENGTH_RANGE；它一旦是另拼的一份字面量，
+  // 「评分卡说合理、机检说超长」就回来了。
+  assert.equal(NWPitch.LENGTH_RANGE, NWTension.CHAPTER_RANGE, '不是同一个对象就是抄了一份');
+  assert.doesNotMatch(read('src/core/pitch.js'), /LENGTH_RANGE\[/,
+    '拿别名自己按 format 挑档，就是在 core 的换挡之外另算一遍');
+  assert.match(read('src/core/pitch.js'), /Tension\.chapterRange\(\{ format: v\.format \}\)/);
+});
+
+test('两份文档里那句单章区间跟着 core 走，不写自己的数', () => {
+  const R = NWTension.CHAPTER_RANGE;
+  const long = NWTension.rangeLabel('long').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const short = NWTension.rangeLabel('short').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const doc = read('skills/novelweave-continuity/references/rules.md');
+  assert.match(doc, new RegExp(`长篇那一档 ${long}；短篇那一档 ${short}`),
+    'rules.md 里那句区间与 core 那份不是同一个数（或话术没跟着 rangeLabel 走）');
+  assert.ok(NWPitch.LENGTH_LABEL.short === NWTension.rangeLabel('short')
+    && NWPitch.LENGTH_LABEL.long === NWTension.rangeLabel('long'),
+    '评分卡那份话术不是从 CHAPTER_RANGE 算出来的');
+  const card = read('skills/novelweave/references/pitch-card.md');
+  assert.match(card, new RegExp(`long: \\[${R.long[0]}, ${R.long[1]}\\], short: \\[${R.short[0]}, ${R.short[1]}\\]`),
+    'pitch-card.md 写死了自己的档位数字');
 });

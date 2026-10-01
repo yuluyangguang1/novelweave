@@ -63,15 +63,26 @@ const NW_LLM_PRESETS = {
 
   // ═══════════════════ Prompt 构造 ═══════════════════
 
-  const WRITING_RULES = (genre) => `写作要求：
+  /**
+   * 写作要求那一段。**字数这一句必须与机检同一个数**（出处 `NWTension.CHAPTER_RANGE`）：
+   * 以前这里写死「3000-5000」，而机检按另一档看，于是模型照承诺写满五千字，回头被报超上限 ——
+   * 作者看到的是「我自己写的要求惩罚了我」。
+   */
+  const WRITING_RULES = (book) => {
+    const [lo, hi] = Tension.chapterRange(book);
+    const words = hi == null
+      ? `- 字数要求：单章正文 ${lo} 字以上（短篇的章是一节，长度跟着总字数与投放平台走，这一档不封顶）`
+      : `- 字数要求：单章正文 ${lo}-${hi} 字（这一档按整本书的篇幅算：${lo} 字以下这一章基本没做成一件事，超过 ${hi} 字是拆章信号）`;
+    return `写作要求：
 - 保持角色性格和说话方式一致，已建立的设定不得自相矛盾
 - 剧情自然推进，不要跳跃
 - 已死亡或下落不明的人物不得凭空行动；外貌特征受已登记的变化区间约束
 - 登记在册的人物、地点与设定，第一次写到时要点名，别只用「他」「那个地方」带过
 - 承接上一章要用自己的话重述，不要照抄前文整句；同一章里同一句不要写两遍
-- 风格：${genre || '玄幻小说'}
-- 字数要求 3000-5000 字
+- 风格：${(book && book.genre) || '玄幻小说'}
+${words}
 - 只输出小说正文，不要任何解释`;
+  };
 
   /**
    * 「去 AI 味」清单进 prompt。放在写之前而不是只放在生成后自检里，是因为自检那一轮
@@ -105,7 +116,7 @@ const NW_LLM_PRESETS = {
     const built = NWContext.buildSections(opts.ctx, {
       chapterId: opts.chapterId, budget: opts.budget, style: opts.style, embedHits: opts.embedHits,
     });
-    const rules = WRITING_RULES(opts.ctx?.book?.genre)
+    const rules = WRITING_RULES(opts.ctx?.book)
       + tensionRules(opts.ctx)
       + antiAiRules(opts.ctx?.book)
       + (opts.extraInstructions ? `\n- ${opts.extraInstructions}` : '');

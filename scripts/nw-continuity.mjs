@@ -31,6 +31,7 @@ const ALIAS = {
   R32: 'style-drift',
   R33: 'volume-gap',
   R34: 'relation-gap',
+  R35: 'chapter-length',
 };
 
 function resolveRuleNames(list) {

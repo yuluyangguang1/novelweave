@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWRules, NWVolume, NWRelationGraph } from './_load.mjs';
+import { NWRules, NWText, NWTension, NWVolume, NWRelationGraph } from './_load.mjs';
 
 const ch = (n, over = {}) => ({
   id: `ch-00${n}`, number: n, title: `第${n}章`, status: 'draft',
@@ -1320,4 +1320,105 @@ test('R34 与那张图同一个数：报出去的每一类都等于 NWRelationGr
   assert.equal(spoken(/填反了/), g.links.filter((x) => x.range.reason === 'reversed').length);
   assert.equal(spoken(/名字不是角色 id/), g.links.filter((x) => x.via.from === 'name' || x.via.to === 'name').length);
   assert.match(d[0].message, new RegExp(`${g.counts.skipped} 条关系边`), d[0].message);
+});
+
+// ═══════════════ R35 单章字数 ═══════════════
+
+const bodyOf = (n) => '字'.repeat(n);
+// 数字都写死（1200 / 4000 / 400）：断言若写成「等于 chapterRange 给的数」，
+// 改了 CHAPTER_RANGE 两头一起变，测试照样绿 —— 那正是这个项目反复中招的假绿。
+const lenDiags = (body, bookOver = {}) => of(NWRules.runRules(ctx({
+  book: { id: 'novel_t', title: '测试书', genre: '玄幻', ...bookOver },
+  chapters: [ch(1, { body })],
+})), 'chapter-length');
+
+test('R35 长篇低于下限 → info，说清是下限、差多少字', () => {
+  const d = lenDiags(bodyOf(900));
+  assert.equal(d.length, 1, d.map((x) => x.message).join(' / '));
+  assert.equal(d[0].severity, 'info', '一章多长是节奏决定，不许命令作者');
+  assert.equal(d[0].chapter, 'ch-001');
+  assert.match(d[0].message, /第 1 章 正文 900 字，低于长篇那一档的下限 1200 字/);
+  assert.match(d[0].message, /差 300 字/);
+  assert.ok(d[0].evidence.basis.includes('countWords 900 字'), JSON.stringify(d[0].evidence.basis));
+  assert.ok(d[0].evidence.basis.includes('本书按长篇那一档 1200-4000 字'));
+  assert.match(d[0].suggestion, /并进相邻那章/);
+});
+
+test('R35 长篇高于上限 → info，说的是溢出多少字与拆章', () => {
+  const d = lenDiags(bodyOf(4200));
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'info');
+  assert.match(d[0].message, /4200 字，高于长篇那一档的上限 4000 字/);
+  assert.match(d[0].message, /溢出 200 字/);
+  assert.match(d[0].suggestion, /转折处拆一刀/);
+});
+
+test('R35 区间内不报，两个端点都算达标', () => {
+  for (const n of [1200, 4000, 2000]) {
+    assert.deepEqual(lenDiags(bodyOf(n)), [], `${n} 字该免报`);
+  }
+});
+
+test('R35 换挡只看 book.format：同一章长篇报「低于下限」、短篇不报', () => {
+  const d = lenDiags(bodyOf(500));
+  assert.equal(d.length, 1, '500 字在长篇档低于 1200');
+  assert.match(d[0].message, /低于长篇那一档的下限 1200 字/);
+  assert.deepEqual(lenDiags(bodyOf(500), { format: 'short' }), [], '短篇档下限 400，这章达标');
+  const s = lenDiags(bodyOf(300), { format: 'short' });
+  assert.equal(s.length, 1);
+  assert.match(s[0].message, /低于短篇那一档的下限 400 字 —— 差 100 字/);
+  assert.ok(s[0].evidence.basis.includes('本书按短篇那一档 400 字起，上不封顶'), JSON.stringify(s[0].evidence.basis));
+  // 认不出的 format 落回长篇，与 NWTension.quotaFor 同一口径
+  assert.match(lenDiags(bodyOf(500), { format: 'novella' })[0].message, /长篇那一档/);
+});
+
+test('R35 短篇上不封顶：向导自己承诺的形状不许天天报', () => {
+  // llm.js 那三档写着「微型 3k-6k 字，1-2 章」「盐选 5 万字 / 6-10 章」，摊到单章最坏 8300 字。
+  // 给短篇安上限就是机器在报作者照着界面选出来的计划 —— 这一条钉的是「不该报」。
+  assert.deepEqual(lenDiags(bodyOf(6000), { format: 'short' }), [], '微型档一章 6000 字是本书自己承诺的');
+  assert.deepEqual(lenDiags(bodyOf(20000), { format: 'short' }), [], '短篇再长也不封顶');
+  // 反方向：长篇那一头的上限还在，别把「不封顶」做成两边都不封顶
+  const long = lenDiags(bodyOf(6000));
+  assert.equal(long.length, 1, '同样 6000 字在长篇档仍要说一句');
+  assert.match(long[0].message, /高于长篇那一档的上限 4000 字 —— 溢出 2000 字/);
+});
+
+test('R35 空章与没开写的章不评', () => {
+  for (const body of ['', '   \n　  ', undefined, null]) {
+    assert.deepEqual(lenDiags(body), [], JSON.stringify(body));
+  }
+});
+
+test('R35 豁免标记的章不评，但 montage 不在豁免里', () => {
+  for (const flag of ['flashback', 'dream', 'quoted', 'offscreen']) {
+    const diags = of(NWRules.runRules(ctx({
+      chapters: [ch(1, { body: bodyOf(900), flags: [flag] })],
+    })), 'chapter-length');
+    assert.deepEqual(diags, [], `${flag} 章不该被评字数`);
+  }
+  const montage = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: bodyOf(900), flags: ['montage'] })],
+  })), 'chapter-length');
+  assert.equal(montage.length, 1, 'montage 不是豁免标记，短了照样说');
+});
+
+test('R35 数的是 countWords 不是字符数：一堆标点抬不进区间', () => {
+  const body = `${bodyOf(1150)}${'，。！？、；：'.repeat(60)}`; // 1570 字符 / 1150 字
+  assert.ok(body.length > 1200, '夹具得是「按字符数已达标」那种，否则什么都没钉');
+  assert.equal(NWText.countWords(body), 1150);
+  const d = lenDiags(body);
+  assert.equal(d.length, 1, d.map((x) => x.message).join(' / '));
+  assert.match(d[0].message, /正文 1150 字/);
+  assert.ok(d[0].evidence.basis.some((b) => /body 1570 字符（含标点，不参与判定）/.test(b)),
+    JSON.stringify(d[0].evidence.basis));
+});
+
+test('R35 不碰目标字数，也不因一章超上限而重复报', () => {
+  assert.deepEqual(lenDiags(bodyOf(900), { target_words: 300000 }).map((x) => x.chapter), ['ch-001'],
+    '总字数是计划那一路的事，评分卡的 length 维才比它');
+  const many = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: bodyOf(900) }), ch(2, { body: bodyOf(5000) })],
+  })), 'chapter-length');
+  assert.equal(many.length, 2, JSON.stringify(many.map((x) => x.message)));
+  assert.equal(new Set(many.map((x) => x.fingerprint)).size, 2, '两章两条，指纹不得撞车');
 });
