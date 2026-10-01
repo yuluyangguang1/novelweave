@@ -386,7 +386,7 @@ async function renderHomePage() {
         <span>${esc(n.genre)}</span>
         <span>${n.chapter_count || 0} 章</span>
         <span>${formatWordCount(n.word_count)}</span>
-        ${NWTension.isShort(n) ? '<span>短篇</span>' : ''}
+        ${NWTension.isShort(n) ? `<span>${esc(NWTension.formatLabel(n))}</span>` : ''}
         <span>${esc(d)}</span>
       </div>
       </div>
@@ -410,8 +410,8 @@ function showCreateNovel() {
       <input class="settings-input" id="inp-novel-title" placeholder="输入小说名字" maxlength="50"></div>
     <div class="settings-field"><label class="settings-label">织物规格</label>
       <select class="settings-select" id="inp-novel-format">
-        <option value="long">长篇连载 —— 卷 / 时间线 / 状态矩阵 / 滚动前情</option>
-        <option value="short">短篇 —— 几千至三万字，上下文全量注入，机检更密</option>
+        <option value="long">${NWTension.formatLabel('long')} —— 卷 / 时间线 / 状态矩阵 / 滚动前情</option>
+        <option value="short">${NWTension.formatLabel('short')} —— 几千至三万字，上下文全量注入，机检更密</option>
       </select></div>
     <div class="settings-field"><label class="settings-label">类型</label>
       <select class="settings-select" id="inp-novel-genre">
@@ -579,7 +579,7 @@ async function showConceptConfirm(concept, genre, targetWords = null) {
     if (!form.title) { showToast('书名不能为空'); return; }
     if (!form.chapters.length) { showToast('至少要有一章'); return; }
     const novel = await NovelDB.novels.create({
-      title: form.title, genre: genre === '不限' ? '短篇' : genre,
+      title: form.title, genre: genre === '不限' ? '不限' : genre,
       description: form.logline, format: 'short', targetWords,
     });
     for (const c of form.characters) await NovelDB.characters.create(novel.id, c);
@@ -740,7 +740,7 @@ async function showLongConceptConfirm(concept, genre) {
     if (!form.title) { showToast('书名不能为空'); return; }
     if (!form.chapters.length) { showToast('至少要有一章'); return; }
     const novel = await NovelDB.novels.create({
-      title: form.title, genre: genre === '不限' ? '长篇' : genre,
+      title: form.title, genre: genre === '不限' ? '不限' : genre,
       description: form.logline, format: 'long',
     });
     for (const c of form.characters) await NovelDB.characters.create(novel.id, c);

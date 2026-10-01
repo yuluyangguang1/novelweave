@@ -1737,7 +1737,7 @@
       run(ctx) {
         const fmt = Tension.fmtOf(ctx.book);
         const [lo, hi] = Tension.chapterRange(ctx.book);
-        const zh = fmt === 'short' ? '短篇' : '长篇';
+        const zh = Tension.formatLabel(fmt);
         const out = [];
         for (const ch of ctx.chapters) {
           if (isExempt(ch)) continue;

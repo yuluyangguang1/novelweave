@@ -9,10 +9,13 @@
 
 预设只带那三格设置（清单出自 `NWWorkflow.FIELDS`，界面、CLI、schema 都问它要）：
 
-- **篇幅档** —— 短篇还是长篇连载。它决定上下文与规则阈值怎么换挡。只有两个值，出处是
-  `NWTension.FORMATS`（`NWWorkflow.FORMATS` 是它的别名，两份 schema 的 `enum` 与建书下拉都对着它比）。
-  这一格在两边规矩不同：**预设**里写一个认不出的档，过闸当场判坏，不会静默落回某档；
-  **书**那一格认不出的写法由 `NWTension.formatKey` 归成长篇（不 trim、不改大小写）。
+- **篇幅档** —— 短篇还是长篇。它决定上下文与规则阈值怎么换挡。只有两个值，出处是
+  `NWTension.FORMATS`（`NWWorkflow.FORMATS` 是它的别名，两份 schema 的 `enum` 与建书下拉都对着它比）；
+  对人念那一档只有 `NWTension.formatLabel` 一个出处 —— 逐格 diff 那一行的「短篇/长篇」就是它，
+  认不出的值按长篇念，不许把脏值原样回显。这一格在两边规矩不同：
+  **预设**里写一个认不出的档，过闸当场判坏，不会静默落回某档；
+  **书**那一格认不出的写法由 `NWTension.formatKey` 归成长篇
+  （不 trim、不改大小写）。
 - **全篇字数目标** —— 只给短篇用；「这一档有没有那一格」与「这个数本身算不算一个目标」各有一句，
   都在 `src/core/tension.js`：打包那一路问 `NWTension.targetOf`（短篇才看那个数），
   认不出档与长篇一律留空；下限 `NWTension.TARGET_MIN` 与书存档用的是同一个数

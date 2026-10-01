@@ -1891,3 +1891,51 @@ test('Y 的规格写进了文档，且点名 core 那两句', () => {
   const schema = read('skills/novelweave/references/schema-v1.md');
   assert.match(schema, /`NWTension\.TARGET_MIN`/, 'schema 文档里的下限没点名出处');
 });
+
+// ═══════════════ Z 族：那一档对人叫什么 ═══════════════
+
+test('档名只有一个说法：src、scripts、schemas 里不许再出现「长篇连载」，也不许手抄档名三元', () => {
+  const files = ['src/core/tension.js', 'src/core/workflow.js', 'src/core/rules.js', 'src/core/llm.js',
+    'src/core/pitch.js', 'src/core/context.js', 'src/core/project.js', 'src/core/story.js', 'src/core/db.js',
+    'src/core/stylepack.js', 'src/core/volumes.js', 'src/core/relationgraph.js', 'src/core/statescope.js',
+    'src/core/stylefit.js', 'src/core/text.js', 'src/app.js', 'src/demo.js',
+    'scripts/nw-workflow.mjs', 'scripts/nw-pitch.mjs', 'scripts/nw-continuity.mjs', 'scripts/nw-context.mjs',
+    'scripts/nw-validate.mjs', 'scripts/nw-style.mjs', 'scripts/nw-prose.mjs', 'scripts/nw-io.mjs', 'scripts/nw-changes.mjs',
+    'schemas/story-bible.v1.json', 'schemas/workflow.v1.json'];
+  // README 那句「长篇连载与短篇」是产品宣传语，不是某一本书的档名，刻意不在扫描范围里。
+  const hits = files.filter((f) => /长篇连载/.test(read(f)));
+  assert.deepEqual(hits, [], `同一档三个名字就是这么长回来的（FORMAT_LABEL 一个、R35 一个、schema 一个）：${hits.join('、')}`);
+  const ternary = files.filter((f) => f !== 'src/core/tension.js'
+    && /['"]短篇['"]\s*:\s*['"]长篇['"]|['"]长篇['"]\s*:\s*['"]短篇['"]/.test(read(f)));
+  assert.deepEqual(ternary, [], `档名话术被抄了第二份（X 之前九处换挡的表亲）：${ternary.join('、')}`);
+});
+
+test('读档名的四处各自点名 core 那张表，绕过它就是让同一本书换一个名字', () => {
+  const n = (f, re) => (read(f).match(new RegExp(re.source, 'g')) || []).length;
+  const wf = read('src/core/workflow.js');
+  assert.equal(n('src/core/rules.js', /Tension\.formatLabel\(/), 1, 'R35 那一句的 zh 不许再自己写三元');
+  assert.equal(n('src/core/workflow.js', /Tension\.formatLabel/), 1, '工作流那份必须是指向 core 的别名，不许自起一份');
+  assert.match(wf, /return formatLabel\(v\);/, '逐格 diff 的 format 行不许 String(v) 原样回显脏值');
+  assert.equal(n('src/app.js', /NWTension\.formatLabel\(/), 3, '书封标记一枚 + 建档下拉两个 option，全在 core 那张表上');
+  assert.doesNotMatch(wf, /FORMAT_LABEL\s*=/, '工作流不许再有自己的话术表 —— 别名也不行，那是第二份表的第一步');
+});
+
+test('schema 的 format description 与 core 那张表说的是同一对名字（改名字要连声明一起改）', () => {
+  const schema = JSON.parse(read('schemas/story-bible.v1.json'));
+  const desc = schema.$defs.book.properties.format.description;
+  assert.ok(desc.includes(NWTension.FORMAT_LABEL.long), 'description 必须含 core 的长篇档名');
+  assert.ok(desc.includes(NWTension.FORMAT_LABEL.short), 'description 必须含 core 的短篇档名');
+});
+
+test('「题材不限」那一路不许再把档名塞进 genre 这一格', () => {
+  // 短篇/长篇向导都曾把档名写进题材表 —— 档名有自己的家（FORMAT_LABEL），genre 是另一张表。
+  assert.doesNotMatch(read('src/app.js'), /'不限's*?s*'(短篇|长篇)'/,
+    'genre 存档名，书卡与评分卡就会把档当成题材念出来');
+});
+
+test('Z 的规格写进了文档并点名 formatLabel', () => {
+  assert.match(read('skills/novelweave-continuity/references/rules.md'), /`NWTension\.formatLabel\(?/,
+    '档名话术的出处没点名，下一个界面就会照旧手抄');
+  assert.match(read('skills/novelweave/references/workflow-preset.md'), /`NWTension\.formatLabel\(?/,
+    '预设那份文档还在念旧名');
+});

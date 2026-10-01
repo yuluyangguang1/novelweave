@@ -47,7 +47,7 @@
    * 预设过闸那一句「篇幅档只认 …」都要对着同一份清单核（见 tests/guards 那三条）。
    */
   const FORMATS = Tension.FORMATS;
-  const FORMAT_LABEL = { short: '短篇', long: '长篇连载' };
+  const formatLabel = Tension.formatLabel;
 
   /**
    * 字数目标的下限。**不在这里定**：出处是 `NWTension.TARGET_MIN`（那一份又对着 schemas
@@ -244,7 +244,7 @@
 
   function valueText(key, v) {
     if (v === undefined) return '（这一格没设）';
-    if (key === 'format') return FORMAT_LABEL[v] || String(v);
+    if (key === 'format') return formatLabel(v);
     if (key === 'target_words') return `${v} 字`;
     return packSummary(v);
   }

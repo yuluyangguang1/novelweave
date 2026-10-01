@@ -302,7 +302,7 @@ ${chText}
 
   function buildLongConceptPrompt({ idea, genre, volumes = 3 }) {
     const chs = Math.min(12, volumes * 4);
-    return `你是资深网文策划编辑。根据作者的想法，为一部长篇连载生成全书骨架。
+    return `你是资深网文策划编辑。根据作者的想法，为一部长篇生成全书骨架。
 
 【题材】${genre || '玄幻'}
 【计划卷数】约 ${volumes} 卷

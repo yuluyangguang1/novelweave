@@ -182,6 +182,21 @@
   function minFormat(books) { return (books || []).some(isShort) ? 'short' : DEFAULT_FORMAT; }
 
   /**
+   * 每一档对人说什么。X 收掉了「算哪一档」，Y 收掉了「有没有目标」，这里收的是「那一档叫什么」——
+   * 以前长篇这一档在逐格 diff、机检、schema 三处各有各的叫法，同一本书三个名字，读起来像三档。
+   * 归一走 formatKey：认不出的值按长篇念，与库里投影同一条判据，
+   * 所以界面与 CLI 永远不会把 'SHORT'、'zhong' 这样的脏值原样念给作者听。
+   * 预设字段那一格的名字「篇幅档」（FIELD_LABEL）与建档弹窗的「织物规格」说的是 format 这一个概念，
+   * 那是两个语域不是两份判据，不归这张表管 —— 见 rules.md 的 Z 族。
+   */
+  const FORMAT_LABEL = { short: '短篇', long: '长篇' };
+
+  /** 这一档对人说什么。对象（库行/ctx.book）先问档再查表，其余来路把值本身过归一。 */
+  function formatLabel(value) {
+    return FORMAT_LABEL[typeof value === 'object' && value !== null ? fmtOf(value) : formatKey(value)];
+  }
+
+  /**
    * 字数目标的下限。**这个数不是这儿首创**：它写在 schemas/story-bible.v1.json 与
    * schemas/workflow.v1.json 的 `target_words.minimum` 里，也就是「这一格什么算合法」那份声明；
    * 守卫拿那两份 schema 对着它核。低于下限的数（和不是整数的数）等于没设 ——
@@ -268,7 +283,7 @@
 
   return {
     PACK_VERSION, QUOTAS, CHAPTER_RANGE, HOOK_LABEL, rangeLabel,
-    FORMATS, DEFAULT_FORMAT, formatKey, fmtOf, minFormat,
+    FORMATS, DEFAULT_FORMAT, formatKey, fmtOf, minFormat, FORMAT_LABEL, formatLabel,
     TARGET_MIN, targetValue, targetOf,
     dialogueSpans, stats, hookKind, tailOf, isShort, quotaFor, chapterRange, tally, promptBlock,
   };

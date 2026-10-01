@@ -317,3 +317,17 @@ test('targetOf：长篇没有那一格，短篇也要先是个像样的数；库
   assert.equal(NWTension.targetOf({ format: 'short' }), null);
   assert.equal(NWTension.targetOf(null), null, '残缺输入不许抛');
 });
+
+// ═══════════════ Z 族：那一档对人叫什么 ═══════════════
+
+test('formatLabel：短篇/长篇各只有一个说法，认不出的值按长篇念（与归一同一句），绝不把脏值原样念出来', () => {
+  assert.equal(NWTension.formatLabel('short'), '短篇');
+  assert.equal(NWTension.formatLabel('long'), '长篇');
+  assert.equal(NWTension.formatLabel({ format: 'short' }), '短篇', '库行/ctx.book 那一形状也接：对象先问档再查表');
+  assert.equal(NWTension.formatLabel({ format: 'zhong', target_words: 8000 }), '长篇', '脏档按长篇念，与库里投影同一条判据');
+  for (const dirty of ['SHORT', ' short', 'zhong', '', null, undefined, 0]) {
+    assert.equal(NWTension.formatLabel(dirty), '长篇', `${JSON.stringify(dirty)} 认不出按长篇念 —— 界面与 CLI 不许把脏值原样念给作者`);
+  }
+  assert.deepEqual(Object.keys(NWTension.FORMAT_LABEL).sort(), [...NWTension.FORMATS].sort(),
+    '话术表的键与档位清单必须一一对应：加一档忘了给名字，那一档在界面上就是 undefined');
+});

@@ -158,11 +158,21 @@ test('diff 逐格说「现在 / 预设 / 会不会变」，只比预设真带的
   });
   assert.deepEqual(rows.map((r) => r.key), ['format', 'target_words', 'stylePack']);
   assert.deepEqual(rows.map((r) => r.changed), [false, true, true]);
+  assert.equal(rows[0].current, '短篇', '档名那一行的值也走 core 那张表，不许界面自己拼');
+  assert.equal(rows[0].incoming, '短篇');
   assert.equal(rows[1].current, '8000 字');
   assert.equal(rows[1].incoming, '3000 字');
   assert.match(rows[2].current, /关掉 1 组：段尾金句/);
   assert.match(rows[2].current, /自添 2 个禁词/);
   assert.equal(rows[2].incoming, `${SP.GROUPS.length} 组全开`);
+});
+
+test('format 那一行的值先过归一：脏档按长篇念，不许把原值原样抄进面板', () => {
+  // 显示念归一后的档；补丁照常写回（归一写回本来就是库行该收的），changed 由原值比出来。
+  const rows = W.diffFields({ id: 'n', format: 'zhong' }, { format: 'long' });
+  assert.equal(rows[0].current, '长篇');
+  assert.equal(rows[0].incoming, '长篇');
+  assert.equal(rows[0].changed, false, '两边都先过归一：脏档与长篇本就是同一档，不白写一次库');
 });
 
 test('预设里少写一个 enabled 不算改动（两边都先过同一道整理）', () => {
