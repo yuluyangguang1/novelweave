@@ -1452,3 +1452,83 @@ test('看全图弹窗里那段 SVG 是 core 的原样字符串，缺口那一句
   assert.match(seen[0].title, /2 个角色、1 条边/);
   assert.match(seen[0].body, /1 条边的某一头连不到任何角色/);
 });
+
+/**
+ * 排版遗留这一批（U）三条守卫盯的是同一件事：一个数、一道几何只许有一处说了算。
+ * 封面那列字数原先被裁两刀（JS 取 6 字、CSS 的 46px 只放得下约 3 字）；AI 操作条的几何
+ * 原先在 app.css 与 app.js 各写一份，而且滚动时长正文把它顶出可视区；章节列表则要防的是
+ * 「界面自己再排一遍」—— 与 R 批翻页条同构的病，所以连跑法都照抄那一条。
+ */
+test('封面那列书名只有 coverTitle 一处裁：样式里不许留第二道高度上限', () => {
+  const css = read('src/styles/app.css');
+  const span = css.match(/\.novel-card-cover span\s*\{[^}]*\}/)?.[0] || '';
+  assert.ok(span, 'app.css 里找不到 .novel-card-cover span 这条规则');
+  assert.doesNotMatch(span, /max-height|overflow/, '高度上限一旦回到样式里，就又是两道互不知情的裁切：画出来永远比代码少半截');
+  const js = read('src/app.js');
+  assert.equal(js.includes('titleForCover'), false, '界面里那道第二次截断（旧的 slice(0, 6)）不许回来');
+  assert.match(js, /const coverTitle = NWText\.coverTitle\(n\.title\);/, '封面上的字必须问 core 那一处');
+});
+
+test('AI 结果操作条的几何只在 .ai-result-actions 一处：粘底、实心底、界面不写第二道内联样式', () => {
+  const css = read('src/styles/app.css');
+  const block = css.match(/\.ai-result-actions\s*\{[^}]*\}/)?.[0] || '';
+  assert.ok(block, 'app.css 里找不到 .ai-result-actions');
+  assert.match(block, /position:\s*sticky/, '这条挂着复制/插入/替换，生成的正文一长就得滚回底部才点得到');
+  assert.match(block, /bottom:\s*0/);
+  assert.doesNotMatch(block, /--bg-input/, '--bg-input 是 4% 半透明，粘住时底下滚过的正文会透上来糊成一片');
+  assert.match(css, /\.ai-result-actions \.btn\s*\{/, '按钮尺寸得有唯一一处；界面那边不许再各写一份');
+  const js = read('src/app.js');
+  assert.equal((js.match(/className = 'ai-result-actions'/g) || []).length, 2, '结果与失败两条都要走这个类');
+  for (const fn of ['renderAIResult', 'renderAIError']) {
+    const body = js.match(new RegExp(`\\nfunction ${fn}\\([\\s\\S]*?\\n\\}`))?.[0] || '';
+    assert.ok(body, `app.js 里抠不出 ${fn}，这条守卫的形状变了`);
+    assert.doesNotMatch(body, /\b(?:bar|retry|b)\.style\./, `${fn} 还在给这条或它的按钮写内联几何：尺寸就有两处，改了 CSS 界面不动`);
+  }
+});
+
+test('侧栏章节列表的排序只有一处：界面选档、db 排序，切换条那两颗按钮真有人接', () => {
+  const js = read('src/app.js');
+  const list = js.match(/\nasync function renderChapterList\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(list, 'app.js 里抠不出 renderChapterList');
+  assert.doesNotMatch(list, /\.sort\(/, '排序判据住 db，界面里再排一遍就有两份口径');
+  assert.match(list, /const sort = chapterSortOf\(\);/, '这一档没取当前档，按钮切了等于没切');
+  assert.match(list, /chapters\.list\(APP\.novel\.id, \{ recent: sort\.recent \}\)/,
+    '这一档必须把「当前是哪一档」真传到 db，写死任一侧都是装饰按钮');
+  assert.match(list, /\$\{esc\(chapterWhen\(ch\)\)\}/, '最近档下不显示日期，作者没法核对这一排到底是不是最近');
+  const scope = js.match(/\nfunction chapterSortOf\(\)[\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(scope, 'app.js 里抠不出 chapterSortOf');
+  assert.match(scope, /novelId !== key/, '换书不回到章号档，会拿着上一本的「最近编辑」来看这一本');
+  assert.equal((js.match(/recent:\s*true/g) || []).length, 0, '除了这一档的开关，别处不许点最近编辑 —— nextOrder 与装配上下文要的是章号');
+
+  const barSrc = js.match(/\nfunction chapterSortBar\([\s\S]*?\n\}/)?.[0];
+  assert.ok(barSrc, 'app.js 里抠不出 chapterSortBar');
+  const run = (count, recent) => new Function('esc', `${barSrc} return chapterSortBar;`)(NWText.esc)(count, recent);
+  const names = (html) => [...html.matchAll(/data-action="([\w-]+)"/g)].map((m) => m[1]).sort();
+  const off = (html, action) => new RegExp(`data-action="${action}"[^>]*disabled`).test(html);
+  const registered = new Set([...actionsSource(js).matchAll(/^\s+(['"])([\w-]+)\1\s*:/gm)].map((m) => m[2]));
+
+  assert.deepEqual(names(run(3, false)), ['chapter-sort-order', 'chapter-sort-recent'], '切换条上不是那两颗');
+  const dead = names(run(3, false)).filter((a) => !registered.has(a));
+  assert.deepEqual(dead, [], `这两颗按钮点了没反应：${dead.join('、')}`);
+  assert.ok(off(run(3, false), 'chapter-sort-order'), '已经在章号档，那颗按钮还亮着');
+  assert.equal(off(run(3, false), 'chapter-sort-recent'), false);
+  assert.ok(off(run(3, true), 'chapter-sort-recent'), '已经在最近档，那颗按钮还亮着');
+  assert.equal(off(run(3, true), 'chapter-sort-order'), false, run(3, true));
+  assert.ok(run(3, true).includes('同一天改的按章号排'), '最近档没说要怎么对待同一天，作者会以为并列是随机');
+  assert.equal(run(1, false), '', '只有一章时给切换条是噪音');
+  assert.equal(run(0, true), '', '一章都没有，更没有档可切');
+
+  const whenSrc = js.match(/\nfunction chapterWhen\([\s\S]*?\n\}/)?.[0] || '';
+  assert.ok(whenSrc, 'app.js 里抠不出 chapterWhen');
+  const when = new Function(`${whenSrc} return chapterWhen;`)();
+  assert.equal(when({ updated_at: null, created_at: null }), '', '两个时间都没有就不显示，别写一个 1970 糊上去');
+  assert.ok(when({ updated_at: 1780000000000, created_at: 1700000000000 }).includes('2026'), '最近档要看得见的正是 updated_at');
+  assert.ok(when({ updated_at: null, created_at: 1780000000000 }).includes('2026'), '旧行没写过 updated_at，得退回创建时间而不是空着');
+
+  const sortCss = read('src/styles/app.css').match(/\.chapter-sort\s*\{[^}]*\}/)?.[0] || '';
+  assert.ok(sortCss, 'app.css 里找不到 .chapter-sort 这条规则');
+  assert.match(sortCss, /position:\s*sticky/, '#sidebar-content 整体在滚：切换条不贴顶常驻，滚到第 30 章就看不见当前是哪一档、也切不回去');
+  assert.match(sortCss, /top:\s*0/);
+  assert.doesNotMatch(sortCss, /--bg-input/, '这条压在章节行上面，半透明的底挡不住底下滚过的行');
+  assert.match(read('src/styles/app.css'), /\.chapter-item-when\s*\{/, '日期那一格没有样式，会把行挤歪');
+});

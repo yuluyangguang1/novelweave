@@ -121,9 +121,22 @@
     return [...new Set(list)];
   }
 
+  /** 书封上那一列竖排书名的容量。封面框 58px 高，竖排每字约 14px（.78rem 字身 + .12em 字距），
+   *  扣掉上下边距只放得下 3 个字。长度只在这里定 —— CSS 那边一旦再拿 max-height 裁第二刀，
+   *  界面上就会出现「JS 说取 6 个字、实际画出来 3 个」这种谁都没错的画面。全名照旧写在卡片标题那一行。 */
+  const COVER_TITLE_MAX = 3;
+
+  /** 书名上封面：去书名号、按容量截、被截时末尾给一个「…」（不截就不给，免得短书名凭空多个点）。
+   *  书名号本身也能是整本子的输入（作者只打了《），剥完是空的就退回「未命名」—— 封面不许画出一列空白。 */
+  function coverTitle(title, max = COVER_TITLE_MAX) {
+    const s = String(title ?? '').replace(/^《|》$/g, '').trim() || '未命名';
+    return s.length > max ? s.slice(0, max) + '…' : s;
+  }
+
   function escapeRegExp(str) {
     return String(str ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  return { esc, attr, escJs, countWords, bytesOf, canonicalJson, fnv1a, slugify, toISO, fromISO, uniq, escapeRegExp };
+  return { esc, attr, escJs, countWords, bytesOf, canonicalJson, fnv1a, slugify, toISO, fromISO, uniq, escapeRegExp,
+    coverTitle, COVER_TITLE_MAX };
 });

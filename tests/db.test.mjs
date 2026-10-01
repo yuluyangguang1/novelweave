@@ -205,3 +205,64 @@ test('导入不走写库闸：盘上的坏边要进得来，进来了由 R15 说
   assert.equal(rows[0].from, 'char-lin', '导入不许顺手改写端点 —— 改写过的行会与导出侧的基线哈希对不上');
   await NovelDB.novels.delete(n.id);
 });
+
+/**
+ * 侧栏章节列表的「最近编辑」这一档。判据只有一份（db 的 stableSort），界面只选档。
+ * 最容易出的事故是「同一份库每次打开换个顺序」：毫秒相同、老行没写过 updated_at，
+ * 这两种都必须退回 order → id，而不是让键插入顺序决定读者看到什么。
+ */
+test('章节列表的「最近编辑」档：倒排、并列退回章号、旧行退回创建时间', async () => {
+  const n = await freshNovel('排序测试');
+  const row = (id, order, updated_at, created_at) => ({
+    id, novel_id: n.id, title: `第${order}章`, content: '', summary: '', word_count: 0,
+    order, created_at, updated_at,
+  });
+  await NovelDB.putRow('chapters', row('ch_a', 1, 3000, 1000));
+  await NovelDB.putRow('chapters', row('ch_b', 2, 5000, 1000));
+  await NovelDB.putRow('chapters', row('ch_c', 3, 5000, 1000));   // 同一次保存的两章：毫秒完全相同
+  await NovelDB.putRow('chapters', row('ch_d', 4, null, 4000));   // 旧库行没写过 updated_at
+
+  const titles = (cs) => cs.map((c) => c.title).join('、');
+  assert.equal(titles(await NovelDB.chapters.list(n.id, { recent: true })), '第2章、第3章、第4章、第1章',
+    '最近改的在前；同一次保存按章号；没写 updated_at 的旧行按它的创建时间排');
+
+  // 换一档不许顺手筛掉或多出章
+  const ordered = await NovelDB.chapters.list(n.id);
+  const recent = await NovelDB.chapters.list(n.id, { recent: true });
+  assert.deepEqual(ordered.map((c) => c.order), [1, 2, 3, 4], '默认档必须还是章号 —— 它是写作的顺序，也是库里的权威顺序');
+  assert.deepEqual([...recent.map((c) => c.id)].sort(), [...ordered.map((c) => c.id)].sort(), '换档只换顺序，不许丢章');
+  assert.equal(await NovelDB.chapters.nextOrder(n.id), 5, 'nextOrder 走的是章号档，不能被最近编辑带跑');
+  await NovelDB.novels.delete(n.id);
+});
+
+test('「最近编辑」档与行的插入顺序无关：同一份库两次打开长一样', async () => {
+  const mk = (n, k) => [
+    { id: `ch${k}a`, novel_id: n.id, title: 'a', content: '', summary: '', word_count: 0, order: 1, created_at: 1, updated_at: 10 },
+    { id: `ch${k}b`, novel_id: n.id, title: 'b', content: '', summary: '', word_count: 0, order: 2, created_at: 1, updated_at: 90 },
+    { id: `ch${k}c`, novel_id: n.id, title: 'c', content: '', summary: '', word_count: 0, order: 3, created_at: 1, updated_at: 90 },
+    { id: `ch${k}d`, novel_id: n.id, title: 'd', content: '', summary: '', word_count: 0, order: 4, created_at: 1, updated_at: 40 },
+  ];
+  const n1 = await freshNovel('插入顺序一');
+  const n2 = await freshNovel('插入顺序二');
+  for (const r of mk(n1, 1)) await NovelDB.putRow('chapters', r);
+  for (const r of mk(n2, 2).reverse()) await NovelDB.putRow('chapters', r);
+  assert.deepEqual(
+    (await NovelDB.chapters.list(n1.id, { recent: true })).map((c) => c.title),
+    (await NovelDB.chapters.list(n2.id, { recent: true })).map((c) => c.title),
+    '同一份内容、不同的写入次序，排出来必须一样：b、c 同一次保存按章号，然后 d，最后 a');
+  assert.deepEqual((await NovelDB.chapters.list(n1.id, { recent: true })).map((c) => c.title), ['b', 'c', 'd', 'a']);
+
+  const n3 = await freshNovel('全无时间戳');
+  const bare = mk(n3, 3);
+  await NovelDB.putRow('chapters', { ...bare[2], updated_at: null, created_at: null });
+  await NovelDB.putRow('chapters', { ...bare[0], updated_at: null, created_at: null });
+  assert.deepEqual((await NovelDB.chapters.list(n3.id, { recent: true })).map((c) => c.order), [1, 3],
+    '时间戳全缺的旧行不许靠键序排 —— 都是 0 就退回章号');
+  // 章号也没区分度时（两行 order 相同），最后一档必须是 id：故意先写 d 再写 b
+  await NovelDB.putRow('chapters', { ...bare[3], order: 7, updated_at: null, created_at: null });
+  await NovelDB.putRow('chapters', { ...bare[1], order: 7, updated_at: null, created_at: null });
+  assert.deepEqual((await NovelDB.chapters.list(n3.id, { recent: true })).map((c) => c.id),
+    ['ch3a', 'ch3c', 'ch3b', 'ch3d'],
+    '时间与章号都一样：排出来的次序不能取决于谁先写进库');
+  await Promise.all([n1, n2, n3].map((n) => NovelDB.novels.delete(n.id)));
+});

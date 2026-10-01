@@ -336,6 +336,17 @@ select.settings-select { cursor: pointer; }
 .chapter-item:hover .chapter-item-del { opacity: 1; }
 .chapter-item-del:hover { color: var(--danger); }
 
+/* 章节列表的排序档切换条。#sidebar-content 整体在滚，所以这条贴顶常驻 + 实心底，
+   否则滚到第 30 章就看不见当前是哪一档、也切不回去。 */
+.chapter-sort {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 9px 14px; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.chapter-sort .btn { font-size: .62rem; padding: 4px 10px; }
+.chapter-sort .settings-hint { flex-basis: 100%; font-size: .62rem; }
+.chapter-item-when { font-family: var(--mono); font-size: .6rem; color: var(--text-dim); white-space: nowrap; }
+
 .char-card {
   padding: 14px; border-bottom: 1px solid var(--border); cursor: pointer;
   transition: background .2s var(--ease);
@@ -452,8 +463,21 @@ select.settings-select { cursor: pointer; }
 
 .ai-result-actions {
   display: flex; gap: 8px; flex-wrap: wrap;
-  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+  margin: 14px -14px 0; padding: 12px 14px 14px;
+  border-top: 1px solid var(--border);
+  /* 常驻：这条挂着「复制 / 插入编辑器 / 替换正文」，它本来是 .ai-output 内容的最后一块，
+     生成的正文一长就得滚回底部才点得到 —— 粘在滚动框下沿，作者随时看得见。
+     左右各外扩 14px（.ai-output 的内边距）再自己补回来，不然粘住时两条 14px 侧缝里
+     正文从底下穿过；下边距走 padding 不走 margin —— bottom:0 钉的是 margin 盒下沿，
+     给它负值会把按钮顶到可见区外面去。
+     底色必须是实心令牌（这里的 --bg），那个 4% 半透明的输入区底色挡不住底下滚过的正文，粘住时会糊成一片。
+     与周围那 4% 的色差是已知的：这条是页脚，边界由 border-top 那道线来收。 */
+  position: sticky; bottom: 0;
+  background: var(--bg);
 }
+/* 条上的按钮比通用 .btn 小一号：尺寸只在这一处写，界面那边不许再 style.cssText 第二遍
+   （旧写法给每颗补 margin-right:8px，和这条的 gap:8px 叠成 16px，两处谁都没错）。 */
+.ai-result-actions .btn { font-size: 13px; padding: 6px 14px; }
 
 /* ── 11. 设置页 ──────────────────────────────────────────── */
 .settings-body { flex: 1; overflow-y: auto; padding: 26px 20px 60px; }
@@ -764,7 +788,9 @@ a.header-title:hover .logo-mark { color: var(--accent); }
 .novel-card-cover span {
   writing-mode: vertical-rl; font-family: var(--serif); font-weight: 700;
   font-size: .78rem; letter-spacing: .12em; color: var(--mid);
-  max-height: 46px; overflow: hidden;
+  /* 这一格不许再写高度上限或裁切：能上封面几个字由 NWText.coverTitle 一处决定，
+     画出来的必须就是那几个字（外加一个「…」）。旧写法这里限 46px（约 3 字）、JS 那边取 6 字，
+     两道互不知情的裁切让界面永远比代码少半截。 */
 }
 .novel-card-cover.short { border-left-color: var(--warn); }
 

@@ -55,3 +55,35 @@ test('bytesOf 按 UTF-8 计字节，中文一个字算 3 字节（预算控制�
   assert.equal(NWText.bytesOf('中文'), 6);
   assert.equal(NWText.bytesOf('ab'), 2);
 });
+
+/**
+ * 封面那一列竖排书名原先被裁了两刀：app.js 取 6 个字，CSS 的 max-height:46px 只放得下约 3 个，
+ * 于是「代码说要 6 个字、画出来 3 个」，而且被裁这件事在界面上没有任何信号。
+ * 现在长度只有 coverTitle 这一处说了算，超出就要留一个看得见的「…」。
+ */
+test('coverTitle：封面那列的长度与「被截过」的信号一起给', () => {
+  assert.equal(NWText.coverTitle('山河故人旧梦长'), '山河故…');
+  assert.equal(NWText.coverTitle('山河故人'), '山河故…', '截出来的只能是容量内的字，剩下的是省略号的位置');
+  assert.equal(NWText.coverTitle('长安十二时辰'), '长安十…');
+});
+
+test('coverTitle 不该裁的就不裁：短书名一个点都不许多', () => {
+  assert.equal(NWText.coverTitle('长歌行'), '长歌行');
+  assert.equal(NWText.coverTitle('春'), '春');
+  assert.ok(!NWText.coverTitle('长歌行').includes('…'), '三个字的书名正好放得下，凭空多个点是谎报');
+  assert.equal(NWText.coverTitle('长歌行', 2), '长歌…', '容量是可传的，写死的那一处只有常量一个');
+});
+
+test('coverTitle 的空书名与书名号：不许把《》画上封面', () => {
+  assert.equal(NWText.coverTitle(''), '未命名');
+  assert.equal(NWText.coverTitle(null), '未命名');
+  assert.equal(NWText.coverTitle('《山河故人》'), '山河故…');
+  assert.equal(NWText.coverTitle('《春》'), '春');
+  assert.equal(NWText.coverTitle('《'), '未命名', '只打了一个书名号：剥完是空的，封面不能画出一列空白');
+});
+
+test('封面容量是个写死的数：改了它就得同时改这里与 CSS 那条注释', () => {
+  assert.equal(NWText.COVER_TITLE_MAX, 3);
+  // 省略号占一格位置：截出来的串最长是 容量 + 1
+  assert.equal([...NWText.coverTitle('一二三四五六七八')].length, NWText.COVER_TITLE_MAX + 1);
+});

@@ -129,9 +129,19 @@ function words(text) {
   return NWText.countWords(text || '');
 }
 
-/** 列表稳定排序：先按显式 order（章节），再按创建时间，最后按 id。不能依赖键序。 */
-function stableSort(list, { byOrder = false } = {}) {
+/** 列表稳定排序：先按显式 order（章节），再按创建时间，最后按 id。不能依赖键序。
+ *  byRecent 是另一档：按 updated_at（旧行没写过就退回 created_at）倒排，
+ *  同一次编辑里改过的两章、时间戳完全相同的两章，一律退回 order → id，
+ *  否则同一份库每次打开换个顺序，作者会以为是自己记错了。 */
+function stableSort(list, { byOrder = false, byRecent = false } = {}) {
   return [...list].sort((a, b) => {
+    if (byRecent) {
+      const at = a.updated_at ?? a.created_at ?? 0, bt = b.updated_at ?? b.created_at ?? 0;
+      if (at !== bt) return bt - at;
+      const ao = a.order ?? 0, bo = b.order ?? 0;
+      if (ao !== bo) return ao - bo;
+      return String(a.id) < String(b.id) ? -1 : 1;
+    }
     if (byOrder) {
       const ao = a.order ?? 0, bo = b.order ?? 0;
       if (ao !== bo) return ao - bo;
@@ -227,8 +237,11 @@ async function deleteNovel(id) {
 
 // ═══════════ 章节 ═══════════
 
-async function listChapters(novelId) {
-  return stableSort(await getByIndex('chapters', 'novel_id', novelId), { byOrder: true });
+/** 章节列表。默认按章号；{ recent: true } 走「最近编辑」那一档（侧栏章节列表的开关）。
+ *  别的调用点（nextOrder、装配上下文）一律不传，它们要的是章号顺序，不是编辑顺序。 */
+async function listChapters(novelId, { recent = false } = {}) {
+  const rows = await getByIndex('chapters', 'novel_id', novelId);
+  return stableSort(rows, recent ? { byRecent: true } : { byOrder: true });
 }
 
 /** 下一个可用章节号：取现有最大 order + 1，不能用 length + 1（删过首章就会撞号）。 */

@@ -367,8 +367,9 @@ async function renderHomePage() {
     const d = n.updated_at ? new Date(n.updated_at).toLocaleDateString('zh-CN') : '';
     const isDemo = typeof NWDemo !== 'undefined' && NWDemo.isDemo(n.id);
     // 书封：书名竖排上封面，短篇在书脊下加一枚小圆点以示区分
-    const titleForCover = (n.title || '未命名').replace(/^《|》$/g, '');
-    const coverTitle = titleForCover.slice(0, 6);
+    // 能上封面的长度由 NWText.coverTitle 那一处定（超了就末尾一个「…」）；
+    // 这里再 slice 一次、CSS 那边再 max-height 裁一次，就会出现「代码说要 6 个字、画出来 3 个」。
+    const coverTitle = NWText.coverTitle(n.title);
     return `<div class="novel-card" data-action="open-novel" data-id="${attr(n.id)}">
       <div class="novel-card-cover${n.format === 'short' ? ' short' : ''}" aria-hidden="true"><span>${esc(coverTitle)}</span></div>
       <div class="novel-card-body">
@@ -987,6 +988,9 @@ Object.assign(ACTIONS, {
   'suppress-diag':   (id, el) => suppressDiagnostic(el.dataset.fp, el),
   'fix-first':       (id, el) => fixCharacterFirst(el.dataset.entity, el.dataset.chapter),
   'rerun-continuity': () => renderSidebarPanel(),
+  // 切换排序档只是重画侧栏：库里的 order 一格都没动
+  'chapter-sort-order':  () => { chapterSortOf().recent = false; return renderChapterList(); },
+  'chapter-sort-recent': () => { chapterSortOf().recent = true; return renderChapterList(); },
 });
 
 /** 侧栏面板分派表。旧版定义了四个列表函数却从不调用，导致四个 tab 永远空白。 */
@@ -1029,24 +1033,57 @@ async function renderChapterList(host) {
   if (!host || !APP.novel) return;
   // 用户正在看别的 tab 时不要抢占侧栏容器
   if (host.id === 'sidebar-content' && host.dataset.tab && host.dataset.tab !== 'chapters') return;
-  const chapters = await NovelDB.chapters.list(APP.novel.id);
+  const sort = chapterSortOf();
+  // 排序判据住在 db 那一处；界面只说这一档要哪种排法，不许在这儿再排第二遍
+  const chapters = await NovelDB.chapters.list(APP.novel.id, { recent: sort.recent });
 
   if (!chapters.length) {
     host.innerHTML = emptyHint('点击 + 创建第一章');
     return;
   }
   // 只放 id，正文留在 IndexedDB
-  host.innerHTML = `<div class="chapter-list">
+  host.innerHTML = `${chapterSortBar(chapters.length, sort.recent)}<div class="chapter-list">
     ${chapters.map((ch) => `
       <div class="chapter-item ${APP.chapter?.id === ch.id ? 'active' : ''}" data-action="open-chapter" data-id="${attr(ch.id)}">
         <span class="chapter-item-number">${ch.order ?? '-'}</span>
         <span class="chapter-item-title">${esc(ch.title)}</span>
         ${(ch.word_count || 0) >= 300 && !(ch.summary || '').trim()
           ? `<span class="chapter-item-flag" title="摘要未填：续写时注入的前情会缺这一章">摘缺</span>` : ''}
+        ${sort.recent ? `<span class="chapter-item-when">${esc(chapterWhen(ch))}</span>` : ''}
         <span class="chapter-item-words">${formatWordCount(ch.word_count)}</span>
         <button class="chapter-item-del" data-action="del-chapter" data-id="${attr(ch.id)}" title="删除本章">${icon('close','icon-sm')}</button>
       </div>`).join('')}
   </div>`;
+}
+
+/**
+ * 侧栏章节列表的排序档。默认章序（章序 = 写作顺序，也是库里的权威顺序）；
+ * 「最近编辑」只影响这一屏的显示，不写库、不改 order。
+ * 换书必须回到章序：拿着上一本书的「最近编辑」来看这一本，刚建的书会插在最前，看着像排错了。
+ */
+function chapterSortOf() {
+  const key = APP.novel ? APP.novel.id : null;
+  if (!APP.chapterSort || APP.chapterSort.novelId !== key) {
+    APP.chapterSort = { novelId: key, recent: false };
+  }
+  return APP.chapterSort;
+}
+
+/** 只有一章时给两颗按钮是噪音；「最近」这一档必须看得见日期，否则排出来的顺序没法核对。 */
+function chapterSortBar(count, recent) {
+  if (count < 2) return '';
+  const btn = (action, label, current) =>
+    `<button class="btn btn-secondary" data-action="${action}" ${current ? 'disabled' : ''}>${esc(label)}</button>`;
+  return `<div class="chapter-sort">
+    ${btn('chapter-sort-order', '按章号', !recent)}
+    ${btn('chapter-sort-recent', '按最近编辑', recent)}
+    <span class="settings-hint">${recent ? '同一天改的按章号排' : '写作顺序'}</span>
+  </div>`;
+}
+
+function chapterWhen(ch) {
+  const ms = ch.updated_at ?? ch.created_at;
+  return ms ? new Date(ms).toLocaleDateString('zh-CN') : '';
 }
 
 async function openChapterById(id) {
@@ -2421,8 +2458,7 @@ function renderAIError(el, toolId, message) {
   const bar = document.createElement('div');
   bar.className = 'ai-result-actions';
   const retry = document.createElement('button');
-  retry.className = 'btn btn-secondary';
-  retry.style.cssText = 'font-size:13px;padding:6px 14px;margin-top:10px;';
+  retry.className = 'btn btn-secondary';   // 尺寸见 .ai-result-actions .btn，这里不写第二道
   retry.innerHTML = `${icon('retry')}<span>重试</span>`;
   retry.onclick = () => { el.textContent = '正在处理…'; runAITool(toolId, el); };
   bar.appendChild(retry);
@@ -2449,13 +2485,11 @@ function renderAIResult(el, text, meta = {}) {
   }
 
   const bar = document.createElement('div');
-  bar.className = 'ai-result-actions';
-  bar.style.cssText = 'margin-top:12px;border-top:1px solid var(--border);padding-top:12px;';
+  bar.className = 'ai-result-actions';   // 几何只在 app.css 的 .ai-result-actions 一处定（含 sticky）
 
   const mk = (ico, label, title, fn) => {
     const b = document.createElement('button');
-    b.className = 'btn btn-secondary';
-    b.style.cssText = 'font-size:13px;padding:6px 14px;margin-right:8px;';
+    b.className = 'btn btn-secondary';   // 尺寸见 .ai-result-actions .btn；间距由那条的 gap 给
     b.innerHTML = `${icon(ico, 'icon-sm')}<span>${esc(label)}</span>`;
     if (title) b.title = title;
     b.onclick = fn;
