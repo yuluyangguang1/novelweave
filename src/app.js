@@ -169,6 +169,7 @@ const ACTIONS = {
   'edit-note':     (id) => editNote(id),
   'edit-decision': (id) => editDecision(id),
   'edit-relation': (id) => editRelation(id),
+  'relation-graph': () => showRelationGraph(),
   'edit-secret':   (id) => editSecret(id),
   'save-chapter':  () => saveChapter(),
   'edit-cast':     () => showCastPanel(),
@@ -2307,7 +2308,7 @@ async function runAITool(toolId, target) {
       target.textContent = '本章没有发现需要登记的新关系。';
       return;
     }
-    renderExtractedRelations(target, edges);
+    await renderExtractedRelations(target, edges);
     return;
   }
   // 用量流水:按次记录(供设置页统计;失败不碍主流程)
@@ -2346,21 +2347,49 @@ async function runAITool(toolId, target) {
   renderAIResult(target, full, { toolId, aborted });
 }
 
-/** AI 抽出的候选关系边:作者勾选确认才入库(提案制)。 */
-function renderExtractedRelations(el, edges) {
+/**
+ * AI 抽出的候选关系边：作者勾选确认才入库（提案制）。
+ *
+ * 落库前先把两端解析成角色 id。这一句从前是「查过名字、确认过有这个人，
+ * 然后照原样把名字存进去」—— 存名字的边在 R31 面前是隐形的（它按端点找人），
+ * 关系图上画不出来，作者哪天改掉那个角色的名字，这条边就悄悄连到别人身上。
+ * 解析走 NWRelationGraph.endpointOf 那一份，与那张图、与检查器同一个口径：
+ * 撞名的两个人不猜哪一个是他，查无此人不入库，两条都在行里说清为什么。
+ */
+async function renderExtractedRelations(el, edges) {
+  const index = NWRelationGraph.charIndex(await NovelDB.characters.list(APP.novelId));
+  const WHY = {
+    empty: (who) => `${who}没填`,
+    unknown: (who, ref) => `${who}「${ref}」不在角色卡上`,
+    ambiguous: (who, ref) => `${who}「${ref}」在角色卡上撞名`,
+  };
+  const verdicts = edges.map((e) => {
+    const a = NWRelationGraph.endpointOf(e.from, index), b = NWRelationGraph.endpointOf(e.to, index);
+    const why = !a.ok ? WHY[a.reason]('主体', a.ref)
+      : !b.ok ? WHY[b.reason]('客体', b.ref)
+        : a.id === b.id ? '两头是同一个角色' : '';
+    return { edge: e, from: a.id, to: b.id, why };
+  });
+  const landable = verdicts.filter((v) => !v.why).length;
+
   const bar = document.createElement('div');
   bar.className = 'usage-bar';
   bar.style.cssText = 'margin-top:10px;';
-  bar.textContent = '发现 ' + edges.length + ' 条候选关系 —— 勾选后入库（提案制）：';
+  bar.textContent = `发现 ${edges.length} 条候选关系 —— 勾选后入库（提案制）：${landable} 条两端对得上角色卡`
+    + (landable === edges.length ? '' : `，${edges.length - landable} 条对不上`);
   el.appendChild(bar);
-  for (const e of edges) {
+  for (const v of verdicts) {
+    const e = v.edge;
     const row = document.createElement('label');
     row.className = 'usage-bar';
     row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;';
-    row.innerHTML = '<input type="checkbox" checked style="accent-color:var(--accent)"> '
+    row.innerHTML = `<input type="checkbox" ${v.why ? '' : 'checked'} style="accent-color:var(--accent)"> `
       + esc(e.from) + ' → ' + esc(e.to) + '：' + esc(e.kind)
-      + (e.address ? '（称谓「' + esc(e.address) + '」）' : '')
-      + (e.evidence ? '<br><span style="opacity:.6">依据：' + esc(e.evidence) + '</span>' : '');
+      + (e.address ? `（称谓「${esc(e.address)}」）` : '')
+      + (e.evidence ? `<br><span style="opacity:.6">依据：${esc(e.evidence)}</span>` : '')
+      + (v.why ? `<br><span style="opacity:.6">不能入库：${esc(v.why)} —— 先建档，或改完再抽一次</span>` : '');
+    // 存原始 JSON 只是给人看的；入库要按序号回到 verdicts 拿解析后的 id
+    row.dataset.vi = String(verdicts.indexOf(v));
     row.dataset.edge = JSON.stringify(e);
     el.appendChild(row);
   }
@@ -2369,18 +2398,16 @@ function renderExtractedRelations(el, edges) {
   btn.style.cssText = 'margin-top:8px;';
   btn.textContent = '确认入库';
   btn.onclick = async () => {
-    let n = 0;
-    for (const row of el.querySelectorAll('label[data-edge]:has(input:checked)')) {
-      const e = JSON.parse(row.dataset.edge);
-      // 名字→id:只接受已知角色,未知角色跳过并提示
-      const chars = await NovelDB.characters.list(APP.novelId);
-      const byName = new Map(chars.map((c) => [c.name, c.id]));
-      if (!byName.get(e.from) || !byName.get(e.to)) continue;
-      await NovelDB.relations.save(APP.novelId, e);
+    let n = 0, refused = 0;
+    for (const row of el.querySelectorAll('label[data-vi]:has(input:checked)')) {
+      const v = verdicts[Number(row.dataset.vi)];
+      if (!v || v.why) { refused++; continue; }
+      // 存的是解析后的角色 id，不是模型给的那两个字
+      await NovelDB.relations.save(APP.novelId, { ...v.edge, from: v.from, to: v.to });
       n++;
     }
     btn.disabled = true;
-    btn.textContent = '已入库 ' + n + ' 条';
+    btn.textContent = `已入库 ${n} 条` + (refused ? `，${refused} 条两端对不上角色卡` : '');
   };
   el.appendChild(btn);
 }
@@ -2901,16 +2928,12 @@ function showCreateDecision(existing) {
     closeModal();
     showToast(isEdit ? '决策已更新' : '决策已记档');
     await renderSidebarPanel();
-  });
-  if (isEdit) {
-    const del = document.getElementById('modal-del-btn');
-    if (del) del.onclick = async () => {
-      if (!confirm('删除这条决策？')) return;
-      await NovelDB.decisions.delete(existing.id);
-      closeModal();
-      await renderSidebarPanel();
-    };
-  }
+  }, isEdit ? async () => {
+    if (!confirm('删除这条决策？')) return;
+    await NovelDB.decisions.delete(existing.id);
+    closeModal();
+    await renderSidebarPanel();
+  } : null);
   setTimeout(() => document.getElementById('inp-dec-title')?.focus(), 60);
 }
 
@@ -2928,24 +2951,90 @@ function editDecision(id) {
 async function showRelationList(host) {
   host = host || document.getElementById('sidebar-content');
   if (!host || !APP.novel) return;
-  const edges = await NovelDB.relations.list(APP.novel.id);
-  const chars = await NovelDB.characters.list(APP.novel.id);
+  const [edges, chars, chapters] = await Promise.all([
+    NovelDB.relations.list(APP.novel.id), NovelDB.characters.list(APP.novel.id),
+    NovelDB.chapters.list(APP.novel.id),
+  ]);
   const nameOf = (id) => (chars.find((c) => c.id === id) || {}).name || id;
   if (!edges.length) { host.innerHTML = emptyHint('点击 + 登记一条关系'); return; }
+  // 面板看的是「书写到今天为止」的样子，所以不给 cut（不给 = 按全书末尾）。
+  // 端点、区间、缺口、那张图全部出自 NWRelationGraph 这一份：视图里再算一遍坐标或再判一次
+  // 「还活着吗」，就会有两张互不相认的图，而作者信的是他先看到的那一张。
+  const g = NWRelationGraph.build({ characters: chars, edges, chapters, cut: null });
+  const linkOf = new Map(g.links.map((l) => [l.id, l]));
+  const lostEnds = new Map(g.dangling.map((d) => [d.id, d]));
+  const loops = new Set(g.selfLoops.map((s) => s.id));
+  const unfixable = new Set(g.skippedEdges);   // 原样记录，按对象认，不靠 id（它正是没有可用 id 的那批）
+  const tagCls = 'novel-card-upgrade';
+  const tag = (e) => {
+    if (unfixable.has(e)) return `<span class="${tagCls}">没有可用 id，图上没画</span>`;
+    if (lostEnds.has(e.id)) return `<span class="${tagCls}">画不出来</span>`;
+    if (loops.has(e.id)) return `<span class="${tagCls}">两头同一个人</span>`;
+    const l = linkOf.get(e.id);
+    if (!l) return '';
+    // 五种区间状态里这里只会出现四种：面板看的是「书写到今天为止」（不给 cut），
+    // 那时「还没开始」是不可能出现的 —— 已经存在的那一章都到得了。写一条走不到的分支
+    // 只是让作者以为它会亮（与卷面板同一个口径）。
+    if (l.state === 'bad') return `<span class="${tagCls}">区间坏了</span>`;
+    if (l.state === 'ended') return `<span class="${tagCls}">已结束</span>`;
+    if (l.via.from === 'name' || l.via.to === 'name') return `<span class="${tagCls}">靠名字连着</span>`;
+    return '';
+  };
+  const WHY = {
+    empty: '没填',
+    unknown: '角色卡上没有这个人',
+    ambiguous: '在角色卡上撞名，不知是哪一个',
+  };
+  const descOf = (e) => {
+    const l = linkOf.get(e.id);
+    const d = lostEnds.get(e.id);
+    const head = `${esc(e.kind || '未写关系类型')}${e.address ? '（称谓：' + esc(e.address) + '）' : ''}`;
+    const range = l ? esc(NWRelationGraph.rangeText(l, chapters)) : '';
+    const ends = d ? d.missing.map((m) => `${m.side === 'from' ? '主体' : '客体'}「${esc(m.ref || '（空）')}」${WHY[m.reason] || ''}`) : [];
+    return [head, range, ...ends].filter(Boolean).join('<br>');
+  };
+  // 那句缺口直接用 core 的：面板顶上、图上方说的是同一句，措辞没有第二份
+  const gap = NWRelationGraph.notice(g);
   host.innerHTML = '<div class="char-list">'
+    + (gap ? `<div class="relation-gap">${esc(gap)}</div>` : '')
+    + `<div class="relation-head"><button class="btn btn-secondary" data-action="relation-graph">看全图</button></div>`
     + edges.map((e) => `
       <div class="char-card" data-action="edit-relation" data-id="${attr(e.id)}">
-        <div class="char-card-name">${esc(nameOf(e.from))} → ${esc(nameOf(e.to))}${e.until ? ' <span class="novel-card-upgrade">已结束</span>' : ''}</div>
-        <div class="char-card-desc">${esc(e.kind)}${e.address ? '（称谓：' + esc(e.address) + '）' : ''}${e.since ? '<br>自 ' + esc(e.since) : ''}${e.until ? ' 至 ' + esc(e.until) : ''}</div>
+        <div class="char-card-name">${esc(nameOf(e.from))} → ${esc(nameOf(e.to))} ${tag(e)}</div>
+        <div class="char-card-desc">${descOf(e)}</div>
       </div>`).join('')
     + '</div>';
+}
+
+/** 那张图画的是 core 出的那段 SVG —— 一个坐标都不在这儿算。 */
+function showRelationGraph() {
+  if (!APP.novel) { showToast('先进入一本书'); return; }
+  Promise.all([
+    NovelDB.relations.list(APP.novel.id), NovelDB.characters.list(APP.novel.id),
+    NovelDB.chapters.list(APP.novel.id),
+  ]).then(([edges, chars, chapters]) => {
+    if (!edges.length) { showToast('这本书还没登记任何关系'); return; }
+    const g = NWRelationGraph.build({ characters: chars, edges, chapters, cut: null });
+    const gap = NWRelationGraph.notice(g);
+    showModal(`关系图 · ${g.counts.characters} 个角色、${g.counts.links} 条边`,
+      `<div class="relation-graph">${NWRelationGraph.toSvg(g)}</div>`
+      + (gap ? `<div class="relation-gap">${esc(gap)}</div>` : '')
+      + `<div class="settings-hint">实线是还活着的（含那些一直没登记过结束的），虚线是已经结束了的，`
+      + `发红的那条是区间读不出来。鼠标停在某条线上会说清它连的是谁、从第几章到第几章。</div>`, null);
+  });
 }
 
 function showCreateRelation(existing) {
   if (!APP.novel) { showToast('先进入一本书'); return; }
   const isEdit = !!existing;
-  NovelDB.characters.list(APP.novel.id).then((chars) => {
+  // 起止章从今往后是下拉，不是手打的输入框：库里存的是章 id，
+  // 让作者照着一个 placeholder 敲 id，敲错一个字符就是一条 R15 断链。
+  Promise.all([NovelDB.characters.list(APP.novel.id), NovelDB.chapters.list(APP.novel.id)]).then(([chars, chapters]) => {
     const opts = (sel) => chars.map((c) => `<option value="${attr(c.id)}" ${sel === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+    const stale = (v) => (v && !chapters.some((c) => c.id === v)
+      ? `<option value="${attr(v)}" selected>${esc(v)}（这一章已不在书里）</option>` : '');
+    const chOpts = (v) => `<option value="">不限</option>${stale(v)}${chapters.map((c) => (
+      `<option value="${attr(c.id)}" ${v === c.id ? 'selected' : ''}>第 ${c.number ?? c.order} 章 ${esc(c.title || '')}</option>`)).join('')}`;
     showModal(isEdit ? '编辑关系' : '登记一条关系', `
       <div class="settings-field"><label class="settings-label">主体 *</label>
         <select class="settings-select" id="inp-rel-from">${opts(existing?.from)}</select></div>
@@ -2956,9 +3045,9 @@ function showCreateRelation(existing) {
       <div class="settings-field"><label class="settings-label">称谓（主体对客体的称呼，可选）</label>
         <input class="settings-input" id="inp-rel-address" value="${attr(existing?.address || '')}" placeholder="例：师父 / 老爷"></div>
       <div class="settings-field"><label class="settings-label">自哪章生效（可选）</label>
-        <input class="settings-input" id="inp-rel-since" value="${attr(existing?.since || '')}" placeholder="例：ch-001"></div>
+        <select class="settings-select" id="inp-rel-since">${chOpts(existing?.since)}</select></div>
       <div class="settings-field"><label class="settings-label">到哪章失效（可选，死亡/决裂）</label>
-        <input class="settings-input" id="inp-rel-until" value="${attr(existing?.until || '')}" placeholder="例：ch-020"></div>
+        <select class="settings-select" id="inp-rel-until">${chOpts(existing?.until)}</select></div>
     `, async () => {
       const kind = val('inp-rel-kind');
       if (!kind) { showToast('关系类型不能为空'); return; }
@@ -2967,21 +3056,34 @@ function showCreateRelation(existing) {
         address: val('inp-rel-address'), since: val('inp-rel-since') || null, until: val('inp-rel-until') || null,
       };
       if (edge.from === edge.to) { showToast('主体和客体不能相同'); return; }
+      // 面板先把话说明白，落库那道闸是兜底：写库函数抛错到这里会被 modal 吞掉，
+      // 作者只会看见点了保存而什么都没发生。
+      const at = (cid) => chapters.findIndex((c) => c.id === cid);
+      for (const side of ['since', 'until']) {
+        if (edge[side] && at(edge[side]) === -1) {
+          showToast(`「${side === 'since' ? '生效' : '失效'}章」那一章已不在书里，重挑一章或选「不限」`); return;
+        }
+      }
+      if (edge.since && edge.until && at(edge.until) < at(edge.since)) {
+        showToast('起止章选反了：失效章排在生效章之前'); return;
+      }
       if (isEdit) await NovelDB.relations.save(APP.novel.id, { ...existing, ...edge });
       else await NovelDB.relations.save(APP.novel.id, edge);
+      // 库里那条边的主键是空的：save 会另领一个新 id，旧行不删就是「改一次多出一条边」。
+      // 浏览器里同 id 的两条存不下（主键唯一），所以只有空 id 这一种形状需要补这一刀。
+      if (isEdit && !existing.id) await NovelDB.relations.delete(existing.id || '');
       closeModal();
       showToast(isEdit ? '关系已更新' : '关系已登记');
       await renderSidebarPanel();
-    });
-    if (isEdit) {
-      const del = document.getElementById('modal-del-btn');
-      if (del) del.onclick = async () => {
-        if (!confirm('删除这条关系？')) return;
-        await NovelDB.relations.delete(existing.id);
-        closeModal();
-        await renderSidebarPanel();
-      };
-    }
+    }, isEdit ? async () => {
+      // 删除必须当第 4 个参数交给 showModal：那顆按钮只在那里渲染，
+      // 删除必须当第 4 个参数交给 showModal：那颗按钮只在那里渲染，
+      // 弹窗开完再回头按 id 找它，拿到的是 null，删关系就只剩一段永不执行的代码。
+      if (!confirm('删除这条关系？')) return;
+      await NovelDB.relations.delete(existing.id || '');
+      closeModal();
+      await renderSidebarPanel();
+    } : null);
   });
 }
 

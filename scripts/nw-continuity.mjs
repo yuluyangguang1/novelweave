@@ -30,6 +30,7 @@ const ALIAS = {
   R29: 'first-appearance-mismatch', R30: 'entry-never-mentioned', R31: 'relation-pair-never-together',
   R32: 'style-drift',
   R33: 'volume-gap',
+  R34: 'relation-gap',
 };
 
 function resolveRuleNames(list) {

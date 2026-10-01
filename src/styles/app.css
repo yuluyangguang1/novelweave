@@ -533,6 +533,33 @@ select.settings-select { cursor: pointer; }
   color: var(--dim); font-size: .72rem; line-height: 1.6;
 }
 
+/* ═══ 关系面板与那张图（T 族）═══
+   SVG 里的 class 是 NWRelationGraph.toSvg 写死的，样式在这儿跟上 ——
+   少了任何一条，那种边就画成默认色，坏边和活边看起来一模一样。 */
+.relation-gap {
+  padding: 8px 12px; margin-bottom: 10px;
+  border-left: 2px solid var(--warn); background: var(--warn-soft);
+  color: var(--dim); font-size: .72rem; line-height: 1.6;
+}
+.relation-head { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.relation-head .btn { font-size: .62rem; padding: 4px 10px; }
+.relation-graph { width: 100%; }
+.nw-relation-graph { display: block; width: 100%; height: auto; }
+.nw-relation-graph .rg-layer-links { stroke-linecap: round; }
+.nw-relation-graph .rg-layer-nodes { paint-order: stroke; }
+.nw-relation-graph .rg-link { stroke: rgb(var(--mid-base) / .55); stroke-width: 1.5; }
+.nw-relation-graph .rg-open, .nw-relation-graph .rg-active { stroke: var(--accent); }
+.nw-relation-graph .rg-ended { stroke: rgb(var(--mid-base) / .35); stroke-dasharray: 4 4; }
+.nw-relation-graph .rg-future { stroke: rgb(var(--warn-base) / .7); stroke-dasharray: 2 5; }
+.nw-relation-graph .rg-bad { stroke: var(--danger); stroke-width: 2; stroke-dasharray: 1 4; }
+.nw-relation-graph .rg-node circle { fill: var(--bg); stroke: var(--border-strong); stroke-width: 1.5; }
+.nw-relation-graph .rg-unlinked circle { stroke-dasharray: 3 3; }
+.nw-relation-graph .rg-name {
+  font-family: var(--mono); font-size: 11px; fill: var(--dim); text-anchor: middle;
+  /* 名字压在别人家的线上时读不出来：paint-order 让那圈底色先画，字浮在上面 */
+  stroke: var(--bg); stroke-width: 3px;
+}
+
 .state-matrix { border-collapse: collapse; width: 100%; font-size: 12px; }
 .state-matrix th, .state-matrix td {
   padding: 7px 9px; text-align: center; white-space: nowrap;

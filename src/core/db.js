@@ -574,12 +574,58 @@ window.NovelDB = {
 
 // ═══════════ 决策记录(Decision)/用量(usage)/关系(relations) ═══════════
 
+/**
+ * 关系边落库的四道闸：kind 必填、两端都能在**本书**角色卡上落到一个人、
+ * 不是同一个人、起止章确为本书的章且顺序没填反。
+ *
+ * 为什么拦得这么狠：一条接不上谁的边落进库之后，R31 看不见它（它按端点找人），
+ * 那张图画不出它，续写上下文里那一节 quietly 少一个人 —— 作者发现这件事
+ * 通常是在几天后写到大结局、发现模型根本不记得师父是谁的时候。
+ *
+ * 端点存的是名字时一律收成角色 id：AI 抽关系从前存的正是名字，
+ * 而名字是作者随时会改的一个字段，边跟着改名就悄悄连到别人身上。
+ * 解析口径走 NWRelationGraph.endpointOf 那一份，与那张图、与检查器同一个数。
+ *
+ * 导入不走这里（app.js 的两条导入路径都用 putRow 落行）：老库里的坏边要进得来，
+ * 进来了由 R15 说出口 —— 挡住导入等于把坏消息一起挡在门外。
+ */
 async function saveRelation(novelId, edge) {
+  const kind = String(edge.kind || '').trim();
+  if (!kind) throw new Error('关系边缺少 kind（关系类型）');
+  const chars = await listCharacters(novelId);
+  const index = NWRelationGraph.charIndex(chars);
+  const WHY = {
+    empty: () => '没填',
+    unknown: (ref) => `「${ref}」在这本书的角色卡上找不到`,
+    ambiguous: (ref) => `「${ref}」在角色卡上撞名，不知连到哪一个`,
+  };
+  const resolve = (ref, who) => {
+    const r = NWRelationGraph.endpointOf(ref, index);
+    if (!r.ok) throw new Error(`关系边「${kind}」的${who}${WHY[r.reason](r.ref)}`);
+    return r.id;
+  };
+  const from = resolve(edge.from, '主体');
+  const to = resolve(edge.to, '客体');
+  if (from === to) throw new Error(`关系边「${kind}」的两头是同一个角色，图上是一条没有终点的线`);
+  const chapters = await listChapters(novelId);
+  const at = (cid) => chapters.findIndex((c) => c.id === cid);
+  const bounds = {};
+  for (const side of ['since', 'until']) {
+    const ref = String(edge[side] ?? '').trim();
+    if (!ref) continue;
+    const i = at(ref);
+    if (i === -1) throw new Error(`关系边「${kind}」的${side === 'since' ? '生效' : '失效'}章不在这本书里`);
+    bounds[side] = i;
+  }
+  if (bounds.since != null && bounds.until != null && bounds.until < bounds.since) {
+    throw new Error(`关系边「${kind}」的起止章选反了：${chapters[bounds.since].title} 在后`);
+  }
+  const now = Date.now();
   return put('relations', {
     id: edge.id || newId('rel'), novel_id: novelId,
-    from: edge.from, to: edge.to, kind: edge.kind,
+    from, to, kind,
     address: edge.address || '', since: edge.since || null, until: edge.until || null,
-    notes: edge.notes || '', created_at: Date.now(), updated_at: Date.now(),
+    notes: edge.notes || '', created_at: edge.created_at || now, updated_at: now,
   });
 }
 async function listRelations(novelId) {

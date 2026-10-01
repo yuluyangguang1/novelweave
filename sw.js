@@ -10,7 +10,7 @@
  *    漏一个文件离线就会白屏。
  */
 
-const VERSION = 'nw-v9'; // v9: 加 volumes.js —— 旧壳里没有它，「卷」面板与卷摘要注入整块缺席
+const VERSION = 'nw-v10'; // v10: 加 relationgraph.js —— 旧壳里没有它，「看全图」与 R15 的关系边检查整块缺席
 const CACHE = `${VERSION}-shell`;
 const BASE = new URL('./', self.location).href;
 
@@ -27,6 +27,7 @@ const PRECACHE = [
   'src/core/stylefit.js',
   'src/core/statescope.js',
   'src/core/volumes.js',
+  'src/core/relationgraph.js',
   'src/core/rules.js',
   'src/core/story.js',
   'src/core/context.js',

@@ -8,10 +8,10 @@
  * 每条规则都必须自带误报控制。误报的检查器会被作者关掉，等于没有。
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStylePack, root.NWTension, root.NWStyleFit, root.NWVolume);
+  const mod = factory(root.NWText, root.NWBible, root.NWStylePack, root.NWTension, root.NWStyleFit, root.NWVolume, root.NWRelationGraph);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWRules = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack, Tension, StyleFit, Vol) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, StylePack, Tension, StyleFit, Vol, Rel) {
   'use strict';
 
   const ENGINE_VERSION = '1.0.0';
@@ -658,10 +658,12 @@
       code: 'R15',
       defaultSeverity: 'error',
       scope: 'chapter',
-      summary: '引用了不存在的实体或章节。',
+      summary: '引用了不存在的实体或章节（含关系边的两端与生效区间）。',
       detail:
         '扫描章 frontmatter 的 characters/mentions/locations、pov、time_anchor，角色卡的 first/died-in，' +
-        '伏笔登记表的 setup/payoff/due 与 characters/world。断链会让别的规则静默失效，必须显式报出。',
+        '伏笔登记表的 setup/payoff/due 与 characters/world，以及 relations 每条边的 from/to 与 since/until。' +
+        '断链会让别的规则静默失效，必须显式报出 —— R31 遇到解析不到的端点就跳过，等的就是这一条。' +
+        '边的端点写成角色名而名字唯一时算接上（AI 抽关系从前存的就是名字），只有撞名或查无此人才报。',
       run(ctx) {
         const out = [];
         const charIds = new Set(ctx.characters.map((c) => c.id));
@@ -692,6 +694,36 @@
             if (ref && !chIds.has(ref)) push(null, it.id, ref, '伏笔关联章节');
           }
           for (const id of it.characters || []) if (!charIds.has(id)) push(null, it.id, id, '伏笔关联角色');
+        }
+        // 关系边的两端与生效区间。R31 的规格一直写着「角色 id 解析不到的归 dangling-reference」，
+        // 而这句话从前是空的：删掉一个角色卡，指向他的边在 R31 里被 continue、在面板上
+        // 显示成一个看着挺正常的名字，全书检查一声不响。解析口径走 relationgraph 那一份。
+        const relIndex = Rel.charIndex(ctx.characters);
+        const relBad = (id, message, basis, suggestion) => out.push(diag('dangling-reference', {
+          chapter: null, entity: id, message, evidence: { basis }, suggestion,
+        }));
+        const REASON_TEXT = {
+          empty: (who) => [`没填${who}，这条边在图上画不出来`, '补上这一端，或把这条边删掉。'],
+          ambiguous: (who) => [`在角色卡上撞名，不知连到哪一个`, '把两个角色的名字分开，或在这条边里改用角色 id。'],
+          unknown: (who) => [`在角色卡上没有这个人，这条边在图上画不出来`, '建档，或改指向已有的角色。'],
+        };
+        for (const e of ctx.relations?.edges || []) {
+          if (!e || !e.id) continue;                              // 没有 id 的边由 R34 整批报：R15 报一条得有个 id 可指
+          for (const side of ['from', 'to']) {
+            const r = Rel.endpointOf(e[side], relIndex);
+            if (r.ok) continue;
+            const who = side === 'from' ? '主体' : '客体';
+            const [tail, suggestion] = REASON_TEXT[r.reason](who);
+            relBad(e.id, `关系边 ${e.id} 的${who}「${r.ref || '（空）'}」${tail}。`,
+              [`relation.${side}=${r.ref || '（空）'}`, r.reason], suggestion);
+          }
+          for (const side of ['since', 'until']) {
+            const ref = String(e[side] ?? '').trim();
+            if (!ref || chIds.has(ref)) continue;
+            relBad(e.id, `关系边 ${e.id} 的${side === 'since' ? '生效' : '失效'}章节「${ref}」不存在。`,
+              [`未找到 ${ref}`, `relation.${side}=${ref}`],
+              '它引用的章已被删除：重挑起止章，或把区间留空（留空 = 一直如此）。');
+          }
         }
         return out;
       },
@@ -1434,13 +1466,18 @@
       detail:
         '同框的判据很宽：某一章正文里两方各自的称呼都出现过一次就算，回忆/引文章也算 —— ' +
         '旧场景里两人说过话同样是正文支撑。只查两端都已建档、且各自都在正文里露过面的边：' +
-        '从没露面的归 entry-never-mentioned，角色 id 解析不到的归 dangling-reference。' +
-        'from===to 的自环边不查。恒为 info：转述式关系（师父只在他人口中出现）、' +
+        '从没露面的归 entry-never-mentioned，角色解析不到的归 dangling-reference。' +
+        '端点解析走 NWRelationGraph.endpointOf 那一份：边里存的是角色名而名字唯一时照样查得动' +
+        '（AI 抽关系从前存的就是名字，只认 id 等于对这批边闭眼），名字撞车或查无此人才跳过。' +
+        '两头是同一个角色的自环边不查。恒为 info：转述式关系（师父只在他人口中出现）、' +
         '通信、隔空指令都是正当写法，这条只负责把「账本里亲密、正文里陌生」的边挑出来让人看一眼。',
       run(ctx) {
         const edges = ctx.relations?.edges || [];
         if (!edges.length) return [];
         const byId = new Map((ctx.characters || []).filter((c) => c.enabled !== false).map((c) => [c.id, c]));
+        // 端点解析只有一份口径：relationgraph。从前这里只认 id，而 AI 抽关系存进盘上的正是名字 ——
+        // 那些边在这条规则面前等于不存在，「账本里亲密、正文里陌生」恰好漏掉最该看的一批。
+        const index = Rel.charIndex([...byId.values()]);
         const written = (ctx.chapters || []).filter((ch) => String(ch.body || '').trim());
         if (!written.length) return [];
         const presence = written.map((ch) => {
@@ -1450,12 +1487,14 @@
         });
         const out = [];
         for (const e of edges) {
-          if (!e || !e.from || !e.to || e.from === e.to) continue;
-          const a = byId.get(e.from), b = byId.get(e.to);
-          if (!a || !b) continue;                                   // 建档缺失：R15 的活
-          if (!presence.some((set) => set.has(e.from))) continue;   // 从未露面：R30 的活
-          if (!presence.some((set) => set.has(e.to))) continue;
-          if (presence.some((set) => set.has(e.from) && set.has(e.to))) continue;
+          if (!e) continue;
+          const ea = Rel.endpointOf(e.from, index), eb = Rel.endpointOf(e.to, index);
+          if (!ea.ok || !eb.ok) continue;                          // 没建档或名字撞车：R15 的活
+          if (ea.id === eb.id) continue;                            // 自环边不是关系
+          const a = byId.get(ea.id), b = byId.get(eb.id);
+          if (!presence.some((set) => set.has(a.id))) continue;     // 从未露面：R30 的活
+          if (!presence.some((set) => set.has(b.id))) continue;
+          if (presence.some((set) => set.has(a.id) && set.has(b.id))) continue;
           const label = `${a.name}—${b.name}`;
           out.push(diag('relation-pair-never-together', {
             chapter: null,
@@ -1463,9 +1502,9 @@
             severity: 'info',
             confidence: 0.55,
             evidence: {
-              basis: [`边 ${e.from}→${e.to}（${e.kind || '未写关系类型'}${e.address ? '，称谓：' + e.address : ''}）`,
-                `${a.name} 露面 ${presence.filter((s) => s.has(e.from)).length} 章`,
-                `${b.name} 露面 ${presence.filter((s) => s.has(e.to)).length} 章`,
+              basis: [`边 ${a.id}→${b.id}（${e.kind || '未写关系类型'}${e.address ? '，称谓：' + e.address : ''}）`,
+                `${a.name} 露面 ${presence.filter((s) => s.has(a.id)).length} 章`,
+                `${b.name} 露面 ${presence.filter((s) => s.has(b.id)).length} 章`,
                 '两人同框 0 章'],
             },
             message: `登记的「${label}」${e.kind || '关系'}边，两端角色在正文里从未同章出现。`,
@@ -1601,6 +1640,74 @@
             message: `${name(o.a.vol)} 与 ${name(o.b.vol)} 在同一段上重叠 ${o.chapters} 章，`
               + `那段往事在上下文里出现两遍，「压掉 ${plan.counts.covered} 章」里也有水分。`,
             suggestion: '把两卷的边界挪开：重叠的那几章归其中一卷，另一卷从它的下一章起。',
+          }));
+        }
+        return out;
+      },
+    },
+
+    'relation-gap': {
+      code: 'R34',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '关系账本自己说得通、却画不出来的那几类：同 id 撞车、两头是同一人、区间填反、只靠名字连着。',
+      detail:
+        '只对**已经登记过关系边**的书开口，一条边都没有就整条闭嘴。判据一律走 NWRelationGraph.build' +
+        '（与侧栏「关系」页那张图、续写上下文里那一节同一份口径），这条规则只把其中四类说出口：' +
+        'skipped 是没有 id、或两条撞了同一个 id（画布上没有它们，撞了 id 的那对连改哪一条都说不清）；' +
+        'self 是两头连着同一个角色；reversed 是结束章排在起始章之前（区间反了，不是章没了）；' +
+        'byName 是端点写的是角色名而不是 id —— 现在还能连上，改一次名字就断。' +
+        '**端点指向不存在的角色、起止章被删掉**这两类归 R15（error），这里不重复报，一份坏消息说两遍只是吵。' +
+        '**也不报**「谁在网外」与「图分成了几块」：一条关系都没登记的角色不是缺陷，两条不相干的故事线也不是 —— ' +
+        '机器替作者决定谁该有关系，换来的就是关检查器。恒为 info。',
+      run(ctx) {
+        const edges = ctx.relations?.edges || [];
+        if (!edges.length) return [];
+        const g = Rel.build({ characters: ctx.characters || [], edges, chapters: ctx.chapters || [], cut: null });
+        const out = [];
+        const name = (id) => (ctx.characters || []).find((c) => c.id === id)?.name || id;
+        if (g.counts.skipped) {
+          out.push(diag('relation-gap', {
+            severity: 'info',
+            confidence: 1,
+            evidence: { basis: [`账本里 ${g.counts.edges} 条边，其中 ${g.counts.skipped} 条没有 id 或与前一条同 id`] },
+            message: `${g.counts.skipped} 条关系边没有 id、或与别的边撞了同一个 id，图上没画它们 —— 面板里只有一颗标签，画布上连那条线都没有。`,
+            suggestion: '缺 id 的那条在面板里存一次就会领到自己的新 id；撞 id 的那对得在文件里各改各的 id。',
+          }));
+        }
+        for (const s of g.selfLoops) {
+          out.push(diag('relation-gap', {
+            entity: s.id,
+            severity: 'info',
+            confidence: 1,
+            evidence: { basis: [`relation ${s.id} 的 from 与 to 都是 ${s.at}（${name(s.at)}）`] },
+            message: `关系边「${name(s.at)} → ${name(s.at)}：${s.edge.kind || '未写关系类型'}」的两头是同一个人。`,
+            suggestion: '自环在图上是一条没有终点的线：要么改客体，要么删掉这条边。',
+          }));
+        }
+        for (const l of g.links.filter((x) => x.range.reason === 'reversed')) {
+          out.push(diag('relation-gap', {
+            entity: l.id,
+            severity: 'info',
+            confidence: 1,
+            evidence: {
+              basis: [`since=${l.edge.since}（第 ${ctx.chapters[l.range.from]?.number ?? '?'} 章）`,
+                `until=${l.edge.until}（第 ${ctx.chapters[l.range.to]?.number ?? '?'} 章）`],
+            },
+            message: `关系边 ${name(l.from)}→${name(l.to)}（${l.kind || '未写关系类型'}）的生效区间填反了：结束章排在起始章之前。`,
+            suggestion: '对调两章，或把区间留空（留空 = 一直如此，与填了却读不出来是两回事）。',
+          }));
+        }
+        for (const l of g.links.filter((x) => x.via.from === 'name' || x.via.to === 'name')) {
+          const sides = [l.via.from === 'name' ? `from=${l.edge.from}` : null,
+            l.via.to === 'name' ? `to=${l.edge.to}` : null].filter(Boolean);
+          out.push(diag('relation-gap', {
+            entity: l.id,
+            severity: 'info',
+            confidence: 1,
+            evidence: { basis: [...sides, `角色卡上有唯一的「${l.via.from === 'name' ? l.edge.from : l.edge.to}」`] },
+            message: `关系边 ${name(l.from)}→${name(l.to)}（${l.kind || '未写关系类型'}）有一端写的是名字不是角色 id：连得上，但改一次名字就断。`,
+            suggestion: '在面板里重选一次两端（保存即写成 id），这条边就不会随改名失联。',
           }));
         }
         return out;

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWVolume } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWVolume, NWRelationGraph } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -1150,4 +1150,305 @@ test('技能文档与 README 里写死的窗口数字与三条判据，跟着 co
   for (const claim of ['没写摘要的卷不盖章', '盖到本章之后的卷不注入', '起止章被删了就整卷不用']) {
     assert.ok(readme.includes(claim), `README 少了三条判据里的一条：${claim}`);
   }
+});
+
+// ═══════════════ T 族：关系这条通路（假 DOM 真跑 + 只有一份判据）═══════════════
+
+test('AI 抽关系入库的是角色 id，不是模型给的那两个字（假 DOM 真跑）', async () => {
+  const js = read('src/app.js');
+  const src = js.match(/\nasync function renderExtractedRelations\([\s\S]*?\n\}/)?.[0];
+  assert.ok(src, 'app.js 里抠不出 renderExtractedRelations');
+  assert.doesNotMatch(src, /byName\.get\(/, '界面里不许再有第二份「名字→人」的查法：那份不认撞名');
+  assert.match(src, /NWRelationGraph\.endpointOf\(/, '端点解析必须问 core 那一份');
+
+  const chars = [{ id: 'char_lin', name: '林烟火' }, { id: 'char_ming', name: '明长老' },
+    { id: 'char_a', name: '甲' }, { id: 'char_b', name: '甲' }];
+  const saved = [];
+  const db = {
+    characters: { list: async () => chars },
+    relations: { save: async (nid, e) => { saved.push(e); return e; } },
+  };
+  const made = [];
+  const doc = {
+    createElement: (tag) => {
+      const node = { tag, className: '', innerHTML: '', textContent: '', dataset: {}, style: {}, children: [] };
+      node.appendChild = (c) => node.children.push(c);
+      made.push(node);
+      return node;
+    },
+  };
+  const rows = [];
+  const host = {
+    children: [],
+    appendChild(n) { this.children.push(n); if (n.dataset.vi !== undefined) rows.push(n); },
+    querySelectorAll: () => rows.filter((r) => /type="checkbox" checked/.test(r.innerHTML)),
+  };
+  const run = new Function('NovelDB', 'NWRelationGraph', 'APP', 'esc', 'document',
+    `${src}\n return renderExtractedRelations;`)(db, NWRelationGraph, { novelId: 'n1' }, NWText.esc, doc);
+
+  await run(host, [
+    { from: '林烟火', to: 'char_ming', kind: '师徒', address: '师父', evidence: '第 3 章' },
+    { from: 'char_lin', to: '甲', kind: '同门' },
+    { from: '明长老', to: '明长老', kind: '自恋' },
+    { from: 'char_lin', to: '查无此人', kind: '敌对' },
+  ]);
+
+  assert.equal(rows.length, 4, '四条候选都得列出来 —— 悄悄丢掉一半，作者不知道少了什么');
+  assert.match(rows[1].innerHTML, /撞名/, '撞名要说是撞名，不是含糊的「解析失败」');
+  assert.match(rows[2].innerHTML, /同一个角色/);
+  assert.match(rows[3].innerHTML, /不在角色卡上/);
+  assert.ok(!/type="checkbox" checked/.test(rows[1].innerHTML), '落不了库的那几条不许默认勾上');
+  assert.match(rows[0].innerHTML, /type="checkbox" checked/);
+  assert.match(host.children[0].textContent, /1 条两端对得上角色卡/, '顶上那句先说清几条能落地');
+  assert.match(host.children[0].textContent, /3 条对不上/);
+
+  const btn = made.find((n) => n.className === 'btn btn-primary');
+  // 作者手贱把落不了库的那条也勾上：不入库，而且要点完当场就知道
+  rows[1].innerHTML = rows[1].innerHTML.replace('type="checkbox"', 'type="checkbox" checked');
+  await btn.onclick();
+  assert.equal(saved.length, 1, '只有两端都对得上的那条进得了库');
+  assert.deepEqual([saved[0].from, saved[0].to], ['char_lin', 'char_ming'],
+    '存的必须是解析后的角色 id：名字是作者随时会改的那个字段');
+  assert.equal(saved[0].kind, '师徒');
+  assert.match(btn.textContent, /已入库 1 条/);
+  assert.match(btn.textContent, /1 条两端对不上角色卡/, '拒了几条要说几条，不许显示成「什么都没发生」');
+});
+
+test('关系面板的起止章是下拉不是手打 id，弹窗里读的六个格子都有渲染点', () => {
+  const js = read('src/app.js');
+  const src = js.match(/\nfunction showCreateRelation\(existing\)[\s\S]*?\n\}/)?.[0];
+  assert.ok(src, 'app.js 里抠不出 showCreateRelation');
+  for (const id of ['inp-rel-from', 'inp-rel-to', 'inp-rel-kind', 'inp-rel-address', 'inp-rel-since', 'inp-rel-until']) {
+    assert.match(src, new RegExp(`id="${id}"`), `面板读了 ${id} 却没渲染它`);
+  }
+  for (const side of ['since', 'until']) {
+    assert.match(src, new RegExp(`<select class="settings-select" id="inp-rel-${side}">`),
+      `起止章还是手打输入框：库里存的是章 id，让作者照着 placeholder 敲就是一个字符一条断链`);
+  }
+  assert.match(src, /（这一章已不在书里）/, '老边指着被删的章时，下拉里要看得见那个坏值，不许静默变成「不限」');
+  assert.match(src, /起止章选反了/, '填反了要在点保存那一刻说出口，不是留给写库闸抛错（modal 吞 rejection）');
+  assert.doesNotMatch(src, /closeModal\(\)[\s\S]*?val\('inp-rel/, '关掉弹窗之后再读控件就是读 null');
+});
+
+/**
+ * 关系弹窗的真跑夹具：假 NovelDB 记下了每一次存与删，假控件表就是作者此刻填的那六格。
+ * 浏览器里点出来的一条毛病（改一条没有 id 的旧关系多出一条边）光看源码是看不出的 ——
+ * 那行 delete 读起来完全合理，只有把库做成数组才知道它有没有被调用。
+ */
+function openRelationModal(existing, filled) {
+  const js = read('src/app.js');
+  const src = js.match(/\nfunction showCreateRelation\(existing\)[\s\S]*?\n\}/)?.[0];
+  assert.ok(src, 'app.js 里抠不出 showCreateRelation');
+  const rows = existing ? [{ ...existing }] : [];
+  const saved = [];
+  const deleted = [];
+  const toasts = [];
+  const db = {
+    characters: { list: async () => [{ id: 'char_lin', name: '林烟火' }, { id: 'char_ming', name: '明长老' }] },
+    chapters: { list: async () => [{ id: 'ch_a', order: 1, title: '井台' }, { id: 'ch_b', order: 2, title: '火' }] },
+    relations: {
+      save: async (nid, edge) => {
+        saved.push(edge);
+        rows.push({ ...edge, id: edge.id || 'rel-generated' });   // 空主键那行不会覆盖旧行，只会另起一行
+      },
+      delete: async (id) => {
+        deleted.push(id);
+        const i = rows.findIndex((r) => (r.id ?? '') === id);
+        if (i >= 0) rows.splice(i, 1);
+      },
+    },
+  };
+  const controls = {
+    'inp-rel-from': 'char_lin', 'inp-rel-to': 'char_ming', 'inp-rel-kind': '师徒',
+    'inp-rel-address': '师父', 'inp-rel-since': '', 'inp-rel-until': '', ...filled,
+  };
+  let onOk = null;
+  let onDel = undefined;
+  const run = new Function('NovelDB', 'APP', 'esc', 'attr', 'val', 'showModal', 'closeModal', 'showToast',
+    'renderSidebarPanel', 'document', 'confirm',
+    `${src}\n return showCreateRelation;`)(
+    db, { novel: { id: 'n1' } }, NWText.esc, NWText.attr, (id) => controls[id],
+    (title, body, cb, delCb) => { onOk = cb; onDel = delCb; }, () => {}, (t) => toasts.push(t), async () => {},
+    { getElementById: () => null }, () => true);
+  run(existing);
+  return new Promise((r) => setTimeout(r, 0)).then(() => ({
+    rows, saved, deleted, toasts,
+    hasDel: typeof onDel === 'function',
+    save: () => onOk(),
+    del: () => (onDel ? onDel() : Promise.reject(new Error('弹窗没有删除回调，那颗按钮根本没渲染'))),
+  }));
+}
+
+test('改一条没有 id 的旧关系只剩一条：空主键那行得回头删掉，不然每改一次多出一条边', async () => {
+  const m = await openRelationModal({ id: '', from: 'char_lin', to: 'char_ming', kind: '师徒' }, {});
+  await m.save();
+  assert.equal(m.saved.length, 1);
+  assert.deepEqual(m.deleted, [''], 'save 给这条换了个新主键，旧行不会自己消失，必须点名叫一次 delete');
+  assert.equal(m.rows.length, 1, `库里还该是一条边，实际 ${m.rows.length} 条：作者看见两条一模一样的师徒，删一条还剩一条`);
+});
+
+test('起止章填反了要说清反在哪一头：失效章排在生效章之前', async () => {
+  const m = await openRelationModal(null, { 'inp-rel-since': 'ch_b', 'inp-rel-until': 'ch_a' });
+  await m.save();
+  assert.equal(m.saved.length, 0, '填反了不该落库');
+  assert.match(m.toasts.join('｜'), /起止章选反了[：:].{0,12}失效章排在生效章之前/,
+    '说成「之后」就是把方向讲反了，作者会照着反话去改对的那一头');
+});
+
+test('改口之后不许再有人把「改不到」写回来：这三处文案说的都是同一件已经能做好的事', () => {
+  for (const p of ['src/app.js', 'src/core/relationgraph.js', 'src/core/rules.js']) {
+    assert.doesNotMatch(read(p), /改不到|改了也不会生效/,
+      `${p} 还在说关系边改不动：面板里存一次就会领到自己的 id，这句话已经把作者挡在门外了`);
+  }
+});
+
+test('编辑关系弹窗里那颗删除按钮是真渲染的：回调得当 showModal 的第 4 个参数交进去', async () => {
+  const m = await openRelationModal({ id: 'rel_ok', from: 'char_lin', to: 'char_ming', kind: '师徒' }, {});
+  assert.ok(m.hasDel, '编辑已有关系却不给删除回调 —— showModal 只按第 4 个参数渲染那颗按钮，事后 getElementById 拿到的是 null');
+  await m.del();
+  assert.deepEqual(m.deleted, ['rel_ok']);
+  assert.equal(m.rows.length, 0, '点删除要真少一条');
+
+  const fresh = await openRelationModal(null, {});
+  assert.ok(!fresh.hasDel, '登记新关系时不该出现删除：那一条还没进库');
+});
+
+test('全仓不许再有人事后找那颗删除按钮：它只在 showModal 收到第 4 个参数时才存在', () => {
+  const js = read('src/app.js');
+  assert.doesNotMatch(js, /getElementById\('modal-del-btn'\)/,
+    'modal-del-btn 是 showModal 按第 4 个参数才渲染的：弹窗已经开完再按 id 去找，拿到的是 null，删的那条路就成了一段永不执行的代码');
+  const dec = js.match(/\nfunction showCreateDecision\(existing\)[\s\S]*?\n\}/)?.[0];
+  assert.ok(dec, 'app.js 里抠不出 showCreateDecision');
+  assert.match(dec, /\}, isEdit \? async \(\) => \{[\s\S]{0,220}?decisions\.delete/,
+    '决策的删除回调没当第 4 个参数交给 showModal：编辑弹窗里不会出现那颗按钮');
+});
+
+// ═══════════════ T5：关系面板只问 core，一个坐标都不自己算 ═══════════════
+
+test('面板与弹窗里不许有第二套判据：坐标、区间、缺口都出自 NWRelationGraph', () => {
+  const js = read('src/app.js');
+  const region = js.match(/\nasync function showRelationList\([\s\S]*?\nfunction showRelationGraph\(/)?.[0];
+  assert.ok(region, 'app.js 里抠不出 showRelationList');
+  assert.match(region, /NWRelationGraph\.build\(/, '哪条边还活着必须问 core');
+  assert.match(region, /NWRelationGraph\.notice\(/, '缺口那一句只可能来自 core');
+  assert.match(region, /NWRelationGraph\.rangeText\(/, '区间的人话说法也在 core，别在面板里拼「第 X–Y 章」');
+  const modal = js.match(/\nfunction showRelationGraph\([\s\S]*?\n\}/)?.[0];
+  assert.ok(modal, 'app.js 里抠不出 showRelationGraph');
+  assert.match(modal, /NWRelationGraph\.toSvg\(/, '那张图是 core 出的字符串');
+
+  const both = region + modal;
+  assert.doesNotMatch(both, /Math\./, '视图里不算几何：圆心与半径是 layout 的事');
+  assert.doesNotMatch(both, /viewBox|x1=|cx=/, '视图里不写 SVG 属性：那些是 toSvg 的事');
+  assert.doesNotMatch(both, /class="rg-|'rg-/, 'rg-* 这些 class 只由 core 写出去，界面照着上色');
+  // 从前这张卡片写的是 `e.until ? '已结束'`：填了失效章就算结束，坏边与自环边都被它盖过去
+  assert.doesNotMatch(region, /e\.until \? ['"][ ]*<span/, '「填了 until 就算结束」是那份算反的判据，别回来');
+  assert.match(region, /l\.state === 'ended'/, '「已结束」问的是 stateOf 那一份');
+});
+
+test('core 出图用到的每个 class 都在样式表里活着（少一条就是一片看不见的线）', () => {
+  const core = read('src/core/relationgraph.js');
+  const css = read('src/styles/app.css');
+  const used = new Set();
+  for (const m of core.matchAll(/\b(rg-[\w-]+|nw-relation-graph)\b/g)) used.add(m[1]);
+  assert.ok(used.size >= 9, `只抠到 ${used.size} 个 class：${[...used].join(',')}`);
+  const missing = [...used].filter((c) => !new RegExp(`\\.${c}\\b`).test(css)).sort();
+  assert.deepEqual(missing, [], `app.css 里缺这些关系图 class 的定义：${missing.join(', ')}`);
+  // 反过来说也成立：样式表里不该留着 core 已经不出来的 rg-*（那是一条永远套不上的规则）
+  const stale = [...css.matchAll(/\.(rg-[\w-]+)\b/g)].map((m) => m[1]).filter((c) => !used.has(c));
+  assert.deepEqual(stale, [], `app.css 里有 core 不再写出的关系图 class：${stale.join(', ')}`);
+});
+
+test('关系面板：缺口那一句、八种状态标签、那颗看全图按钮（假 DOM 真跑）', async () => {
+  const js = read('src/app.js');
+  const src = js.match(/\nasync function showRelationList\([\s\S]*?\n\}/)?.[0];
+  assert.ok(src, 'app.js 里抠不出 showRelationList');
+
+  const chars = [
+    { id: 'char_lin', name: '林烟火' },
+    { id: 'char_ming', name: '明长老' },
+    { id: 'char_su', name: '苏晚' },
+  ];
+  const chapters = [
+    { id: 'ch_a', order: 1, title: '山门' }, { id: 'ch_b', order: 2, title: '夜袭' },
+    { id: 'ch_c', order: 3, title: '下山' }, { id: 'ch_d', order: 4, title: '回头' },
+  ];
+  const edges = [
+    { id: 'rel_open', from: 'char_lin', to: 'char_ming', kind: '师徒', address: '师父' },
+    { id: 'rel_since', from: 'char_su', to: 'char_lin', kind: '同乡', since: 'ch_a', until: null },
+    { id: 'rel_ended', from: 'char_lin', to: 'char_su', kind: '同门', since: 'ch_a', until: 'ch_b' },
+    { id: 'rel_future', from: 'char_ming', to: 'char_su', kind: '旧识', since: 'ch_d', until: null },
+    { id: 'rel_bad', from: 'char_lin', to: 'char_ming', kind: '决裂', since: 'ch_d', until: 'ch_b' },
+    { id: 'rel_ghost', from: 'char_lin', to: 'ghost', kind: '敌对', until: 'ch_a' },
+    { id: 'rel_name', from: '苏晚', to: '林烟火', kind: '同乡' },
+    { id: 'rel_loop', from: 'char_lin', to: 'char_lin', kind: '自言自语' },
+    { from: 'char_lin', to: 'char_su', kind: '没 id 的那条' },
+  ];
+  const db = {
+    relations: { list: async () => edges },
+    characters: { list: async () => chars },
+    chapters: { list: async () => chapters },
+  };
+  const host = { innerHTML: '' };
+  const run = new Function('NovelDB', 'NWRelationGraph', 'APP', 'esc', 'attr', 'emptyHint', 'document',
+    `${src}\n return showRelationList;`)(
+    db, NWRelationGraph, { novel: { id: 'n1' } }, NWText.esc, NWText.attr,
+    (t) => `<div class="empty-hint">${NWText.esc(t)}</div>`, { getElementById: () => null });
+  await run(host);
+
+  const html = host.innerHTML;
+  const cards = html.split('<div class="char-card"').slice(1);
+  assert.equal(cards.length, edges.length, '账本里每一条都要有一张卡片：画不出来的那条尤其要看一眼');
+  assert.match(html, /class="relation-gap"/);
+  assert.match(html, /1 条边没有 id 或与别的边同 id/);
+  assert.match(html, /1 条边的某一头连不到任何角色，画不出来/);
+  assert.match(html, /1 条边的两头是同一个角色/);
+  assert.match(html, /条边靠名字连着，改个名字就断/);
+  assert.match(html, /生效区间是坏的（1 条填反了）/);
+  assert.match(html, /data-action="relation-graph"/, '看全图那颗按钮得在，并且走事件委托');
+
+  assert.doesNotMatch(cards[0], /novel-card-upgrade/, '一直如此的那条不该顶任何标签');
+  assert.match(cards[0], /师徒（称谓：师父）<br>一直如此/);
+  // 这一条是那一处旧毛病的反面：只填了起点、没填终点，旧面板不会标结束，新面板也不该标
+  assert.doesNotMatch(cards[1], /已结束/, '没登记结束不等于结束了 —— 它现在还在约束');
+  assert.match(cards[1], /自第 1 章起/);
+  assert.match(cards[2], /已结束/);
+  // 起点是全书最后一章的那条：面板按书末尾看，它已经开始了，所以不该顶「还没生效」
+  assert.doesNotMatch(cards[3], /novel-card-upgrade/, '面板里没有「还没开始」这一档：走到了就说明 cut 传错了');
+  assert.match(cards[3], /旧识<br>自第 4 章起/);
+  assert.match(cards[4], /区间坏了/);
+  assert.doesNotMatch(cards[4], /已结束/, '起止填反了的那条不该被说成「结束了」');
+  assert.match(cards[4], /起止章填反了/);
+  assert.match(cards[5], /画不出来/);
+  assert.doesNotMatch(cards[5], /已结束/);
+  assert.match(cards[5], /客体「ghost」角色卡上没有这个人/);
+  assert.match(cards[6], /靠名字连着/);
+  assert.match(cards[7], /两头同一个人/);
+  assert.match(cards[8], /没有可用 id，图上没画/);
+});
+
+test('看全图弹窗里那段 SVG 是 core 的原样字符串，缺口那一句也一起进去（假 DOM 真跑）', async () => {
+  const js = read('src/app.js');
+  const src = js.match(/\nfunction showRelationGraph\([\s\S]*?\n\}/)?.[0];
+  assert.ok(src, 'app.js 里抠不出 showRelationGraph');
+  const chars = [{ id: 'c1', name: '甲' }, { id: 'c2', name: '乙' }];
+  const edges = [{ id: 'e1', from: 'c1', to: 'c2', kind: '师徒' }, { id: 'e2', from: 'c1', to: 'nope', kind: '敌对' }];
+  const chapters = [{ id: 'ch_a', order: 1 }];
+  const db = {
+    relations: { list: async () => edges },
+    characters: { list: async () => chars },
+    chapters: { list: async () => chapters },
+  };
+  const seen = [];
+  const run = new Function('NovelDB', 'NWRelationGraph', 'APP', 'esc', 'showModal', 'showToast',
+    `${src}\n return showRelationGraph;`)(
+    db, NWRelationGraph, { novel: { id: 'n1' } }, NWText.esc,
+    (title, body) => seen.push({ title, body }), () => {});
+  run();
+  await new Promise((r) => setTimeout(r, 0));
+  const g = NWRelationGraph.build({ characters: chars, edges, chapters, cut: null });
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].body, new RegExp(NWRelationGraph.toSvg(g).slice(0, 60).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    '弹窗里就是 core 那张图，一个坐标都没重算');
+  assert.match(seen[0].title, /2 个角色、1 条边/);
+  assert.match(seen[0].body, /1 条边的某一头连不到任何角色/);
 });

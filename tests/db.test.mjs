@@ -151,3 +151,57 @@ test('volumes 表：缺卷名、缺起止、起止选反、章不属于本书都
   assert.deepEqual(await NovelDB.volumes.list(n.id), [], '删书必须连卷一起清掉');
   await NovelDB.novels.delete(other.id);
 });
+
+test('关系边的写库闸：坏边进不了库，进得去的都带角色 id', async () => {
+  const n = await freshNovel('关系闸');
+  const other = await freshNovel('别书');
+  const lin = await NovelDB.characters.create(n.id, { name: '林烟火' });
+  const ming = await NovelDB.characters.create(n.id, { name: '明长老' });
+  const cs = [];
+  for (let i = 1; i <= 3; i++) cs.push(await NovelDB.chapters.create(n.id, { title: `第${i}章`, content: '正文。' }));
+
+  await assert.rejects(() => NovelDB.relations.save(n.id, { from: lin.id, to: ming.id, kind: '  ' }), /缺少 kind/);
+  await assert.rejects(() => NovelDB.relations.save(n.id, { from: lin.id, to: 'char-nope', kind: '师徒' }), /客体.*找不到/,
+    '端点没建档的边一旦落库，图上少一条线、R31 静默跳过，而全书检查一声不响');
+  await assert.rejects(() => NovelDB.relations.save(n.id, { from: lin.id, to: lin.id, kind: '师徒' }), /同一个角色/);
+  await assert.rejects(() => NovelDB.relations.save(n.id, { from: lin.id, to: ming.id, kind: '师徒', since: cs[2].id, until: cs[0].id }),
+    /起止章选反了/);
+  await assert.rejects(() => NovelDB.relations.save(n.id, { from: lin.id, to: ming.id, kind: '师徒', until: 'ch-gone' }),
+    /失效章不在这本书里/);
+  const foreign = await NovelDB.chapters.create(other.id, { title: '别书的章', content: '正文。' });
+  await assert.rejects(() => NovelDB.relations.save(n.id, { from: lin.id, to: ming.id, kind: '师徒', since: foreign.id }),
+    /生效章不在这本书里/, '别本书的章 id 也不该框得进来');
+
+  const e = await NovelDB.relations.save(n.id, { from: '林烟火', to: ming.id, kind: ' 师徒 ', since: cs[0].id });
+  assert.equal(e.from, lin.id, '端点写的是名字就得收成角色 id：名字是作者随时会改的那个字段');
+  assert.equal(e.kind, '师徒', '关系类型两头的不该有的空格不落库');
+  assert.match(e.id, /^rel_/);
+  assert.equal(e.until, null, '起止留空是合法值（一直如此），不许被闸挡在门外');
+
+  await NovelDB.characters.create(n.id, { name: '明长老' });
+  await assert.rejects(() => NovelDB.relations.save(n.id, { from: lin.id, to: '明长老', kind: '师徒' }), /撞名/,
+    '两个同名的角色：挑一个连上去就是替作者决定他说的是谁');
+
+  const edited = await NovelDB.relations.save(n.id, { ...e, created_at: 1000, kind: '师徒（记名）' });
+  assert.equal(edited.id, e.id, '带 id 保存是改那一条，不是再登记一条');
+  assert.equal(edited.created_at, 1000, '改一条边不该把它的登记日期冲成今天');
+  assert.ok(edited.updated_at > 1000);
+
+  await NovelDB.characters.delete(ming.id);
+  assert.equal((await NovelDB.relations.list(n.id)).length, 1,
+    '删角色不连带删边：悄悄删掉作者的账本比留一条断链更坏，断链由 R15 报出来');
+
+  await NovelDB.novels.delete(n.id);
+  assert.deepEqual(await NovelDB.relations.list(n.id), [], '删书必须连关系一起清掉');
+  await NovelDB.novels.delete(other.id);
+});
+
+test('导入不走写库闸：盘上的坏边要进得来，进来了由 R15 说出口', async () => {
+  const n = await freshNovel('导入坏边');
+  const row = { id: 'rel_legacy', novel_id: n.id, from: 'char-lin', to: 'char-gone', kind: '师徒', address: '', since: null, until: null };
+  await NovelDB.putRow('relations', row);
+  const rows = await NovelDB.relations.list(n.id);
+  assert.equal(rows.length, 1, 'putRow 是导入通路：闸拦的是「手写的坏边」，不是「盘上已有的坏消息」');
+  assert.equal(rows[0].from, 'char-lin', '导入不许顺手改写端点 —— 改写过的行会与导出侧的基线哈希对不上');
+  await NovelDB.novels.delete(n.id);
+});

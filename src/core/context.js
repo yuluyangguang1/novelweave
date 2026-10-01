@@ -11,12 +11,14 @@
  * 依赖：NWText / NWBible / NWStory.loreTrigger（世界书匹配在 story.js，故无环）
  *        + NWStyleFit / NWStylePack（风格样例那一节的指纹与本书禁词包）
  *        + NWVolume（前情摘要的卷级分层，口径只写在 volumes.js）
+ *        + NWRelationGraph（活跃关系那一节，判据只写在 relationgraph.js）
  */
 (function (root, factory) {
-  const mod = factory(root.NWText, root.NWBible, root.NWStory, root.NWStyleFit, root.NWStylePack, root.NWVolume);
+  const mod = factory(root.NWText, root.NWBible, root.NWStory, root.NWStyleFit, root.NWStylePack,
+    root.NWVolume, root.NWRelationGraph);
   if (typeof module === 'object' && module.exports) module.exports = mod;
   else root.NWContext = mod;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, StyleFit, StylePack, Vol) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (T, Bible, Story, StyleFit, StylePack, Vol, Rel) {
   'use strict';
 
   const DEFAULTS = {
@@ -214,26 +216,24 @@
   // 成本比一开始就别说错要高得多。
 
   // ═══════════════ 活跃关系:登记的关系边约束续写中的称谓与互动 ═══════════════
-  // 只列与本章出场角色相关的边;until 已失效的不列。称谓(address)是 R19 的检查依据,
-  // 写之前让模型看到,比写完再报 R19 便宜。
+  // 只列与本章出场角色相关的边。称谓(address)是 R19 的检查依据，写之前让模型看到，
+  // 比写完再报 R19 便宜。
+  //
+  // 「哪条边还活着」一律问 NWRelationGraph —— 侧栏那张图、检查器 R15/R31/R34 与这里的 prompt
+  // 用的是同一份判据。这一句从前是自己算的，而且算反了：`if (e.until) return false`
+  // 把「到第 20 章结束」读成「永远不再约束」，于是决裂之后两人再没被同框约束过；
+  // 端点存的是角色名的那些老边（AI 抽关系从前存的正是名字）也被这一句顺手丢掉。
+  // 区间读不出来的边照样列：那条关系是真的，只是起止章被删了 —— 从 prompt 里删掉它
+  // 等于让模型忘掉一段还在成立的事实，而修账本是作者的事（R15 已经在报它了）。
 
-  function relationBlock(ctx, chars) {
+  function relationBlock(ctx, chars, cut) {
     const edges = ctx.relations?.edges || [];
     if (!edges.length || !chars.length) return null;
-    const ids = new Set(chars.map((c) => c.id));
-    const names = new Set(chars.map((c) => c.name));
-    const rel = edges.filter((e) => {
-      if (e.until) return false; // 已结束的关系不再约束
-      return (ids.has(e.from) && (ids.has(e.to) || names.has(e.to))) ||
-             (ids.has(e.to) && (ids.has(e.from) || names.has(e.from)));
+    const g = Rel.build({
+      characters: ctx.characters || [], edges, chapters: ctx.chapters || [], cut: cut ?? null,
     });
-    if (!rel.length) return null;
-    const byId = new Map((ctx.characters || []).map((c) => [c.id, c.name]));
-    const nm = (id) => byId.get(id) || id;
-    return rel.slice(0, 10).map((e) => {
-      const addr = e.address ? `（称谓「${e.address}」）` : '';
-      return `- ${nm(e.from)} → ${nm(e.to)}：${e.kind}${addr}${e.since ? `（自 ${e.since}）` : ''}`;
-    }).join('\n');
+    const lines = Rel.activeLines(g, new Set(chars.map((c) => c.id)), ctx.chapters || []);
+    return lines.length ? lines.join('\n') : null;
   }
 
   // ═══════════════ 信息差账本:未揭的秘密是硬约束,到期的是任务 ═══════════════
@@ -438,6 +438,9 @@
       ? (current.number ?? current.order)
       : (chapters.length ? (chapters[chapters.length - 1].number ?? chapters[chapters.length - 1].order) : null);
     const banText = hardBanBlock(ctx, chapters, targetN, current);
+    // 关系的「活着」看的是**目标章**：写第 3 章时，到第 3 章结束的关系还在约束这一章
+    // （那一章正是决裂本身）；续写下一章 = 排到全书末尾之后。
+    const relText = relationBlock(ctx, chars, wantNext ? chapters.length : idx);
 
     const useStyle = !!opts.style;
     const stylePick = useStyle
@@ -458,7 +461,7 @@
         ctx.book.voice?.notes ? `笔法：${ctx.book.voice.notes}` : '',
       ].filter(Boolean).join('\n') },
       { name: '出场角色', text: characterBlock(chars) },
-      ...(relationBlock(ctx, chars) ? [{ name: '活跃关系', text: relationBlock(ctx, chars) }] : []),
+      ...(relText ? [{ name: '活跃关系', text: relText }] : []),
       { name: '分章状态快照', text: stateBlock(ctx.states, prev, ctx.characters) },
       { name: '未结线索', text: promiseBlock(ctx.promises) },
       ...(decisionBlock(ctx) ? [{ name: '创作决策', text: decisionBlock(ctx) }] : []),

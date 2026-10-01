@@ -659,3 +659,28 @@ test('注入预览与生成时同一函数同一预算：样例是谁、指纹�
   assert.equal(pinned.injected.fitLine, NWStyleFit.lines(NWStyleFit.fingerprint(
     [{ id: 'ch-001', body: fitRep(24, FIT_LONG) }, { id: 'ch-002', body: fitRep(24, FIT_LONG) }], {})));
 });
+
+test('关系账本一路走到 prompt：磁盘上 relations.json 里那条师徒要进「活跃关系」', () => {
+  const rel = path.join(bookDir, 'bible', 'relations.json');
+  const was = fs.existsSync(rel) ? fs.readFileSync(rel, 'utf8') : null;
+  try {
+    writeJsonAtomic(rel, {
+      schemaVersion: NWBible.SCHEMA_VERSION,
+      edges: [
+        { id: 'rel-1', from: 'char-lin', to: 'char-ming', kind: '师徒', address: '师父', since: 'ch-001', until: null, notes: '' },
+        { id: 'rel-2', from: 'char-lin', to: 'char-ghost', kind: '敌对', since: null, until: null, notes: '' },
+      ],
+    });
+    const human = run('nw-context.mjs', [bookDir, '--chapter', 'ch-003']).stdout;
+    assert.match(human, /## 活跃关系/, '关系边整个没进上下文：CLI 与 Web 共用 buildSections，缺的就是磁盘这条通路');
+    assert.match(human, /- 林烟火 → 明长老：师徒（称谓「师父」）（自第 1 章起）/);
+    assert.doesNotMatch(human, /char-ghost/, '解析不到人的那条边不该被拼进 prompt，它由 R15 说出口');
+
+    const j = JSON.parse(run('nw-context.mjs', [bookDir, '--chapter', 'ch-003', '--json']).stdout);
+    const row = j.sections.find((s) => s.name === '活跃关系');
+    assert.ok(row && row.present, 'usage 里说这节没进 prompt，可正文里明明有');
+    assert.deepEqual(row.included, ['登记关系边'], '这一节的出处要说得出：只有账本里登记过的边');
+  } finally {
+    if (was === null) fs.rmSync(rel); else fs.writeFileSync(rel, was);
+  }
+});

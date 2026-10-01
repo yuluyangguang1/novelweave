@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWRules, NWVolume } from './_load.mjs';
+import { NWRules, NWVolume, NWRelationGraph } from './_load.mjs';
 
 const ch = (n, over = {}) => ({
   id: `ch-00${n}`, number: n, title: `第${n}章`, status: 'draft',
@@ -891,6 +891,18 @@ test('R31 不查这些：有一端从未露面（那是 R30）、角色 id 解�
     'relation-pair-never-together'), [], '没有 relations 的老书必须整条静默');
 });
 
+// 「让给 R15」这句话得有守卫：从前删掉那句 continue 什么红都没有 —— 端点解析不到时它会抛，
+// 而抛错被引擎收成一条 rule-crashed，R31 这一整条规则连同其余边的检查一起静默消失。
+test('R31 让给 R15 的那些边是跳过，不是抛：崩一次等于全书的关系边都不查了', () => {
+  const all = NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '林烟火挑水。' }), ch(2, { body: '他咳了两声。' })],
+    characters: [char('char-lin', { name: '林烟火' })],
+    relations: { edges: [rel({ to: 'char-ghost' }), rel({ id: 'rel-2', from: 'char-ghost', to: 'char-ming' })] },
+  }));
+  assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed').map((x) => x.message), [],
+    '解析不到的端点必须被跳过，而不是把整条规则崩掉');
+});
+
 test('R29/R30/R31 遇到边界输入不许崩，且都不产出 error', () => {
   const c = ctx({
     chapters: [ch(1, { body: '井台。' }), ch(2, { body: '火。' }), ch(3, { body: '林烟火与明长老同框。' })],
@@ -1123,4 +1135,189 @@ test('R33 与侧栏面板同一个数：规则报的缺口章数就是 gapNotice
   const d = of(NWRules.runRules(ctx({ chapters, volumes })), 'volume-gap');
   assert.equal(d[0].message.match(/仍有 (\d+) 章/)[1], String(plan.counts.uncovered));
   assert.match(NWVolume.gapNotice(plan), new RegExp(`${plan.counts.uncovered} 章不在任何卷里`));
+});
+
+// ═══════════════ T 族：关系账本（R15 扫边、R31 认名字、R34 那四类）═══════════════
+
+test('R15 现在也扫关系边：端点指向没建档的角色 → error，说清是哪条边哪一头', () => {
+  const c = ctx({
+    chapters: [ch(1)],
+    characters: [char('char-lin', { name: '林烟火' })],
+    relations: { edges: [rel({ to: 'char-ghost' })] },
+  });
+  const d = of(NWRules.runRules(c), 'dangling-reference');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].severity, 'error');
+  assert.equal(d[0].entity, 'rel-1');
+  assert.match(d[0].message, /关系边 rel-1 的客体「char-ghost」在角色卡上没有这个人/, d[0].message);
+  assert.deepEqual(d[0].evidence.basis, ['relation.to=char-ghost', 'unknown']);
+});
+
+test('R15 两头都断就报两条：主体与客体各说一次，不含糊成「这条边有问题」', () => {
+  const c = ctx({
+    chapters: [ch(1)],
+    characters: [char('char-lin', { name: '林烟火' })],
+    relations: { edges: [rel({ id: 'rel-9', from: 'char-ghost', to: 'char-nope' })] },
+  });
+  const d = of(NWRules.runRules(c), 'dangling-reference');
+  assert.equal(d.length, 2);
+  assert.deepEqual(d.map((x) => (x.message.includes('主体') ? 'from' : 'to')), ['from', 'to']);
+});
+
+test('R15 认名字：边里写的是角色名而本书只有一个此人 → 不算断链（AI 抽关系存的就是名字）', () => {
+  const c = ctx({
+    chapters: [ch(1, { body: '林烟火挑水。明长老咳了两声。' })],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+    relations: { edges: [rel({ from: '林烟火', to: '明长老' })] },
+  });
+  assert.deepEqual(of(NWRules.runRules(c), 'dangling-reference'), []);
+});
+
+test('R15 名字撞车与端点留空各说各的：修法不同，混成「不存在」作者就不知道改哪一头', () => {
+  const nameClash = of(NWRules.runRules(ctx({
+    chapters: [ch(1)],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-a', { name: '甲' }), char('char-b', { name: '甲' })],
+    relations: { edges: [rel({ to: '甲' })] },
+  })), 'dangling-reference');
+  assert.equal(nameClash.length, 1);
+  assert.match(nameClash[0].message, /客体「甲」在角色卡上撞名，不知连到哪一个/, nameClash[0].message);
+  assert.match(nameClash[0].suggestion, /改用角色 id/);
+  const blank = of(NWRules.runRules(ctx({
+    chapters: [ch(1)],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+    relations: { edges: [rel({ from: null })] },
+  })), 'dangling-reference');
+  assert.equal(blank.length, 1);
+  assert.match(blank[0].message, /没填主体/, blank[0].message);
+});
+
+test('R15 扫关系的起止章：指向被删掉的章要报，留空不报（留空 = 一直如此）', () => {
+  const base = {
+    chapters: [ch(1), ch(2), ch(3)],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+  };
+  const d = of(NWRules.runRules(ctx({ ...base, relations: { edges: [rel({ since: 'ch-001', until: 'ch-009' })] } })),
+    'dangling-reference');
+  assert.equal(d.length, 1);
+  assert.match(d[0].message, /失效章节「ch-009」不存在/, d[0].message);
+  assert.deepEqual(d[0].evidence.basis, ['未找到 ch-009', 'relation.until=ch-009']);
+  assert.match(d[0].suggestion, /留空 = 一直如此/);
+  assert.deepEqual(of(NWRules.runRules(ctx({ ...base, relations: { edges: [rel()] } })), 'dangling-reference'), [],
+    '起止留空是合法值，不是缺陷');
+});
+
+test('R15 不替 R34 说话：没有 id 的边它报不出「哪条边」，一条都不许报', () => {
+  const c = ctx({
+    chapters: [ch(1)],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+    relations: { edges: [rel({ id: '' }), rel({ id: null }), null, {}, { id: 'rel-x', from: 'char-ghost', to: 'char-ming' }] },
+  });
+  const d = of(NWRules.runRules(c), 'dangling-reference');
+  assert.deepEqual(d.map((x) => x.entity), ['rel-x'], JSON.stringify(d.map((x) => x.message)));
+});
+
+test('R31 端点解析走同一份：边里存的是名字也照样查同框，只认 id 时这批边是隐身的', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '林烟火挑水。' }), ch(2, { body: '明长老咳了两声。' })],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+    relations: { edges: [rel({ from: '林烟火', to: '明长老' })] },
+  })), 'relation-pair-never-together');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].entity, 'rel-1');
+  // 引证里给的是解析后的角色 id：作者据此去改的是那两条边的两端，不是那两个名字
+  assert.match(d[0].evidence.basis[0], /^边 char-lin→char-ming/, d[0].evidence.basis.join(' / '));
+});
+
+test('R31 不查名字撞车的边：不知道连到哪一个，就不替作者挑一个人判他从未同框', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '林烟火挑水。甲在门口。' }), ch(2, { body: '林烟火挑水。' })],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-a', { name: '甲' }), char('char-b', { name: '甲' })],
+    relations: { edges: [rel({ to: '甲' })] },
+  })), 'relation-pair-never-together');
+  assert.deepEqual(d, []);
+});
+
+test('R34 一条边都没有就整条闭嘴：连「关系」这一栏都没填过的书不是有缺口', () => {
+  const base = { chapters: [ch(1)], characters: [char('char-lin', { name: '林烟火' })] };
+  assert.deepEqual(of(NWRules.runRules(ctx(base)), 'relation-gap'), []);
+  assert.deepEqual(of(NWRules.runRules(ctx({ ...base, relations: { edges: [] } })), 'relation-gap'), []);
+  assert.deepEqual(of(NWRules.runRules(ctx({ ...base, relations: {} })), 'relation-gap'), []);
+});
+
+test('R34 四类各说一句，顺序固定：撞 id → 自环 → 填反 → 靠名字', () => {
+  const c = ctx({
+    chapters: [ch(1), ch(2), ch(3)],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+    relations: { edges: [
+      rel({ id: 'rel-1' }),
+      rel({ id: 'rel-1', to: 'char-lin' }),                              // 与上一条同 id → skipped
+      rel({ id: 'rel-2', to: 'char-lin' }),                               // 自环
+      rel({ id: 'rel-3', since: 'ch-003', until: 'ch-001' }),             // 区间填反
+      rel({ id: 'rel-4', from: '林烟火' }),                               // 靠名字连着
+    ] },
+  });
+  const d = of(NWRules.runRules(c), 'relation-gap');
+  assert.equal(d.length, 4, d.map((x) => x.message).join(' / '));
+  assert.deepEqual(d.map((x) => x.entity), [null, 'rel-2', 'rel-3', 'rel-4']);
+  assert.match(d[0].message, /^1 条关系边没有 id、或与别的边撞了同一个 id/, d[0].message);
+  // 账本里那一行「5 条边」数的是记录条数（含画不出来的那条），不是图上的线数
+  assert.match(d[0].evidence.basis[0], /账本里 5 条边，其中 1 条/, d[0].evidence.basis.join(' / '));
+  assert.match(d[1].message, /林烟火 → 林烟火/, d[1].message);
+  assert.match(d[2].message, /林烟火→明长老（师徒）的生效区间填反了/, d[2].message);
+  assert.deepEqual(d[2].evidence.basis, ['since=ch-003（第 3 章）', 'until=ch-001（第 1 章）']);
+  assert.match(d[3].message, /有一端写的是名字不是角色 id/, d[3].message);
+  assert.deepEqual(d[3].evidence.basis, ['from=林烟火', '角色卡上有唯一的「林烟火」']);
+  assert.deepEqual(d.map((x) => x.fingerprint), [...new Set(d.map((x) => x.fingerprint))]);
+  assert.ok(d.every((x) => x.severity === 'info' && x.confidence === 1), '恒为 info，且不猜');
+});
+
+test('R34 不重复报 R15 的坏消息：端点没建档、起止章被删，一份坏消息说两遍只是吵', () => {
+  const base = {
+    chapters: [ch(1), ch(2)],
+    characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+  };
+  const edges = [
+    rel({ id: 'rel-1', to: 'char-ghost' }),
+    rel({ id: 'rel-2', since: 'ch-009' }),
+  ];
+  const all = NWRules.runRules(ctx({ ...base, relations: { edges } }));
+  assert.deepEqual(of(all, 'relation-gap'), [], of(all, 'relation-gap').map((x) => x.message).join(' / '));
+  assert.equal(of(all, 'dangling-reference').length, 2, '同一批坏边由 R15 报出，一条不漏');
+});
+
+test('R34 也不报「谁在网外」与「图分了几块」：没登记关系不是缺陷，两条不相干的故事线也不是', () => {
+  const d = of(NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '甲。乙。丙。丁。' })],
+    characters: [char('a', { name: '甲' }), char('b', { name: '乙' }), char('c', { name: '丙' }), char('d', { name: '丁' })],
+    relations: { edges: [rel({ id: 'rel-1', from: 'a', to: 'b' }), rel({ id: 'rel-2', from: 'c', to: 'd' })] },
+  })), 'relation-gap');
+  assert.deepEqual(d, [], d.map((x) => x.message).join(' / '));
+});
+
+test('R34 遇到脏边不许崩，也不产出 error', () => {
+  for (const edges of [[null], [{}], [{ id: 'e1', from: 42, to: [] }], [{ id: 'e2', from: 'a', to: 'a', since: 7, until: null }],
+    [{ id: 'e3', from: 'char-lin', to: 'char-ming', since: 'ch-003', until: 'ch-001' }]]) {
+    const all = NWRules.runRules(ctx({
+      chapters: [ch(1), ch(2), ch(3)],
+      characters: [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })],
+      relations: { edges },
+    }));
+    assert.deepEqual(all.filter((x) => x.rule === 'rule-crashed').map((x) => x.message), [], JSON.stringify(edges));
+    assert.deepEqual(of(all, 'relation-gap').filter((x) => x.severity !== 'info'), [], '这条规则不许命令作者');
+  }
+});
+
+test('R34 与那张图同一个数：报出去的每一类都等于 NWRelationGraph 的桶，改判据只改一处', () => {
+  const chapters = [ch(1), ch(2), ch(3)];
+  const characters = [char('char-lin', { name: '林烟火' }), char('char-ming', { name: '明长老' })];
+  const edges = [rel({ id: 'rel-1' }), rel({ id: 'rel-1' }), rel({ id: 'rel-2', to: 'char-lin' }),
+    rel({ id: 'rel-3', since: 'ch-003', until: 'ch-002' }), rel({ id: 'rel-4', to: '明长老' })];
+  const g = NWRelationGraph.build({ characters, edges, chapters, cut: null });
+  const d = of(NWRules.runRules(ctx({ chapters, characters, relations: { edges } })), 'relation-gap');
+  const spoken = (re) => d.filter((x) => re.test(x.message)).length;
+  assert.equal(spoken(/没有 id/), g.counts.skipped ? 1 : 0);
+  assert.equal(spoken(/两头是同一个人/), g.selfLoops.length);
+  assert.equal(spoken(/填反了/), g.links.filter((x) => x.range.reason === 'reversed').length);
+  assert.equal(spoken(/名字不是角色 id/), g.links.filter((x) => x.via.from === 'name' || x.via.to === 'name').length);
+  assert.match(d[0].message, new RegExp(`${g.counts.skipped} 条关系边`), d[0].message);
 });
