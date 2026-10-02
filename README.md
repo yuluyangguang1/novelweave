@@ -100,3 +100,21 @@ node --test tests/*.test.mjs
 ```
 
 零依赖，只用 Node 内置模块。
+
+## 仓库工具
+
+`src/styles/app.css` 的设计令牌是照抄官网 `shared.css` 一份的（引它就不能离线、不能单独 clone），
+所以抄来的东西会漂。比对靠这个脚本：
+
+```bash
+node tools/check-tokens.mjs                      # 自动在上一级找 shared.css
+node tools/check-tokens.mjs --site ../yours/shared.css
+node tools/check-tokens.mjs --app src/styles/app.css --json
+```
+
+单独 clone 时用 `--site` 或环境变量 `NW_SITE_SHARED_CSS` 指路。`--json` 是给机器读的：
+stdout 里只有一个 JSON 对象，比对的是哪一份文件写在 `site` 字段里，不另起一行。
+
+退出码 `0` 没有未处理漂移 / `1` 有漂移、同一份文件里自打嘴巴、或已知漂移表有过期条目 /
+`2` 没找到对照文件 —— 找不到就说找不到，**跳过不等于通过**。
+认可一条漂移要在 `KNOWN_DRIFT` 里写清理由，没理由的豁免一律不收。

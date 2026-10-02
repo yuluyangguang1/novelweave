@@ -2068,3 +2068,32 @@ test('D 族的判据写进了文档：R36 有那一节，R22 的句式行念得�
   assert.match(doc, /60\s*字以上且句内无逗号顿号/);
   assert.match(doc, /### R36 `ai-name-clash`/);
 });
+
+test('首启引导看完回得去：顶栏有重放入口，而且它播的是同一份三步文案', () => {
+  const html = read('index.html');
+  const js = read('src/app.js');
+  assert.match(html, /data-action="replay-onboarding"/,
+    '三步引导只在首启出现一次，看完就再也回不去 —— 首页顶栏得有重放入口');
+  assert.match(html, /data-action="replay-onboarding"[^>]*aria-label="重看新手引导"/,
+    '图标按钮没有可读标签，谁都不知道那颗 ? 是干什么的');
+  assert.match(js, /'replay-onboarding':\s*\(\)\s*=>\s*showOnboarding\(\)/,
+    '重放没调 showOnboarding —— 多半是抄了第二份文案');
+  assert.match(js, /if \(e\.key !== 'Escape'\) return;[\s\S]{0,260}?getElementById\('onboard-mask'\)/,
+    '顶栏能随时叫出来的卡，Esc 得关得掉 —— 只留一个「直接开始」可点，键盘用户没退路');
+  const copies = [...js.matchAll(/先把设定织成网/g), ...html.matchAll(/先把设定织成网/g)].length;
+  assert.equal(copies, 1, `${copies} 份三步引导那句标题，改一句就得改两处（同族病见 roadmap F 节）`);
+});
+
+test('文档点名的每个 tools 与 scripts 脚本都在磁盘上 —— 宣称有就等于真有', () => {
+  const missing = [];
+  for (const f of ['README.md', 'docs/usage.md', ...readdirSync(repoPath('skills'))
+    .flatMap((d) => readdirSync(repoPath('skills', d)).filter((x) => x.endsWith('.md')).map((x) => `skills/${d}/${x}`))]) {
+    if (!existsSync(repoPath(...f.split('/')))) continue;
+    for (const m of read(f).matchAll(/(?:tools|scripts)\/([A-Za-z0-9_-]+\.mjs)/g)) {
+      const dir = m[0].startsWith('tools') ? 'tools' : 'scripts';
+      if (!existsSync(repoPath(dir, m[1]))) missing.push(`${f} 说它有 ${m[0]}，磁盘上没有`);
+    }
+  }
+  assert.deepEqual(missing, [], missing.join('；'));
+  assert.match(read('README.md'), /tools\/check-tokens\.mjs/, '令牌双源守护没人知道存在，就等于没做');
+});

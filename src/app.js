@@ -77,9 +77,13 @@ async function initApp() {
   };
   if (swBtn) swBtn.onclick = () => location.reload();
 
-  // Esc 可达性:连续生成进度层停止 → AI 面板关闭 → 普通弹层关闭(评审 #四.5)
+  // Esc 可达性:新手引导卡 → 连续生成进度层停止 → AI 面板关闭 → 普通弹层关闭(评审 #四.5)
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    // 引导卡是 body 上直接盖下来的一层，不在 .modal-overlay 那一类里，
+    // 顶栏那颗重放按钮把它变成随时能叫出来的东西，就得跟关掉它的手势配齐。
+    const onboard = document.getElementById('onboard-mask');
+    if (onboard) { onboard.remove(); return; }
     const batchMask = document.getElementById('batch-mask');
     if (batchMask) {
       if (APP.batchAbort) APP.batchAbort.abort();
@@ -153,6 +157,9 @@ async function onPageEntered(page, params) {
 const ACTIONS = {
   'go-home':       () => router.go('home'),
   'go-settings':   () => router.go('settings'),
+  // 三步引导只在首启出现一次，看完就再也回不去 —— 入口调的是同一个 showOnboarding，
+  // 文案不留第二份（重放要重播的那三句一改就有两处，跟上次「两处各说一遍」同族）。
+  'replay-onboarding': () => showOnboarding(),
   // 移动端 @media 把侧栏压成 max-width:0，没有 .open 的入口就等于手机上根本进不去
   'toggle-sidebar': () => document.getElementById('workspace-sidebar')?.classList.toggle('open'),
   'open-novel':    (id) => router.go('workspace', { novelId: id }),
