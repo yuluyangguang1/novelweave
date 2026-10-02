@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NWRules, NWText, NWTension, NWVolume, NWRelationGraph } from './_load.mjs';
+import { NWRules, NWText, NWTension, NWVolume, NWRelationGraph, NWStylePack } from './_load.mjs';
 
 const ch = (n, over = {}) => ({
   id: `ch-00${n}`, number: n, title: `第${n}章`, status: 'draft',
@@ -1421,4 +1421,75 @@ test('R35 不碰目标字数，也不因一章超上限而重复报', () => {
   })), 'chapter-length');
   assert.equal(many.length, 2, JSON.stringify(many.map((x) => x.message)));
   assert.equal(new Set(many.map((x) => x.fingerprint)).size, 2, '两章两条，指纹不得撞车');
+});
+
+// ── D 族：R36 ai-name-clash（名单只有一份，住在 stylepack）──
+
+const NAMES = NWStylePack.AI_NAMES;
+const clash = (characters) => of(NWRules.runRules(ctx({ characters })), 'ai-name-clash');
+
+test('R36 名单是一份去重的两字名，且不是空壳', () => {
+  assert.ok(Array.isArray(NAMES) && NAMES.length >= 10, `名单太短：${NAMES && NAMES.length}`);
+  for (const n of NAMES) {
+    assert.equal(typeof n, 'string');
+    assert.equal(n.length, 2, `名单里的名都得是两字：${n}`);
+  }
+  assert.equal(new Set(NAMES).size, NAMES.length, `名单里有重项：${NAMES.filter((n, i) => NAMES.indexOf(n) !== i)}`);
+});
+
+test('R36 本名撞名单 → 一条 info，零章正文也报（换名最省力的时刻就是建档那一刻）', () => {
+  const d = clash([char('char-a', { name: NAMES[0] })]);
+  assert.equal(d.length, 1, JSON.stringify(d.map((x) => x.message)));
+  assert.equal(d[0].severity, 'info', '名字撞车不是矛盾，永不该升档');
+  assert.equal(d[0].entity, 'char-a');
+  assert.ok(d[0].message.includes(NAMES[0]), d[0].message);
+  assert.ok(d[0].evidence.basis.join('｜').includes(`名单共 ${NAMES.length} 个名字`),
+    JSON.stringify(d[0].evidence.basis));
+});
+
+test('R36 判据是整格相等不是包含：「林晚风」不该被「林晚」挑出来', () => {
+  const d = clash([
+    char('char-a', { name: NAMES[0] + '风' }),
+    char('char-b', { name: `阿${NAMES[1]}` }),
+    char('char-c', { name: `${NAMES[2]}与${NAMES[3]}` }),
+  ]);
+  assert.deepEqual(d.map((x) => x.entity), [], `包含关系不该命中：${JSON.stringify(d.map((x) => x.message))}`);
+  const all = NWRules.runRules(ctx({ characters: [char('char-a', { name: NAMES[0] + '风' })] }));
+  assert.deepEqual(of(all, 'rule-crashed'), [], '这条路径不许抛 —— 抛了整条规则对这本书永久失明');
+});
+
+test('R36 别名一起查，两种别名形状（字符串与 {text}）都认', () => {
+  const d = clash([char('char-a', { name: '林烟火', aliases: [NAMES[1]] })]);
+  assert.equal(d.length, 1, JSON.stringify(d.map((x) => x.message)));
+  assert.ok(d[0].message.includes(`「${NAMES[1]}」`), `要说清撞的是称呼那一个：${d[0].message}`);
+  const shaped = clash([char('char-b', { name: '林烟火', aliases: [{ text: NAMES[2] }] })]);
+  assert.equal(shaped.length, 1, JSON.stringify(shaped.map((x) => x.message)));
+  // 边界输入不许崩：数字、null、缺字段都只能被忽略，不能让整条规则被 rule-crashed 吞掉
+  const junk = NWRules.runRules(ctx({
+    characters: [char('char-c', { name: 42, aliases: [null, 3, {}, { text: NAMES[3] }] })],
+  }));
+  assert.deepEqual(of(junk, 'rule-crashed'), [], JSON.stringify(of(junk, 'rule-crashed')));
+  assert.equal(of(junk, 'ai-name-clash').length, 1, JSON.stringify(of(junk, 'ai-name-clash').map((x) => x.message)));
+});
+
+test('R36 关掉的卡不查，且「不报」是因为关了而不是崩了', () => {
+  const d = clash([char('char-a', { name: NAMES[0], enabled: false })]);
+  assert.deepEqual(d.map((x) => x.entity), [], 'enabled=false 的卡不该报');
+  const all = NWRules.runRules(ctx({ characters: [char('char-a', { name: NAMES[0], enabled: false })] }));
+  assert.deepEqual(of(all, 'rule-crashed'), [], JSON.stringify(of(all, 'rule-crashed')));
+});
+
+test('R36 一本书最多报三条：张张都中说的是起名风格，逐张念一遍只是刷屏', () => {
+  const many = clash([0, 1, 2, 3, 4].map((i) => char(`char-${i}`, { name: NAMES[i] })));
+  assert.equal(many.length, 3, JSON.stringify(many.map((x) => x.message)));
+  assert.deepEqual(many.map((x) => x.entity), ['char-0', 'char-1', 'char-2'], '截断要按建档顺序截，不许随机挑');
+});
+
+test('R36 与 R30 各问各的：撞名单的角色不因「正文里没出现」被合并成一条', () => {
+  const all = NWRules.runRules(ctx({
+    chapters: [ch(1, { body: '山门前的雪落了三层。' }), ch(2, { body: '他推门进去。' }), ch(3, { body: '烛火晃了一下。' })],
+    characters: [char('char-a', { name: NAMES[0] })],
+  }));
+  assert.equal(of(all, 'ai-name-clash').length, 1, JSON.stringify(of(all, 'ai-name-clash').map((x) => x.message)));
+  assert.equal(of(all, 'entry-never-mentioned').length, 1, 'R30 问的是露没露过面，两件事都要说出口');
 });

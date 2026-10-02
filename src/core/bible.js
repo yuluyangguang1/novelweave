@@ -143,11 +143,14 @@
   /**
    * 章节的统一标签。number 0 是前置章（楔子/序），写成「第0章」会被模型读成
    * 编号出错，也会让作者以为是哪一步排错了序 —— 直接用它自己的名字。
+   * 没有号（手写 frontmatter 漏了那一行）走同一条路：这一句是要进 prompt 的，
+   * 「第undefined章」既骗模型也骗作者。
    */
   function chapterLabel(chapter) {
     if (!chapter) return '';
     const title = chapter.title || '无题';
-    return Number(chapter.number) === 0 ? title : `第${chapter.number}章《${title}》`;
+    const n = Number(chapter.number);
+    return n ? `第${n}章《${title}》` : title;
   }
 
   function newChapter(opts) {

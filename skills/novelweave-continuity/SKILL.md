@@ -83,7 +83,7 @@ node scripts/nw-continuity.mjs explain --rule R1
 | 不要 | 要 |
 |---|---|
 | "建议加强人物塑造"这类无依据评价 | 只报有 `evidence.quote` 支撑的具体矛盾 |
-| 把 30 条诊断全倒出来 | 计数 + 最严重 5 条 + 让用户跑 `--json` |
+| 把 31 条诊断全倒出来 | 计数 + 最严重 5 条 + 让用户跑 `--json` |
 | 直接改正文 | 给改法，让作者决定 |
 | 因为"看起来像闪回"就不报 R1 | 该报就报，作者可以用 `flags:[flashback]` 或 `suppressions.json` 豁免 |
 | 自己新编一个 rule 名 | 只用规则表里的名字；确实超出范围就用 `llm:` 前缀并说明 |

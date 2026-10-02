@@ -172,7 +172,7 @@
     const older = chapters.slice(0, Math.max(0, upto - RECAP_ITEMS)) // 细摘要窗口内的不算"旧"
       .filter((c) => c.id !== prev?.id && (c.body || '').length > 50);
     if (embedHits && embedHits.length) {
-      return embedHits.map((h) => ({ id: h.chapterId, label: Bible.chapterLabel(chapters.find((x) => x.id === h.chapterId) || { number: '?', title: h.chapterTitle }), score: h.score, who: ['语义'], snippet: (h.text || '').slice(0, RELATED_SNIPPET) }));
+      return embedHits.map((h) => ({ id: h.chapterId, label: Bible.chapterLabel(chapters.find((x) => x.id === h.chapterId) || { title: h.chapterTitle }), score: h.score, who: ['语义'], snippet: (h.text || '').slice(0, RELATED_SNIPPET) }));
     }
     const scored = older.map((c) => {
       let score = 0;

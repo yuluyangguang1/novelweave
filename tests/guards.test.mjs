@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWTension, NWPitch, NWVolume, NWRelationGraph } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWTension, NWPitch, NWVolume, NWRelationGraph, NWStylePack } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -1965,4 +1965,50 @@ test('Z 的规格写进了文档并点名 formatLabel', () => {
     '档名话术的出处没点名，下一个界面就会照旧手抄');
   assert.match(read('skills/novelweave/references/workflow-preset.md'), /`NWTension\.formatLabel\(?/,
     '预设那份文档还在念旧名');
+});
+
+// ── D 族：AI 人名名单与两条「形」的门槛 ──
+
+test('那批扎堆人名只写在 stylepack.js：别处再抄一遍就会出现「prompt 禁了、机检查不出」', () => {
+  // 与禁词包同一个病：清单有两份时，改的那份永远是被 prompt 引用的那一份，
+  // 于是作者看到机器报「名字扎堆」却找不到这条判据住在哪。
+  const files = [...readdirSync(repoPath('src/core')).filter((f) => f.endsWith('.js')).map((f) => `src/core/${f}`),
+    'src/app.js', 'index.html',
+    ...readdirSync(repoPath('scripts')).filter((f) => f.endsWith('.mjs')).map((f) => `scripts/${f}`)];
+  const NAME_RE = /林晚|苏念|顾言|陆衍|沈清|叶澜/;
+  const copies = files.filter((f) => f !== 'src/core/stylepack.js' && NAME_RE.test(read(f)));
+  assert.deepEqual(copies, [], `这批人名在别处又抄了一遍：${copies.join('、')}`);
+  assert.ok(NWStylePack.AI_NAMES.length >= 10, '名单一旦被清空，R36 与 prompt 那行就一起静默了');
+});
+
+test('R36 只问名单：整格相等、按常量截断，不抄第二份名单也不写死 3', () => {
+  const rules = read('src/core/rules.js');
+  assert.match(rules, /const known = StylePack && StylePack\.AI_NAMES \? StylePack\.AI_NAMES : \[\];/,
+    'R36 一旦自带名单，prompt 与机检就分家了');
+  assert.match(rules, /nameForms\(c\)\.filter\(\(f\) => known\.includes\(f\)\)/,
+    '称呼必须走 nameForms（别名两种形状都认），自己取 c.name 会漏掉正文里真正在用的那个称呼');
+  assert.match(rules, /if \(out\.length >= NAME_CLASH_MAX\) break;/, '截断数得是常量');
+  assert.doesNotMatch(rules, /out\.length >= 3/, '写死 3 就与 NAME_CLASH_MAX 分家');
+  assert.match(read('scripts/nw-continuity.mjs'), /R36: 'ai-name-clash'/, '--rules R36 解析不出来说明别名表漏挂了');
+});
+
+test('两条新句式的门槛只写在 stylepack：实现里不许出现第二个 5 或 60', () => {
+  const sp = read('src/core/stylepack.js');
+  assert.match(sp, /if \(de >= DE_PILE_MIN\)/, '「的」堆叠的门槛必须来自常量');
+  assert.match(sp, /s\.text\.length >= LONG_CLAUSE_MIN/, '断句门槛必须来自常量');
+  assert.doesNotMatch(sp, /de >= \d/, '门槛写死就没人和近失夹具一起改口');
+  assert.doesNotMatch(sp, /length >= \d\d\b/, '长度门槛写死同上');
+  assert.equal(NWStylePack.DE_PILE_MIN, 5);
+  assert.equal(NWStylePack.LONG_CLAUSE_MIN, 60);
+  assert.deepEqual(NWStylePack.PATTERNS.map((p) => p.id),
+    ['same-subject', 'no-dialogue', 'binary-contrast', 'short-triple', 'dash-insert', 'de-pile', 'long-clause'],
+    '句式清单一变，rules.md 的 R22 那一节与 prompt 那行都得改口');
+});
+
+test('D 族的判据写进了文档：R36 有那一节，R22 的句式行念得出两条新的', () => {
+  const doc = read('skills/novelweave-continuity/references/rules.md');
+  assert.match(doc, /`AI_NAMES`/, '名单的出处没点名，下一个消费者就会自己抄一份');
+  assert.match(doc, /同一句叙述里\s*5\s*个「的」/, '门槛没写进文档，作者看到警告无从复核');
+  assert.match(doc, /60\s*字以上且句内无逗号顿号/);
+  assert.match(doc, /### R36 `ai-name-clash`/);
 });

@@ -32,6 +32,7 @@ const ALIAS = {
   R33: 'volume-gap',
   R34: 'relation-gap',
   R35: 'chapter-length',
+  R36: 'ai-name-clash',
 };
 
 function resolveRuleNames(list) {

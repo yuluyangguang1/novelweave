@@ -161,3 +161,16 @@ test('schema 里不许出现校验器不认的关键字', () => {
   walk(readSchema(), '$');
   assert.deepEqual(bad, [], `校验器会把这些关键字判成「未实现」：${bad.join('、')}`);
 });
+
+test('章节标签：没有号就只念题名，绝不念出「第undefined章」', () => {
+  // 这一句会顺着 context.js 进 prompt：模型读到「第undefined章」就当编号出了错，
+  // 作者读到只以为自己那行 frontmatter 白写。手写 md 漏掉 number 是正当来路。
+  assert.equal(NWBible.chapterLabel({ number: 3, title: '火漆' }), '第3章《火漆》');
+  assert.equal(NWBible.chapterLabel({ number: '3', title: '火漆' }), '第3章《火漆》', 'frontmatter 读回来是字符串，照样认');
+  assert.equal(NWBible.chapterLabel({ number: 2, title: '' }), '第2章《无题》');
+  assert.equal(NWBible.chapterLabel({ title: '火漆' }), '火漆', '漏了 number 的章只念题名');
+  assert.equal(NWBible.chapterLabel({ number: 0, title: '楔子' }), '楔子', '前置章不念「第0章」');
+  assert.equal(NWBible.chapterLabel({ number: null, title: '楔子' }), '楔子');
+  assert.equal(NWBible.chapterLabel(null), '');
+  assert.doesNotMatch(NWBible.chapterLabel({ title: '火漆' }), /undefined|NaN/, '标签里不许出现这两个词');
+});

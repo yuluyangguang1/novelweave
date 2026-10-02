@@ -18,6 +18,9 @@
   const FLAGS = new Set(Bible ? Bible.CHAPTER_FLAGS : ['flashback', 'dream', 'quoted', 'offscreen', 'montage']);
   const EXEMPT_FLAGS = new Set(['flashback', 'dream', 'quoted', 'offscreen']);
 
+  /** R36 每本书最多报几条：张张都中是整体起名风格，逐张念一遍只是刷屏。 */
+  const NAME_CLASH_MAX = 3;
+
   /** 回忆语境标记：命中则把「死人出场」从 error 降到 info，而不是直接闭嘴。 */
   const RECALL_RE = /当年|那时|生前|记忆里|记忆中|恍惚|幻影|识海|梦中|梦里|回忆|依稀|仿佛又|像从前|脑海里/;
 
@@ -1764,6 +1767,43 @@
               ? '这一章大概还没把一件事做完：接着写，或者并进相邻那章去。刻意写短章（收束、间章）忽略即可。'
               : '先看是不是两件事挤在一章里：在中间那个转折处拆一刀，比删字更省力。刻意写长章忽略即可。',
           }));
+        }
+        return out;
+      },
+    },
+
+    'ai-name-clash': {
+      code: 'R36',
+      defaultSeverity: 'info',
+      scope: 'book',
+      summary: '角色卡的本名或某个别名撞在模型扎堆起的那批人名里。',
+      detail:
+        '名单只有一份：src/core/stylepack.js 的 AI_NAMES —— 同一份名单在生成前也喂进 prompt，' +
+        '分家就会变成「prompt 里禁的名字，机检不报」，与禁词包同一个病。' +
+        '判据是**整格相等**，不是包含：名单里那一个两字名，不该把以它开头的三字名挑出来，那是另一个名字。' +
+        '别名一起查，因为作者常先定一个正经本名、再在正文里用那个扎堆的称呼。' +
+        '关掉的卡（enabled=false）不查；一本书最多报 3 条 —— 张张都中说明的是整体起名风格，' +
+        '逐张念一遍只是刷屏。' +
+        '恒为 info，永不进退出码：名字撞车不是前后矛盾，甚至可能是故意的（同名、谐音梗、' +
+        '致敬都算正当写法）；机器只说出「这批名字在模型产出里扎堆」这一个可回查的事实。',
+      run(ctx) {
+        const known = StylePack && StylePack.AI_NAMES ? StylePack.AI_NAMES : [];
+        if (!known.length) return [];
+        const out = [];
+        for (const c of ctx.characters || []) {
+          if (c.enabled === false) continue;
+          const hits = nameForms(c).filter((f) => known.includes(f));
+          if (!hits.length) continue;
+          out.push(diag('ai-name-clash', {
+            chapter: null,
+            entity: c.id,
+            severity: 'info',
+            confidence: 1,
+            evidence: { basis: [`角色卡「${c.name}」`, `撞上的称呼：${hits.join('、')}`, `名单共 ${known.length} 个名字`] },
+            message: `角色「${c.name}」${hits.length > 1 ? `的本名与别名（${hits.join('、')}）` : `称呼「${hits[0]}」`}在模型扎堆起的那批人名里。`,
+            suggestion: '换一个：名字是读者对一本书的第一记忆，撞车的代价是别人认不出你说的是哪一本。刻意用这个名（同名、谐音、致敬）忽略即可。',
+          }));
+          if (out.length >= NAME_CLASH_MAX) break;
         }
         return out;
       },

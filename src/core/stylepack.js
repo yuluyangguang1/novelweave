@@ -79,6 +79,18 @@
     { id: 'binary-contrast', label: '二元对照句', detail: '「不是X，而是Y」这类句式，AI 收尾最爱用' },
     { id: 'short-triple', label: '三短句连击', detail: '连续三句都在 7 字以内，短句是节奏、连击是机械' },
     { id: 'dash-insert', label: '破折号插入语', detail: '「——」当插入语高频使用，是英文 em dash 腔的移植' },
+    { id: 'de-pile', label: '「的」字堆叠', detail: '同一句叙述里 5 个「的」，定语一个叠一个，句子还没走完就先绊住' },
+    { id: 'long-clause', label: '一句到底不断句', detail: '一个 60 字以上的句子里没有一个逗号顿号，是翻译腔长定语的移植写法' },
+  ];
+
+  /**
+   * 模型扎堆起的那批人名。判据不是「这名字不好」，而是「这本书的主角名与一批产出撞了」——
+   * 名字是读者对一本书的第一记忆，撞车的代价是认不出你说的是哪本。
+   * 整格相等才算（「林晚风」不该被「林晚」吃掉），命中只提一句，换不换由作者判。
+   */
+  const AI_NAMES = [
+    '林晚', '苏念', '顾言', '陆衍', '沈清', '叶澜', '宋辞', '裴珩', '江予', '时晏',
+    '沈砚', '顾延', '容瑜', '谢珩', '燕回', '温言', '白榆', '纪炀', '霍临', '黎雪',
   ];
 
   const DIALOGUE_RE = /[“「『]/;
@@ -87,6 +99,10 @@
   const BINARY_RE = /(不是|并非)[^。；！？]{0,16}而是|与其说[^。；！？]{0,16}不如/g;
   const SENT_SPLIT = /[。！？…；]/;
   const SHORT_SENT_MAX = 7;
+  /** 单句里「的」的个数门槛。竞品写的是「每句不超过两个」，那个数在中文叙述里天天响 —— 只报确凿的堆叠。 */
+  const DE_PILE_MIN = 5;
+  /** 无逗号顿号的单句长度门槛（字符数，含标点前的原句）。 */
+  const LONG_CLAUSE_MIN = 60;
   /** 短于这个长度的叙述段是正常的快节奏，不算「整段没有声音」。 */
   const PLAIN_PARA_MIN = 40;
   const PRONOUN_RE = /^(他|她|它|我|你|您|二人|两人|众人|谁)/;
@@ -236,6 +252,17 @@
       const short = s.text.replace(/[\s"""'']/g, '').length <= SHORT_SENT_MAX;
       runShort = short ? runShort + 1 : 0;
       if (runShort === 3) addSample('short-triple', quoteAt(body, s.start, s.text.length));
+      // de-pile 只判叙述句：对话里连着几个「的」是口语，不是书面堆叠
+      if (!DIALOGUE_RE.test(s.text)) {
+        let de = 0;
+        for (let i = s.text.indexOf('的'); i >= 0; i = s.text.indexOf('的', i + 1)) de += 1;
+        if (de >= DE_PILE_MIN) {
+          addSample('de-pile', `这一句 ${de} 个「的」：${quoteAt(body, s.start, s.text.length)}`);
+        }
+      }
+      if (s.text.length >= LONG_CLAUSE_MIN && !s.text.includes('，') && !s.text.includes('、')) {
+        addSample('long-clause', quoteAt(body, s.start, Math.min(s.text.length, 40)));
+      }
     }
 
     let plainRun = 0;
@@ -306,6 +333,7 @@
       lines.push(`- ${g.label}：${(g.terms || []).slice(0, 6).join('、')}${(g.terms || []).length > 6 ? ' 等' : ''}`);
     }
     lines.push('- 句式：' + PATTERNS.map((p) => p.label).join('、') + '（每种都算数）');
+    lines.push(`- 人名：${AI_NAMES.slice(0, 6).join('、')} 这类名字模型扎堆在用（名单共 ${AI_NAMES.length} 个名字），别给你的角色取这些`);
     lines.push('- 改法：把「他心里五味杂陈」换成一个动作；把「仿佛……」删掉，直接写下一件事；段尾不写感悟，收在动作或一句台词上');
     return lines.join('\n');
   }
@@ -325,7 +353,7 @@
   }
 
   return {
-    PACK_VERSION, GROUPS, PATTERNS,
+    PACK_VERSION, GROUPS, PATTERNS, AI_NAMES, DE_PILE_MIN, LONG_CLAUSE_MIN,
     lint, verdict, promptBlock, optsFrom, activeGroups, groupMeta, paragraphs, sentences,
   };
 });

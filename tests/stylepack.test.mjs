@@ -180,7 +180,7 @@ test('包里的词不重复、组 id 唯一，且都是能在正文里字面找�
     }
   }
   assert.ok(P.GROUPS.length >= 8);
-  assert.equal(P.PATTERNS.length, 5);
+  assert.equal(P.PATTERNS.length, 7);
 });
 
 test('paragraphs 与 sentences 是导出的：R23/R26 复用同一把刀，不再造第二个切分器', () => {
@@ -192,4 +192,59 @@ test('paragraphs 与 sentences 是导出的：R23/R26 复用同一把刀，不�
   const sents = paras.flatMap((p) => P.sentences(p));
   assert.deepEqual(sents.map((s) => s.text), ['他来了', '她转身往外走，雾还没有散', '山门很远']);
   for (const s of sents) assert.equal(body.slice(s.start, s.start + s.text.length), s.text, '偏移必须能回查原文');
+});
+
+// ── D 批：两条「形」的判据 ──
+
+const hits = (text) => P.lint(text).patterns.map((p) => p.id);
+const DEP = '他记得母亲说过的那种冬天的炉火的声音和窗纸上的雪光的颜色';
+const LOW = '他记得母亲说过的那种冬天的炉火的声音和窗外的雪';
+const LONG = '他终于明白这一路上所有他以为已经忘掉的细节其实一直留在心里只是他从来不愿意去回想那些关于故乡和亲人和旧屋门前那棵被雷劈过的树';
+
+test('「的」字堆叠按句数：到门槛才报，差一个不算，样本里带着数出来给它看', () => {
+  assert.equal((DEP.match(/的/g) || []).length, P.DE_PILE_MIN, `压线夹具要正好等于门槛：${(DEP.match(/的/g) || []).length}`);
+  assert.equal(hits(DEP + '。').includes('de-pile'), true, JSON.stringify(hits(DEP + '。')));
+  assert.equal((LOW.match(/的/g) || []).length, P.DE_PILE_MIN - 1, `近失夹具要正好差一个：${(LOW.match(/的/g) || []).length}`);
+  assert.equal(hits(LOW + '。').includes('de-pile'), false, '差一个「的」就该闭嘴，门槛不是摆设');
+  assert.ok(P.lint(DEP + '。').patterns[0].samples[0].includes(`${(DEP.match(/的/g) || []).length} 个「的」`),
+    '证据要把数出来的是几个写在前面，否则作者无从复核');
+});
+
+test('「的」字堆叠只判叙述句：同一串话放进引号里就不算（口语里连着「的」是正当写法）', () => {
+  assert.equal(hits(`「${DEP}，」她说。`).includes('de-pile'), false, '含引号的句子必须跳过');
+  assert.deepEqual(hits(`「${DEP}。」`), [], '整句都是引号时不该攒出任何句式判据');
+});
+
+test('一句到底不断句按长度判：到线才报，差一字不报，句里有逗号顿号就不算', () => {
+  assert.equal(LONG.length >= P.LONG_CLAUSE_MIN + 2, true, `夹具得真越过门槛：${LONG.length}`);
+  // 「差一字不报」压不住门槛：把线抬高一格，它照样绿。得再有一条「正好到线就得报」。
+  const at = LONG.slice(0, P.LONG_CLAUSE_MIN);
+  assert.equal(at.length, P.LONG_CLAUSE_MIN, `压线夹具要正好等于门槛：${at.length}`);
+  assert.equal(hits(at + '。').includes('long-clause'), true, JSON.stringify(hits(at + '。')));
+  assert.equal(hits(LONG + '。').includes('long-clause'), true, JSON.stringify(hits(LONG + '。')));
+  assert.equal(hits(LONG.slice(0, P.LONG_CLAUSE_MIN - 1) + '。').includes('long-clause'), false, '差一个字就该闭嘴');
+  const cut = LONG.slice(0, 20);
+  assert.equal(hits(`${cut}，${LONG.slice(20)}。`).includes('long-clause'), false, '有逗号就是断过句了');
+  assert.equal(hits(`${cut}、${LONG.slice(21)}。`).includes('long-clause'), false, '顿号同样算断句');
+});
+
+test('两条新判据与旧的五条住在同一张表里，各有 id 与 detail，句式行念得出全部', () => {
+  const ids = P.PATTERNS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, `句式 id 重复：${ids}`);
+  for (const p of P.PATTERNS) assert.ok(p.label && p.detail, `句式缺文案：${p.id}`);
+  const block = P.promptBlock();
+  for (const id of ['de-pile', 'long-clause']) {
+    const p = P.PATTERNS.find((x) => x.id === id);
+    assert.ok(block.includes(p.label), `prompt 里没念到 ${p.label}`);
+  }
+});
+
+test('AI 人名名单是一份出处：prompt 那一行念的就是它，不是另抄一遍', () => {
+  assert.ok(Array.isArray(P.AI_NAMES) && P.AI_NAMES.length >= 10);
+  assert.equal(new Set(P.AI_NAMES).size, P.AI_NAMES.length, `名单有重项：${P.AI_NAMES.filter((n, i) => P.AI_NAMES.indexOf(n) !== i)}`);
+  for (const n of P.AI_NAMES) assert.equal(n.length, 2, `名单里的名都得是两字：${n}`);
+  const block = P.promptBlock();
+  assert.ok(block.includes(P.AI_NAMES.slice(0, 6).join('、')), '那一行必须从名单取');
+  assert.ok(block.includes(`名单共 ${P.AI_NAMES.length} 个名字`), block);
+  assert.ok(block.length <= 600, `注入段 ${block.length} 字，抢的是正文预算`);
 });
