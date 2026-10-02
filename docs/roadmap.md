@@ -2556,7 +2556,7 @@ app.css 13 枚 / shared.css 11 枚;响应式覆盖 app.css 0 处 / shared.css 4 
 - 用例表补:`tools/check-tokens.mjs → tokens + guards`,`src/styles/app.css → guards + tokens`
   (以前改 app.css 的令牌值没有任何测试会红,这正是双源漂移能一直活着的原因)。
 
-### 反验(改值 13 处 + 删行 6 处,全部命中预期测试)
+### 反验(下表 13 处改值 + 6 处删行,全部命中预期测试)
 
 改值:`{ __bad: 2 }→{ __bad: 0 }`、逗号归一 `,\s+→,[0-9]`、`ROOT_SCOPE.test→/\S/.test`、
 `^:root\b→^:rootx`、`LIGHT_HINT.test→COLOR_SCHEME.test`、`if (scope) continue→if (false)`、
@@ -2568,6 +2568,9 @@ app.js 的 Esc 分支、README 点名的两行。
 过程中抓到四处判据漏项,都是当场补测试再重跑变异的:开关漏路径那条分支没人测、
 浅色档夹具只覆盖一种写法、"还在漂的条目不该叫过期"这一向没钉、`--json` 整条路径没人测。
 README 删一行仍绿是因为两处点名互为备份,把两行一起删才红 —— 记下来免得下次当成漏项。
+**这 19 处不是本批的全部**:上下文断掉之前还跑过一处小电池(5 处改值),其中「`--site` 后面漏路径」
+那一处当时报的是**绿 —— 改了没人管**,于是当场补了那条 `spawnSync` 测试,本批重跑才见红。
+上面那张表是本批可见的清单,别把它当总数读。
 
 ### 真跑(CLI)
 
