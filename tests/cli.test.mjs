@@ -487,7 +487,12 @@ test('nw-pitch --concept 吃向导那份 JSON，没填字数按 0 分并提示�
   const bad = path.join(tmp, 'bad-concept.json');
   writeFileAtomic(bad, '{这不是 JSON');
   const r = run('nw-pitch.mjs', ['score', '--concept', bad], 5);
-  assert.match(r.stderr, /不是合法 JSON/);
+  // G 批改口：这句从「不是合法 JSON」换成 core 那一句人话（有 { 没 } = 像没写完）
+  assert.match(r.stderr, /概念文件的 JSON 读不出来/);
+  assert.match(r.stderr, /没写完/);
+  assert.doesNotMatch(r.stderr, /Expected|Unexpected|at position/, '把引擎那句英文念给 agent');
+  writeFileAtomic(bad, '这不是 JSON');
+  assert.match(run('nw-pitch.mjs', ['score', '--concept', bad], 5).stderr, /概念文件的 JSON 没找到/);
 });
 
 test('nw-pitch --format 认不出那一档：说一句、不猜档，分数按书自己的档走', () => {

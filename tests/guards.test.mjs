@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
-import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWTension, NWPitch, NWVolume, NWRelationGraph, NWStylePack } from './_load.mjs';
+import { repoPath, repoRoot, NWRules, NovelDB, NWStyleFit, NWContext, NWStateScope, NWStory, NWText, NWTension, NWPitch, NWVolume, NWRelationGraph, NWStylePack, NovelLLM } from './_load.mjs';
 
 const read = (p) => readFileSync(repoPath(...p.split('/')), 'utf8');
 
@@ -2096,4 +2096,61 @@ test('文档点名的每个 tools 与 scripts 脚本都在磁盘上 —— 宣�
   }
   assert.deepEqual(missing, [], missing.join('；'));
   assert.match(read('README.md'), /tools\/check-tokens\.mjs/, '令牌双源守护没人知道存在，就等于没做');
+});
+
+// ───────── G 批：模型那份 JSON 只有一道解析口 ─────────
+
+test('模型输出的 JSON 只在 parseModelJSON 一处解析：别处再开一个就绕过了内层引号修复', () => {
+  const js = read('src/core/llm.js');
+  const owners = new Set();
+  let fn = '(模块顶层)';
+  for (const line of js.split(/\r?\n/)) {
+    const m = /^  (?:async )?function ([A-Za-z0-9_]+)\(/.exec(line);
+    if (m) fn = m[1];
+    if (line.includes('JSON.parse(')) owners.add(fn);
+  }
+  // getLLMConfig 读的是配置文件，endpoint 拆的是 SSE 帧 —— 都不是模型那份正文
+  assert.deepEqual([...owners].sort(), ['endpoint', 'getLLMConfig', 'parseModelJSON'],
+    `读模型输出多开了一道解析口（现在 ${[...owners].join('、')}），内层引号修复与那句人话就都绕过去了`);
+});
+
+test('引号规则只有一句、四个要 JSON 的 prompt 各插一次：手抄第四份就会漏改前三份', () => {
+  const js = read('src/core/llm.js');
+  const copies = js.split(NovelLLM.JSON_QUOTE_RULE).length - 1;
+  assert.equal(copies, 1, `${copies} 份规则原文，除 const 那一份之外都是手抄`);
+  const injected = (js.match(/\$\{JSON_QUOTE_RULE\}/g) || []).length;
+  assert.equal(injected, 4, `${injected} 处 prompt 插了这句 —— 少一处，那一路的输出照样会把台词写成英文引号`);
+});
+
+test('界面四条模型输出路都接了修复回调：修了引号不出声，作者看到的是被动过的台词', () => {
+  const js = read('src/app.js');
+  const sites = [...js.matchAll(/NovelLLM\.(?:parseConceptJSON|parseDeconstructJSON|parseExtractedRelations)\(/g)];
+  assert.equal(sites.length, 4, `模型解析点应有 4 处，现在 ${sites.length} 处 —— 加了新的一路却没接回调`);
+  const silent = sites.filter((m) => !js.slice(m.index, m.index + 160).includes('onRepair: quoteRepairNotice'));
+  assert.equal(silent.length, 0, `${silent.length} 处解析没带 onRepair，修复结果被扔掉了`);
+});
+
+test('CHANGES 文档念的就是 core 那一句；两条 CLI 走同一道解析口、修了几处要说出来', () => {
+  const doc = read('skills/novelweave/references/changes-protocol.md');
+  assert.ok(doc.includes(NovelLLM.JSON_QUOTE_RULE),
+    '文档里的引号规则和 core 不是同一句 —— agent 照文档写照样踩，照代码写又找不到出处');
+  for (const f of ['scripts/nw-changes.mjs', 'scripts/nw-pitch.mjs']) {
+    const s = read(f);
+    assert.match(s, /NovelLLM\.parseModelJSON\(/, `${f} 没走 core 那道解析口`);
+    assert.doesNotMatch(s, /JSON\.parse\(/, `${f} 自己 JSON.parse 了一份模型落盘的东西：绕过修复，还会念引擎那句英文`);
+    assert.match(s, /处内层英文引号已折成「」/, `${f} 修了引号却没说，作者不知道账本里的台词被动过字面`);
+  }
+});
+
+test('G 的规格写进了文档：README 点得出那道解析口，roadmap 说得出三种报错话术', () => {
+  const rm = read('README.md');
+  assert.match(rm, /parseModelJSON/, 'README 没提这道口，下一个人还会在别处再开一个 JSON.parse');
+  assert.match(rm, /JSON_QUOTE_RULE/, 'README 没点名那句 prompt 规则的出处');
+  const road = read('docs/roadmap.md');
+  assert.match(road, /^## G\. .*模型那份 JSON 只有一道解析口/m, 'roadmap 没有 G 节');
+  for (const phrase of ['没找到', '看着像没写完', '出错的位置附近']) {
+    assert.ok(road.includes(phrase), `roadmap 没登记「${phrase}」这一种话术 —— 三种坏法混成一句就是没做`)   ;
+  }
+  assert.match(road, /「信息够就不走问答」为什么按\*\*不做\*\*登记/,
+    '候选里那半句没载体，得写在 roadmap 里，否则下一批又抄一遍');
 });

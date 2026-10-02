@@ -24,7 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  loadBook, resolveBookDir, parseArgs, emit, log, EXIT, NWPitch, NWTension,
+  loadBook, resolveBookDir, parseArgs, emit, log, EXIT, NWPitch, NWTension, NovelLLM,
 } from './lib/book.mjs';
 
 const { positional, flags } = parseArgs(process.argv.slice(2));
@@ -74,7 +74,13 @@ let label;
 if (flags.concept) {
   const file = path.resolve(String(flags.concept));
   if (!fs.existsSync(file)) { log(`概念文件不存在：${file}`); process.exit(EXIT.IO); }
-  try { input = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { log(`概念文件不是合法 JSON：${e.message}`); process.exit(EXIT.IO); }
+  // 这份文件多半是 agent 把模型给的梗概原样落盘 —— 走 core 那一道解析口，
+  // 台词写成英文双引号时先折成「」再读；修了几处要在 stderr 说出来。
+  let read;
+  try { read = NovelLLM.parseModelJSON(fs.readFileSync(file, 'utf8'), '概念文件'); }
+  catch (e) { log(e.message); process.exit(EXIT.IO); }
+  if (read.fixes) log(`概念文件里 ${read.fixes} 处内层英文引号已折成「」，评分按折后的文本算`);
+  input = read.value;
   label = input.title || path.basename(file);
 } else {
   const bookDir = resolveBookDir(rest);

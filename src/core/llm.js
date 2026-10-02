@@ -258,6 +258,7 @@ ${chText}
 - 反转要有公平性（前面留过线索），结尾必须有二次反转或情绪爆点
 - 人物 2-4 个，每人一句话性格
 - 章数按篇幅档；每章给出标题与拍点（该章发生什么 + 章末钩子）
+- ${JSON_QUOTE_RULE}
 
 只输出一个 JSON 对象，不要任何解释、不要代码块标记，格式：
 {"title":"书名","logline":"一句话梗概","characters":[{"name":"名字","role":"主角","personality":"一句话性格"}],"chapters":[{"title":"章标题","beat":"该章拍点与章末钩子"}]}`;
@@ -268,11 +269,117 @@ ${chText}
     return Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : [];
   }
 
-  /** 从模型输出里稳健地抠出梗概 JSON（容忍代码块围栏与前后废话）。 */
-  function parseConceptJSON(text) {
-    const m = String(text || '').match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('模型没有返回可解析的梗概 JSON');
-    const j = JSON.parse(m[0]);
+  // ═══════════════════ 模型输出的 JSON：先说清，再兜一道 ═══════════════════
+  // 模型写中文台词最常犯的错是把人物原话用英文双引号包起来：
+  // {"beat":"他说"走""} —— 整份 JSON 当场解析失败，作者等的那 10~20 秒白费，
+  // 界面上只剩一句英文 SyntaxError。所以两头都做：prompt 里把话说在前头（一句，
+  // 出处唯一），读的时候先按内层引号折成「」再试一次。修了几处必须报给调用方 ——
+  // 静默改掉作者将要看的那句台词，比报错更糟。
+
+  /** 这句要原样出现在每个「只输出 JSON」的 prompt 里，也是 references/changes-protocol.md 里那一条。 */
+  const JSON_QUOTE_RULE = '字符串值里引用人物原话时用「」，不要用英文双引号 " —— 它会打断整份 JSON 的解析。';
+
+  /**
+   * 把「一眼能看出是台词引号」的英文双引号折成「」：串内遇到 " ，跳过空白后的
+   * 下一个字符若不是 , } ] : 也不是结尾，就当作它不是收尾引号。
+   * 合法 JSON 里串内的 " 必然是转义过的，所以这份函数对合法输入是恒等的（fixes=0、逐字不变）。
+   * 一个字符串里落单的开口引号，在收尾处补一只 」，不留半只引号给作者。
+   * fixes 数的是动过的引号只数，补出来的那只也算。
+   */
+  function repairInnerQuotes(src) {
+    let out = '', inStr = false, escaped = false, pendingOpen = false, fixes = 0;
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (!inStr) {
+        if (c === '"') inStr = true;
+        out += c;
+        continue;
+      }
+      if (escaped) { escaped = false; out += c; continue; }
+      if (c === '\\') { escaped = true; out += c; continue; }
+      if (c !== '"') { out += c; continue; }
+      let j = i + 1;
+      while (j < src.length && /\s/.test(src[j])) j++;
+      const next = j < src.length ? src[j] : '';
+      if (next === '' || next === ',' || next === ':' || next === '}' || next === ']') {
+        if (pendingOpen) { out += '」'; pendingOpen = false; fixes++; }
+        out += '"';
+        inStr = false;
+        continue;
+      }
+      out += pendingOpen ? '」' : '「';
+      pendingOpen = !pendingOpen;
+      fixes++;
+    }
+    return { text: out, fixes };
+  }
+
+  /** V8 的报错位置有两种写法（position / line+column），偏移取不到就返回 -1。 */
+  function errorOffset(err, src) {
+    const msg = String(err && err.message || '');
+    const pos = /position\s+(\d+)/.exec(msg);
+    if (pos) return Number(pos[1]);
+    const lc = /line\s+(\d+)\s+column\s+(\d+)/.exec(msg);
+    if (!lc) return -1;
+    const lines = String(src).split('\n');
+    let n = 0;
+    for (let i = 0; i < Number(lc[1]) - 1 && i < lines.length; i++) n += lines[i].length + 1;
+    return n + Number(lc[2]) - 1;
+  }
+
+  /**
+   * 读不出来时给人话：可能是哪两件错 + 一段原文。英文那句作者没法下手。
+   * err 传 null 表示根本没走到 JSON.parse（有 { 却没 }，那是写到一半断了）。
+   */
+  function jsonReadFailure(label, src, err) {
+    const msg = String(err && err.message || '');
+    const at = errorOffset(err, src);
+    const flat = (s) => String(s).replace(/\s+/g, ' ');
+    const near = at >= 0
+      ? `出错的位置附近：「${flat(src.slice(Math.max(0, at - 24), at + 24))}」。`
+      : `结尾停在「${flat(src.slice(-40))}」。`;
+    if (err === null || /(end of JSON input|Unterminated string)/i.test(msg)) {
+      return `${label}的 JSON 读不出来。看着像没写完，后半截断了。${near}`
+        + '重新发一次完整的：只输出一个 JSON 对象，台词一律用「」。';
+    }
+    return `${label}的 JSON 读不出来。${near}`
+      + '多半是内层引号用了英文 "，或者少了一个括号 —— 重新发一次：只输出一个 JSON 对象，台词一律用「」。';
+  }
+
+  /**
+   * 抠出并解析模型给的 JSON —— 模型那份输出里的 JSON 只有这一道解析口。
+   * 有 `{` 却没 `}` 单独当「写断了」说，不和引号问题混成一句。
+   * @param label 报错里对这份输出的称呼（梗概 / 拆解 / 关系 / CHANGES 段 / 概念文件）
+   * @returns {{ value: any, fixes: number }} fixes>0 说明这份是被修好的，调用方必须说出来
+   */
+  function parseModelJSON(text, label = '') {
+    const raw = String(text || '');
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) {
+      const open = raw.indexOf('{');
+      if (open < 0) throw new Error(`${label}的 JSON 没找到 —— 那一段里没有 { … } 这样一个对象。`);
+      throw new Error(jsonReadFailure(label, raw.slice(open), null));
+    }
+    try { return { value: JSON.parse(m[0]), fixes: 0 }; }
+    catch (first) {
+      const r = repairInnerQuotes(m[0]);
+      if (r.fixes) {
+        try { return { value: JSON.parse(r.text), fixes: r.fixes }; } catch {}
+      }
+      throw new Error(jsonReadFailure(label, m[0], first));
+    }
+  }
+
+  /** 修好的份数必须报出去：调用方没接 onRepair 就是让它去报错，不是让它静默。 */
+  function reportRepair(fixes, opts) {
+    if (fixes && opts && typeof opts.onRepair === 'function') opts.onRepair(fixes);
+  }
+
+  /** 从模型输出里稳健地抠出梗概 JSON（容忍代码块围栏与前后废话、内层英文引号先折后读）。 */
+  function parseConceptJSON(text, opts = {}) {
+    const parsed = parseModelJSON(text, '梗概');
+    reportRepair(parsed.fixes, opts);
+    const j = parsed.value;
     const chapters = objsOf(j.chapters);
     const characters = objsOf(j.characters);
     if (!j.title || !chapters.length) {
@@ -324,6 +431,7 @@ ${chText}
 - 卷纲 ${volumes} 卷：每卷一句话，写明该卷核心冲突与卷末结局
 - 第一卷前 ${chs} 章的章纲：每章标题 + 拍点（该章发生什么 + 章末钩子）
 - 第一章必须让主角以动作或抉择出场；前三章各留一个钩子
+- ${JSON_QUOTE_RULE}
 
 只输出一个 JSON 对象，不要任何解释、不要代码块标记，格式：
 {"title":"书名","logline":"一句话梗概","characters":[{"name":"","role":"","personality":""}],"world":[{"name":"","content":""}],"volumes":[{"title":"","summary":""}],"chapters":[{"title":"","beat":""}]}`;
@@ -346,16 +454,18 @@ ${chText}
 4. 章末钩子类型分布（问句/突转/期限/身份悬置）
 5. 节奏结构：按屏或章列拍点序列
 
+${JSON_QUOTE_RULE}
+
 只输出一个 JSON 对象，格式：
 {"name":"模式名","goldenFinger":"类型及登场时机","beats":[{"at":"第1屏","type":"钩子","note":"模式描述"}],"foreshadowDensity":"描述","hookTypes":["类型"],"summary":"一段话总结该结构适合什么题材"}
 `;
   }
 
-  /** 从模型输出抠出拆解 JSON（容忍围栏）。 */
-  function parseDeconstructJSON(text) {
-    const m = String(text || '').match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('模型没有返回可解析的拆解 JSON');
-    const j = JSON.parse(m[0]);
+  /** 从模型输出抠出拆解 JSON（容忍围栏与内层英文引号）。 */
+  function parseDeconstructJSON(text, opts = {}) {
+    const parsed = parseModelJSON(text, '拆解');
+    reportRepair(parsed.fixes, opts);
+    const j = parsed.value;
     if (!j.name || !Array.isArray(j.beats) || !j.beats.length) throw new Error('拆解缺少模式名或拍点');
     return {
       name: String(j.name).slice(0, 40),
@@ -379,13 +489,13 @@ ${chText}
 【正文】
 ${String(content || '').slice(0, 6000)}
 
-已知关系不必重复抽取。只输出 JSON：{"edges":[{"from":"角色A名","to":"角色B名","kind":"关系类型","address":"A对B的称呼或空","evidence":"原文依据"}]}，无新关系则 edges 为空数组。只输出 JSON，不要解释。`;
+已知关系不必重复抽取。只输出 JSON：{"edges":[{"from":"角色A名","to":"角色B名","kind":"关系类型","address":"A对B的称呼或空","evidence":"原文依据"}]}，无新关系则 edges 为空数组。${JSON_QUOTE_RULE} 只输出 JSON，不要解释。`;
   }
 
-  function parseExtractedRelations(text) {
-    const m = String(text || '').match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('模型没有返回可解析的 JSON');
-    const j = JSON.parse(m[0]);
+  function parseExtractedRelations(text, opts = {}) {
+    const parsed = parseModelJSON(text, '关系');
+    reportRepair(parsed.fixes, opts);
+    const j = parsed.value;
     return (Array.isArray(j.edges) ? j.edges : []).slice(0, 10).map((e) => ({
       from: String(e.from || '').slice(0, 20),
       to: String(e.to || '').slice(0, 20),
@@ -497,6 +607,7 @@ ${String(content || '').slice(0, 6000)}
     buildDeconstructPrompt, parseDeconstructJSON,
     buildExtractRelationsPrompt, parseExtractedRelations,
     buildLongConceptPrompt, LONG_VOLUME_OPTIONS,
+    parseModelJSON, repairInnerQuotes, JSON_QUOTE_RULE,
     streamChat, requestChat, testConnection,
   };
 });

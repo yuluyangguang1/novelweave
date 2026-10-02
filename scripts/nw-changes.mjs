@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   loadBook, resolveBookDir, parseArgs, emit, log, EXIT, SCHEMA_VERSION,
-  readJson, writeJsonAtomic, NWBible, NWText, NWProject,
+  readJson, writeJsonAtomic, NWBible, NWText, NWProject, NovelLLM,
 } from './lib/book.mjs';
 
 const MARKER = /^---CHANGES---\s*$/m;
@@ -80,13 +80,15 @@ function parseBlock(text) {
   const m = text.match(MARKER);
   if (!m) return { error: '文件里没有 ---CHANGES--- 段' };
   const payload = text.slice(m.index + m[0].length).trim();
-  try {
-    const json = JSON.parse(payload);
-    if (!Array.isArray(json.changes)) return { error: 'CHANGES 里必须有 changes 数组' };
-    return { header: json.chapter || null, changes: json.changes };
-  } catch (e) {
-    return { error: `CHANGES 段不是合法 JSON：${e.message}` };
-  }
+  // 走 core 那一道解析口：台词写成英文双引号时先折成「」再试，修了几处必须说出来 ——
+  // 这一段是要改状态账本的，静默改过引号却不告诉作者，比报错更糟。
+  let parsed;
+  try { parsed = NovelLLM.parseModelJSON(payload, 'CHANGES 段'); }
+  catch (e) { return { error: e.message }; }
+  if (parsed.fixes) log(`CHANGES 段里 ${parsed.fixes} 处内层英文引号已折成「」，请核对 evidence 引文与正文一致`);
+  const json = parsed.value;
+  if (!Array.isArray(json.changes)) return { error: 'CHANGES 里必须有 changes 数组' };
+  return { header: json.chapter || null, changes: json.changes };
 }
 
 const { positional, flags } = parseArgs(process.argv.slice(2));

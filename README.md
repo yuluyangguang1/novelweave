@@ -88,6 +88,22 @@ node tools/install.mjs --uninstall         # 只删自己装的，指针块精�
 | WorkBuddy | `~/.workbuddy/skills/` | 布局按本机实测对齐；格式文档未公开，置信度标为 observed |
 | ZCode | **不自动安装** | 本机未见用户级 skills 目录，只打印手动指引，不凭猜测写文件 |
 
+## 模型那份 JSON
+
+模型写人物台词时爱用英文双引号，而英文双引号会打断整份 JSON —— 一句话毁掉一次生成，
+且抛出来的是引擎那句英文，agent 也无从下手。所以这个仓库里**读模型输出只有一道解析口**：
+`src/core/llm.js` 的 `parseModelJSON`（梗概 / 拆解 / 关系边 / `---CHANGES---` 段 / `nw-pitch --concept`
+的概念文件，走的都是它）。它做三件事：
+
+1. 内层的英文双引号先折成 `「」` 再解析 —— 对**合法输入是恒等的**（合法的 JSON 里串内引号必然带转义），
+   所以不存在"顺手把作者的台词改了"；
+2. 折了几处一律报给调用方，界面弹提示、CLI 在 stderr 说 `N 处内层英文引号已折成「」`，**不静默改字面**；
+3. 修不动的分两种说：有 `{` 没 `}` 是"看着像没写完，后半截断了"并给出结尾，
+   其余给"出错的位置附近"那一段原文 —— 都不念 `Unexpected token` 那种引擎原话。
+
+prompt 侧同一句规则写在 `JSON_QUOTE_RULE` 一处，四个要 JSON 的 prompt 各自插值，
+文档里那句（`skills/novelweave/references/changes-protocol.md`）也从这一处来。
+
 ## 状态与路线图
 
 README 只描述**已经能用**的能力。计划在做什么、还缺什么，统一写在 `docs/roadmap.md`，

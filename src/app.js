@@ -230,6 +230,14 @@ function showToast(msg, dur = 2200) {
   showToast._timer = setTimeout(() => t.classList.remove('visible'), dur);
 }
 
+/**
+ * 模型把人物台词写成英文双引号时，core 会先折成「」再读。这条提示必须出现 ——
+ * 作者接下来要照着这句梗概建档，改动过他的引号却不吭声，比直接报错更糟。
+ */
+function quoteRepairNotice(fixes) {
+  showToast(`模型把台词写成了英文引号，已折成「」（动了 ${fixes} 处引号），请核对一句有没有改错`, 4600);
+}
+
 function formatWordCount(n) {
   if (!n) return '0 字';
   if (n < 10000) return `${n} 字`;
@@ -498,7 +506,7 @@ function showAIShortWizard() {
     this.textContent = '生成梗概（约 10 秒）';
     if (res.error) { showToast('生成失败：' + res.error); return; }
     let concept;
-    try { concept = NovelLLM.parseConceptJSON(res.content); }
+    try { concept = NovelLLM.parseConceptJSON(res.content, { onRepair: quoteRepairNotice }); }
     catch (e) { showToast('解析失败：' + e.message); return; }
     // 值必须在弹窗关掉之前读走：closeModal 把这些控件从 DOM 里删了，之后再读拿到的是 null
     // （原来正是这么写的：生成完弹窗一关，题材那行直接抛 TypeError，界面表现为「点了没反应」）。
@@ -644,7 +652,7 @@ function showDeconstruct() {
     this.textContent = '抽取结构模式（约 15 秒）';
     if (res.error) { showToast('拆解失败：' + res.error); return; }
     let pat;
-    try { pat = NovelLLM.parseDeconstructJSON(res.content); }
+    try { pat = NovelLLM.parseDeconstructJSON(res.content, { onRepair: quoteRepairNotice }); }
     catch (e) { showToast('解析失败：' + e.message); return; }
     try {
       if (APP.novelId) NovelDB.usage.record(APP.novelId, { tool: 'deconstruct', charsIn: text.length, charsOut: res.content.length, durationMs: Date.now() - t0 });
@@ -711,7 +719,7 @@ function showAILongWizard() {
     this.textContent = '生成全书骨架（约 20 秒）';
     if (res.error) { showToast('生成失败：' + res.error); return; }
     let concept;
-    try { concept = NovelLLM.parseConceptJSON(res.content); }
+    try { concept = NovelLLM.parseConceptJSON(res.content, { onRepair: quoteRepairNotice }); }
     catch (e) { showToast('解析失败：' + e.message); return; }
     // 同短篇向导：题材要在弹窗拆掉之前读走，先 closeModal 再读就是 null
     const genreL = val('inp-ai-genre-l') || '玄幻';
@@ -2343,7 +2351,7 @@ async function runAITool(toolId, target) {
   if (toolId === 'relations-ai' && !aborted) {
     APP.aiAbort = null;
     let edges;
-    try { edges = NovelLLM.parseExtractedRelations(full); }
+    try { edges = NovelLLM.parseExtractedRelations(full, { onRepair: quoteRepairNotice }); }
     catch (e) {
       target.textContent = full;
       const err = document.createElement('div');
