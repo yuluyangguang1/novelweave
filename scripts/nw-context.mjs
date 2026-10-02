@@ -22,7 +22,8 @@ import {
   NWContext, NWStory, NWText,
 } from './lib/book.mjs';
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['budget', 'chapter', 'json', 'lore', 'style', 'text', 'write'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 const json = !!flags.json;
 
 const bookDir = resolveBookDir(positional);

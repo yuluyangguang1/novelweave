@@ -42,7 +42,8 @@ function resolveRuleNames(list) {
   }).filter(Boolean);
 }
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['from', 'to', 'json', 'rule', 'rules', 'write', 'fail-on'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 
 // ── explain ──
 if (positional[0] === 'explain') {

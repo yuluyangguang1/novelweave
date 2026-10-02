@@ -91,7 +91,8 @@ function parseBlock(text) {
   return { header: json.chapter || null, changes: json.changes };
 }
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['book', 'file', 'id', 'all', 'json', 'reason', 'dry-run'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 const sub = positional[0];
 const bookDir = resolveBookDir(flags.book ? [flags.book] : []);
 if (!bookDir) { log('未找到书目录，请用 --book 指定'); process.exit(EXIT.USAGE); }

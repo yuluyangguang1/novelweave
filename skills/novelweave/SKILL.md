@@ -212,6 +212,8 @@ node scripts/nw-continuity.mjs <bookDir> --from <被改章> --json
 | `nw-workflow.mjs keys` | 讲清哪三格能在作者之间搬、哪几格明确不走 | 0 |
 
 统一约定：`--json` 走 stdout 纯结果，人类日志走 stderr。**不要解析 stderr。**
+开关写错不会被静默收下：每一支都带着自家的开关清单，不认识的那一个**退 2** 并列出认得的
+（`--dryRun` 这种驼峰写错还会补一句近邻建议）。
 
 ## Anti-Patterns
 

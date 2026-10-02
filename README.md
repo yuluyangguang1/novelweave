@@ -104,6 +104,15 @@ node tools/install.mjs --uninstall         # 只删自己装的，指针块精�
 prompt 侧同一句规则写在 `JSON_QUOTE_RULE` 一处，四个要 JSON 的 prompt 各自插值，
 文档里那句（`skills/novelweave/references/changes-protocol.md`）也从这一处来。
 
+## 命令行的开关清单
+
+九支 `scripts/nw-*.mjs` 各带一份自己认得的开关清单（`const FLAGS`），扫描命令行只有
+`scripts/lib/book.mjs` 的 `parseArgs` 这一处。**不认识的开关直接退 2**，说一句
+「不认识这个开关：--xxx」并把这一支认的那几个念出来；驼峰写错（`--dryRun`）额外给一句
+「你是不是想写 --dry-run？」。以前是当成布尔位悄悄收下 —— 于是 `nw-continuity --only R15`
+把全部规则跑了一遍、输出看着一切正常，agent 以为自己过滤了。清单漏传等于退回老行为，
+所以 `parseArgs` 要是不带清单就直接抛，不给"忘了传"留活路。
+
 ## 状态与路线图
 
 README 只描述**已经能用**的能力。计划在做什么、还缺什么，统一写在 `docs/roadmap.md`，

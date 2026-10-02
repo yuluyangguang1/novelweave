@@ -21,20 +21,12 @@ import {
   PROJECT_DIR, PROJECT_FILE, SCHEMA_VERSION, NWBible, NWText, NWDraft,
   findProject, bookDirs, resolveBookDir, readJson, writeJsonAtomic, writeFileAtomic,
   scaffoldBook, upsertProject, recomputeDerived, recountBook, saveChapter, emit, log, EXIT, authorHash,
+  parseArgs,
 } from './lib/book.mjs';
 
+const FLAGS = ['dir', 'book', 'id', 'title', 'slug', 'genre', 'description', 'file', 'out', 'web', 'json', 'dry-run'];
 const sub = process.argv[2];
-const rest = process.argv.slice(3);
-const flags = {};
-const positional = [];
-for (let i = 0; i < rest.length; i++) {
-  const a = rest[i];
-  if (a.startsWith('--')) {
-    const k = a.slice(2);
-    if (rest[i + 1] && !rest[i + 1].startsWith('--')) flags[k] = rest[++i];
-    else flags[k] = true;
-  } else positional.push(a);
-}
+const { positional, flags } = parseArgs(process.argv.slice(3), FLAGS);
 const json = !!flags.json;
 const baseDir = flags.dir ? path.resolve(flags.dir) : process.cwd();
 
@@ -175,7 +167,6 @@ switch (sub) {
       note: '人名候选只是线索，不等于角色；未登记地名需自行补进 bible/world。',
     };
 
-    // 本文件的参数解析保留连字符：是 flags['dry-run']，写成 flags.dryRun 会静默失效
     if (flags['dry-run']) {
       emit(json, { dryRun: true, ...report }, () => humanAdopt(report, null));
       process.exit(report.issues.length ? EXIT.PENDING : EXIT.OK);

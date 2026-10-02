@@ -2,7 +2,8 @@
 /**
  * nw-validate.mjs — 结构校验（schema / 断链 / 非法结构 / 派生字段被改）
  *
- * 用法：node scripts/nw-validate.mjs [bookDir] [--json] [--level schema|ref|structure|all]
+ * 用法：node scripts/nw-validate.mjs [bookDir] [--json] [--no-write]
+ * --no-write：只看不落，不往 continuity/snapshot.json 写这一次的校验快照。
  * 退出码：0 通过 · 1 有 error · 2 用法错 · 3 schema 不通过 · 5 IO 错
  */
 import path from 'node:path';
@@ -11,7 +12,8 @@ import {
   NWRules, NWBible, writeJsonAtomic, readJson,
 } from './lib/book.mjs';
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['json', 'no-write'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 const json = !!flags.json;
 const bookDir = resolveBookDir(positional);
 

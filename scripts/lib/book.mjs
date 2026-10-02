@@ -1,7 +1,8 @@
 /**
  * NovelWeave · Story Bible 读写层（Node，零依赖）
  *
- * 五份 CLI 共用这一层，避免各写一套 IO 而在细节上分叉。
+ * 九份 CLI 共用这一层，避免各写一套 IO 而在细节上分叉。
+ * 扫命令行也共用这一层：每一支只声明自己认得的开关清单，拒未知的那一句写在 parseArgs。
  * 核心模块从 src/core 加载 —— 与浏览器用的是同一份代码，
  * 所以 Web 面板与命令行产出的诊断、哈希、字数必然一致。
  */
@@ -344,10 +345,34 @@ export function log(...args) {
   process.stderr.write(args.join(' ') + '\n');
 }
 
-/** 全局退出码约定，五份 CLI 共用。 */
+/** 全局退出码约定，九份 CLI 共用。 */
 export const EXIT = { OK: 0, ERROR_FOUND: 1, USAGE: 2, BROKEN: 3, NEEDS_MIGRATION: 4, IO: 5, PENDING: 6 };
 
-export function parseArgs(argv) {
+/** `--dryRun` / `--dry_run` 归一到 `--dry-run`：驼峰写错时给一句近邻提示，而不是拒了就完。 */
+function flagAlias(key) {
+  return String(key).replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/_/g, '-').toLowerCase();
+}
+
+/** 拒未知开关那一句只有一个出处；第一行与 tools/check-tokens.mjs 同形。 */
+export function unknownFlagMessage(unknown, known) {
+  const lines = ['不认识这个开关：' + unknown.map((u) => '--' + u).join('、')];
+  const near = unknown
+    .map((u) => known.find((k) => flagAlias(k) === flagAlias(u)))
+    .filter((k) => k && !unknown.includes(k));
+  if (near.length) lines.push('你是不是想写 ' + near.map((k) => '--' + k).join('、') + '？');
+  lines.push('这一支认的是：' + known.map((k) => '--' + k).join(' '));
+  return lines.join('\n');
+}
+
+/**
+ * 扫命令行并**拒绝不认识的开关** —— 静默当成布尔位等于让 agent 以为自己传对了，
+ * 然后把整本书的规则全跑一遍（nw-continuity 那条「过滤」就是这么骗过探针的）。
+ * known 缺席就抛：忘了传清单 = 退回老行为，那正是这一批要消灭的。
+ */
+export function parseArgs(argv, known) {
+  if (!Array.isArray(known)) {
+    throw new Error('parseArgs 要带这一支认得的开关清单 —— 不带就等于退回「不认识的也收下」');
+  }
   const positional = [];
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
@@ -358,6 +383,11 @@ export function parseArgs(argv) {
       else if (argv[i + 1] && !argv[i + 1].startsWith('--')) flags[k] = argv[++i];
       else flags[k] = true;
     } else positional.push(a);
+  }
+  const unknown = Object.keys(flags).filter((k) => !known.includes(k));
+  if (unknown.length) {
+    log(unknownFlagMessage(unknown, known));
+    process.exit(EXIT.USAGE);
   }
   return { positional, flags };
 }

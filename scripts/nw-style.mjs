@@ -23,7 +23,8 @@ import {
   NWBible, NWContext, NWRules, NWStyleFit, NWStylePack,
 } from './lib/book.mjs';
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['set', 'clear', 'json'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 let sub = positional[0];
 let rest = positional.slice(1);
 if (sub !== 'keys' && sub !== 'anchor') {

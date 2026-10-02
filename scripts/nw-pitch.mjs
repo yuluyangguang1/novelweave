@@ -27,7 +27,8 @@ import {
   loadBook, resolveBookDir, parseArgs, emit, log, EXIT, NWPitch, NWTension, NovelLLM,
 } from './lib/book.mjs';
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['concept', 'genre', 'words', 'format', 'against', 'json'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 // score 可以省：`nw-pitch <bookDir>` 是最高频的用法，与 nw-context 的写法保持一致
 let sub = positional[0];
 let rest = positional.slice(1);

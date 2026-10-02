@@ -22,7 +22,8 @@ import {
   NWWorkflow, NWStylePack,
 } from './lib/book.mjs';
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['name', 'out', 'json'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 const sub = positional[0];
 if (sub !== 'keys' && sub !== 'pack' && sub !== 'check') {
   log('用法：nw-workflow.mjs <keys|pack|check> […]（pack [bookDir] [--name 名字] [--out f.json]；check <preset.json> [bookDir]）');

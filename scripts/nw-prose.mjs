@@ -221,7 +221,8 @@ async function statusOf(ctx, { home }) {
 
 // ═══════════ 子命令 ═══════════
 
-const { positional, flags } = parseArgs(process.argv.slice(2));
+const FLAGS = ['chapter', 'engine', 'findings', 'home', 'json', 'note', 'record', 'result'];
+const { positional, flags } = parseArgs(process.argv.slice(2), FLAGS);
 const sub = positional[0];
 const rest = positional.slice(1);
 
