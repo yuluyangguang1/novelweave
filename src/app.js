@@ -3472,6 +3472,37 @@ function workflowNotShared() {
   return NWWorkflow.NOT_SHARED.map((n) => `<div class="settings-hint">${esc(n.key)}：${esc(n.why)}</div>`).join('');
 }
 
+/**
+ * 「字数目标」这一格的编辑入口 —— 建完书之后作者改主意，这里就得改得动。
+ * 判据一概不在这儿写：输入框里的原始值直接送进 NWWorkflow.normalize 那道闸（与外来预设
+ * 走同一道），过了才进那张逐格 diff 确认框，写库仍由 patchOf 算。界面在这里比一次上下限，
+ * 就是第二份判据 —— 上一批它就是靠「两处各拦一半」把出界的数存进库的。
+ *
+ * 长篇没有这一格：那句说法的出处是 NWWorkflow.LONG_NO_TARGET，这里引它，不另写一遍。
+ * 但**视图藏起来不等于库里没有**（roadmap V 节第七起）：遗留数照 leftoverTarget 说出口，
+ * 否则作者看见的是「（这一格没设）」，评分卡读的却是那个数。
+ */
+function workflowTargetEditor(own) {
+  if (NWTension.isShort(APP.novel)) {
+    return `<div class="settings-field"><label class="settings-label">改字数目标</label>
+      <div class="workflow-bar">
+        <input class="settings-input" id="inp-wf-target" type="number" inputmode="numeric" step="100"
+          min="${attr(String(NWWorkflow.TARGET_MIN))}" max="${attr(String(NWWorkflow.TARGET_MAX))}"
+          value="${attr(String(own.fields[NWWorkflow.TARGET_FIELD] ?? ''))}"
+          placeholder="${attr(`${NWWorkflow.TARGET_MIN} – ${NWWorkflow.TARGET_MAX} 字`)}">
+        <button class="btn btn-secondary" data-action="workflow-edit-target">按这个数改</button>
+      </div>
+      <div class="settings-hint">这一格要么是一个 ${NWWorkflow.TARGET_MIN} 到 ${NWWorkflow.TARGET_MAX} 之间的整数，要么照旧不动。</div>
+    </div>`;
+  }
+  // 这一本按哪一档算，念 core 归一之后的档名（脏档归一成长篇，这里就说长篇那句，不含糊）
+  const left = NWWorkflow.leftoverTarget(APP.novel);
+  return `<div class="settings-field"><label class="settings-label">字数目标这一格</label>
+    <div class="settings-hint">这一本按「${esc(NWTension.formatLabel(APP.novel))}」这一档算：${esc(NWWorkflow.LONG_NO_TARGET)}</div>
+    ${left === null ? '' : `<div class="settings-hint">这一本的库里还躺着 ${left} 字：应用带目标的短篇预设会照它生效，应用长篇预设会把它清走。</div>`}
+  </div>`;
+}
+
 async function showWorkflowPanel(host) {
   host = host || document.getElementById('sidebar-content');
   if (!host || !APP.novel) return;
@@ -3485,6 +3516,7 @@ async function showWorkflowPanel(host) {
   host.innerHTML = `<div style="padding:12px;">
     <div class="settings-hint">工作流就是这几格。换一本书时照搬，不必从头再调一遍。</div>
     <div class="settings-field"><label class="settings-label">这本书现在的</label>${workflowRows(own.fields)}</div>
+    ${workflowTargetEditor(own)}
     ${workflowNotShared()}
     <div class="workflow-bar">
       <button class="btn btn-primary" data-action="workflow-export">导出为预设文件</button>
@@ -3611,4 +3643,19 @@ Object.assign(ACTIONS, {
     return workflowImportPreset();
   },
   'workflow-apply-builtin': (id) => workflowApplyBuiltin(id),
+  // 改这一格走的是外来预设那同一道闸：把输入框里的原始值当一份只带这一格的预设递进去，
+  // 合不合法、落不落得下、要改哪几格，全部由 NWWorkflow 判 —— 界面在这儿自己比上下限
+  // 或自己拼补丁，就是又开出第二份判据。
+  'workflow-edit-target': () => {
+    if (!APP.novel) { showToast('先进入一本书'); return; }
+    const filled = val('inp-wf-target');
+    const n = NWWorkflow.normalize({
+      kind: NWWorkflow.KIND,
+      version: NWWorkflow.FILE_VERSION,
+      name: `${APP.novel.title || '这本书'} · 手改字数目标`,
+      fields: { [NWWorkflow.TARGET_FIELD]: filled },
+    });
+    if (!n.ok) { showWorkflowRejectModal(n); return; }
+    showWorkflowApplyModal(n);
+  },
 });

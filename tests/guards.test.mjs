@@ -1551,6 +1551,7 @@ const wfFns = () => {
     builtin: pick('workflowApplyBuiltin'),
     exporter: pick('showWorkflowExportModal'),
     notShared: pick('workflowNotShared'),
+    targetEditor: pick('workflowTargetEditor'),
   };
   const missing = Object.entries(fns).filter(([, v]) => !v).map(([k]) => k);
   assert.deepEqual(missing, [], `app.js 里抠不出工作流的这些函数：${missing.join('、')}（守卫的形状变了）`);
@@ -1644,6 +1645,59 @@ test('假 DOM 下 workflowRows 真画得出行，多的那一格不许出现', (
     assert.match(css, new RegExp(`\\.${cls}\\s*\\{`), `.workflow 系「${cls}」没有样式，行会被挤歪`);
   }
   assert.match(css, /\.workflow-row\.is-changed \.workflow-row-value b\s*\{/, '变了的那一格没有颜色，作者看不出要改的是哪几行');
+});
+
+test('假 DOM 下字数目标那一格：短篇画得出输入框，长篇只给 core 那一句', () => {
+  const { targetEditor, panel } = wfFns();
+  const box = { novel: null };
+  const make = new Function('esc', 'attr', 'NWWorkflow', 'NWTension', 'APP',
+    `${targetEditor} return workflowTargetEditor;`)(
+    NWText.esc, (s) => String(s).replace(/"/g, '&quot;'), NWWorkflow, NWTension, box);
+  // 面板传进来的 own 就是 core 打包出来的那三格，夹具照同一条路拿，别手拼
+  const run = (novel) => { box.novel = novel; return make(NWWorkflow.pack(novel)); };
+
+  const shortHtml = run({ format: 'short', target_words: 8000 });
+  assert.match(shortHtml, /id="inp-wf-target"/, '短篇这一格画不出输入框，界面上就还是没有编辑入口');
+  assert.ok(shortHtml.includes('value="8000"'), shortHtml);
+  // 上下限必须由常量填出来：写成字面量就是第二对数，core 改了界而界面还按旧的拦
+  assert.ok(shortHtml.includes(`min="${NWWorkflow.TARGET_MIN}"`), shortHtml);
+  assert.ok(shortHtml.includes(`max="${NWWorkflow.TARGET_MAX}"`), shortHtml);
+  assert.equal(/min="\d|max="\d/.test(targetEditor), false, '输入框的上下限被写死成字面量');
+  assert.equal(/placeholder="\d/.test(targetEditor), false, '提示语里的数是抄的，不是从常量念的');
+
+  // 没设过目标也照样给一个空框（作者第一次定目标就是从空框开始填），提示念的是 core 那对数
+  const none = run({ format: 'short' });
+  assert.match(none, /value=""/, '没设过目标的短篇连框都没有，就只能重新建档');
+  assert.ok(none.includes(`${NWWorkflow.TARGET_MIN} 到 ${NWWorkflow.TARGET_MAX}`), none);
+  // 「留空算什么」那句话只许闸门说一遍：界面再写一遍，两处迟早各说各的
+  assert.equal(none.includes('留空'), false, '界面把闸门那句「空着不算撤掉」抄了第二份');
+
+  // 长篇没有这一格：不许画框，理由引 core 那一句，不许界面自己编第二份说法
+  const longHtml = run({ format: 'long', target_words: 8000 });
+  assert.equal(longHtml.includes('<input'), false, '长篇画出了它根本不认的一格');
+  assert.ok(longHtml.includes(NWWorkflow.LONG_NO_TARGET), '理由是界面自己写的第二份说法');
+  assert.ok(longHtml.includes('还躺着 8000 字'), `库里那个数没被说出口：${longHtml}`);
+  // 两句是两件事（这一档没有这一格 / 库里却有一个数），各占一行才读得下去
+  assert.match(longHtml, /<\/div>\s*<div class="settings-hint">这一本的库里还躺着/, `两句挤在同一行里：${longHtml}`);
+  assert.equal(run({ format: 'long' }).includes('还躺着'), false, '库里本来没数，却报有一个');
+  // 脏档按 core 的归一念（归一成长篇），这里不许自己判「算不算短篇」
+  assert.ok(run({ format: 'zhong' }).includes(NWWorkflow.LONG_NO_TARGET), '脏档得落到 core 归一出来的那一档');
+
+  // 函数画得出、处理器也接了，但面板里没人调它 —— 作者眼前还是只有导出/导入两个按钮
+  assert.match(panel, /\$\{workflowTargetEditor\(own\)\}/, '面板没画那一格：函数与处理器都在，界面上却还是没入口');
+});
+
+test('手改字数目标那一路：交进同一道闸，界面不自己写库', () => {
+  const js = read('src/app.js');
+  const act = js.match(/'workflow-edit-target'[\s\S]*?\n  \},/)?.[0] || '';
+  assert.ok(act, '按钮画了却没有处理器 —— 派发器撞见没注册的名字是静默 return');
+  assert.match(act, /NWWorkflow\.normalize\(\{/, '没走外来预设那道闸，界面上就开出第二份判据');
+  assert.match(act, /NWWorkflow\.KIND/, '手搓的假预设连 kind 都不对，闸门会当它是别的程序的文件');
+  assert.match(act, /\[NWWorkflow\.TARGET_FIELD\]/, '格子名是界面自己写的字符串，core 改一次键名这里就悄悄失效');
+  assert.match(act, /const filled = val\('inp-wf-target'\);/, '交进闸门的得是填的那个值本身：给它兜一个默认数，「空着不算撤掉这一格」就成了假话 —— 留空会悄悄变成那个默认数');
+  assert.match(act, /if \(!n\.ok\) \{ showWorkflowRejectModal\(n\); return; \}/, '过不了闸却不给原因，作者只能拿文本编辑器自己查');
+  assert.match(act, /showWorkflowApplyModal\(n\);/, '没进逐格 diff 确认框就能改这本书');
+  assert.equal(act.includes('novels.update'), false, '处理器自己写库：core 那份补丁就成了摆设');
 });
 
 test('nw-workflow.mjs 只搬运 core 的判据，而且它只看不改', () => {
@@ -1787,8 +1841,9 @@ test('界面不许用「不等于长篇」代替「等于短篇」', () => {
   // 让时间线与状态矩阵两栏凭空消失，而同一本书在规则那边还是长篇。
   const app = read('src/app.js');
   assert.doesNotMatch(app, /\.format\s*[!=]==\s*'long'/, '脏档会被当成短篇，这一句要换成 NWTension.isShort(…)');
-  assert.equal((app.match(/NWTension\.isShort\(/g) || []).length, 4,
-    '书封、短篇标记、侧栏折叠、连续生成各一处（目标进度条那一处 Y 起改问 targetOf，它连档带数一起答）；'
+  assert.equal((app.match(/NWTension\.isShort\(/g) || []).length, 5,
+    '书封、短篇标记、侧栏折叠、连续生成各一处，外加工作流页那一格该不该画输入框（E 批）；'
+    + '（目标进度条那一处 Y 起改问 targetOf，它连档带数一起答）'
     + '多一处少一处都先说清是哪一路');
 });
 
@@ -1943,7 +1998,8 @@ test('读档名的四处各自点名 core 那张表，绕过它就是让同一�
   assert.equal(n('src/core/rules.js', /Tension\.formatLabel\(/), 1, 'R35 那一句的 zh 不许再自己写三元');
   assert.equal(n('src/core/workflow.js', /Tension\.formatLabel/), 1, '工作流那份必须是指向 core 的别名，不许自起一份');
   assert.match(wf, /return formatLabel\(v\);/, '逐格 diff 的 format 行不许 String(v) 原样回显脏值');
-  assert.equal(n('src/app.js', /NWTension\.formatLabel\(/), 3, '书封标记一枚 + 建档下拉两个 option，全在 core 那张表上');
+  assert.equal(n('src/app.js', /NWTension\.formatLabel\(/), 4,
+    '书封标记一枚 + 建档下拉两个 option，外加工作流页那句「这一本按哪一档算」（E 批）—— 全在 core 那张表上');
   assert.doesNotMatch(wf, /FORMAT_LABEL\s*=/, '工作流不许再有自己的话术表 —— 别名也不行，那是第二份表的第一步');
 });
 

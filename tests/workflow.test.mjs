@@ -301,3 +301,60 @@ test('残缺输入一律不抛：null、数组、字段全缺', () => {
   assert.doesNotThrow(() => W.fileName(null));
   for (const r of W.diffFields(null, null)) assert.fail('没有预设内容就不该出行');
 });
+
+// ═══════════════ E 批：库里那个数（不问档）═══════════════
+
+test('leftoverTarget 只问库里躺着没有，不问哪一档', () => {
+  assert.equal(W.leftoverTarget({ format: 'short', target_words: 8000 }), 8000);
+  // 长篇的 pack 把这一格藏起来，可数还躺在库里 —— 那正是「要清走」的依据
+  assert.equal(W.leftoverTarget({ format: 'long', target_words: 8000 }), 8000);
+  assert.equal(W.leftoverTarget({ format: 'long' }), null);
+  assert.equal(W.leftoverTarget({ format: 'short', target_words: 999 }), null, '低于下限等于没设');
+  assert.equal(W.leftoverTarget({ format: 'short', target_words: '5000' }), 5000, '字符串数字收回整数');
+  assert.equal(W.leftoverTarget({ format: 'short', target_words: true }), null, '布尔不许靠「能转成数」混进来');
+  assert.equal(W.leftoverTarget(null), null);
+  assert.equal(W.leftoverTarget(undefined), null);
+});
+
+test('界面上念的遗留数与 diffFields 判的是同一个数（不留第二份口径）', () => {
+  const book = { id: 'n', title: '旧档', format: 'long', target_words: 8000 };
+  const rows = W.diffFields(book, { format: 'long' });
+  const clears = rows.find((r) => r.key === 'target_words');
+  assert.ok(clears, '长篇库里躺着遗留数，换长篇的预设就该画出清走那一格');
+  assert.equal(clears.clears, true);
+  assert.equal(clears.current, `${W.leftoverTarget(book)} 字`, '面板报的数与清走的数不是同一个');
+});
+
+test('手改字数目标走的就是外来预设那道闸：字符串收回、越界拒绝、留空不算撤掉', () => {
+  const ok = W.normalize(preset({ target_words: '5000' }));
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(ok.fields.target_words, 5000);
+
+  const low = W.normalize(preset({ target_words: String(W.TARGET_MIN - 1) }));
+  assert.equal(low.ok, false);
+  assert.equal(low.bad.length, 1);
+  assert.match(low.bad[0].reason, new RegExp(`${W.TARGET_MIN}.*${W.TARGET_MAX}`), '拒绝的话要说得出上下限');
+
+  for (const raw of ['', '   ', 'abc', '8000.5', `${W.TARGET_MAX + 1}`]) {
+    const n = W.normalize(preset({ target_words: raw }));
+    assert.equal(n.ok, false, `「${raw}」居然过了闸：${JSON.stringify(n.fields)}`);
+    assert.equal(n.bad[0].key, 'target_words');
+  }
+
+  // 空着那一格的理由要说清「这不是撤掉」：作者以为留空就是取消，而闸门只是不收
+  const blank = W.normalize(preset({ target_words: '' }));
+  assert.match(blank.bad[0].reason, /空着不算撤掉/, JSON.stringify(blank.bad));
+});
+
+test('TARGET_FIELD 就是清单里那一格的名字：界面、闸门与打包念的是同一个键', () => {
+  assert.equal(W.TARGET_FIELD, W.FIELDS[1], '名字不是从清单取的，清单加一格时它就漂了');
+  assert.equal(W.TARGET_FIELD, 'target_words', '漂到别的键上：界面上填的字数交进别的格子，闸门外不认识它');
+});
+
+test('改到与库里一样的数不算改动：确认框那一格画「不变」', () => {
+  const book = { id: 'n', title: '山河', format: 'short', target_words: 8000 };
+  const rows = W.diffFields(book, { target_words: 8000 });
+  const t = rows.find((r) => r.key === 'target_words');
+  assert.equal(t.changed, false);
+  assert.deepEqual(W.patchOf(book, { target_words: 8000 }), {}, '没变的一格不许写进补丁');
+});

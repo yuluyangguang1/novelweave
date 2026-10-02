@@ -68,6 +68,13 @@
   const PACK_KEYS = ['enabled', 'disabled', 'extraBanned'];
 
   /**
+   * 「字数目标」那一格的名字。界面上那个编辑入口要取初值、也要把填进来的数交回闸门，
+   * 但它不许自己写 `'target_words'` 这个字符串 —— 认键是 core 的活（见 guards 那份禁用清单）。
+   * 名字与 FIELDS 里的那一项必须是同一个，所以这里直接取，不重打字面量。
+   */
+  const TARGET_FIELD = FIELDS[1];
+
+  /**
    * 「长篇没有字数目标这一格」那句说法的唯一出处。过闸要说它（长篇配目标是坏搭配），
    * 逐格 diff 也要说它（一本长篇收到只带目标的预设，那一格落不下），两处必须是同一句 ——
    * 否则一处拦、一处照写：那一格写进了库，进度条不显示、打包也带不出来，
@@ -163,7 +170,11 @@
         const raw = src.target_words;
         const n = Tension.targetValue(raw);
         if (n === null) {
-          out.bad.push({ key, reason: `字数目标得是 ${TARGET_MIN} 到 ${TARGET_MAX} 之间的整数（与书存档同一套上下限），这份写的是「${String(raw)}」` });
+          // 界面上那个编辑入口留空交进来的就是空串：说成「这份写的是「」」是把判断推给作者，
+          // 说清「留空不等于撤掉」才接得住「我想把目标去掉」那一次点击。
+          const said = typeof raw === 'string' && !raw.trim() ? '（空着）' : `「${String(raw)}」`;
+          out.bad.push({ key, reason: `字数目标得是 ${TARGET_MIN} 到 ${TARGET_MAX} 之间的整数（与书存档同一套上下限），这一格填的是${said}${
+            typeof raw === 'string' && !raw.trim() ? ' —— 空着不算撤掉这一格' : ''}` });
           continue;
         }
         out.fields.target_words = n;
@@ -215,6 +226,16 @@
     return out;
   }
 
+  /**
+   * 「库行里到底还躺着那个数没有」—— 只问原值，**不问哪一档**（问档是 `Tension.targetOf` 的活）。
+   * 两处要它：逐格 diff 拿它判长篇的遗留数要不要清走；界面拿它说「这一档没有这一格，
+   * 可库里还留着 8000 字」。收成一句是因为 V 批那条教训 —— 视图把格子藏起来，
+   * 数还在库里，而界面一个字都不提。
+   */
+  function leftoverTarget(book) {
+    return Tension.targetValue((book || {}).target_words);
+  }
+
   /** 逐格比现在与预设 —— 只在这里比，界面与 CLI 都引它。changed 为假的那些格不许写库。 */
   function diffFields(book, fields) {
     const b = book || {};
@@ -229,7 +250,7 @@
     // 面板说「没设」，而评分卡以前还照它算分。所以这里问的是「库里躺着数没有」，
     // 用与档无关的那一句（targetValue），不是「这一档该不该有它」（targetOf）——
     // 长篇遗留那一个正是清走的依据。
-    const leftover = Tension.targetValue(b.target_words);
+    const leftover = leftoverTarget(b);
     return FIELDS.flatMap((key) => {
       if (want[key] === undefined) {
         // 只在这一份预设自己把篇幅档换成长篇时才清它：预设没带 format 却顺手抹掉作者定的
@@ -291,7 +312,8 @@
 
   return {
     WORKFLOW_VERSION, KIND, FILE_VERSION, FIELDS, NOT_SHARED, FORMATS, FIELD_LABEL, PACK_KEYS, BUILTINS,
-    TARGET_MIN, TARGET_MAX, LONG_NO_TARGET, CLEAR_NO_TARGET,
+    TARGET_MIN, TARGET_MAX, LONG_NO_TARGET, CLEAR_NO_TARGET, TARGET_FIELD,
     pack, normalize, diffFields, patchOf, fileName, packSummary, valueText, normalizePack, groupIds,
+    leftoverTarget,
   };
 });
