@@ -146,6 +146,23 @@ test('R9 未登记实体：跨章反复出现才报，且聚合成一条 info', 
   assert.deepEqual(of(NWRules.runRules(known), 'unregistered-entity'), []);
 });
 
+test('R9 重叠候选收成一处：多咬一个字的那一截不是第二个人', () => {
+  // 「岑寻把」是已登记的「岑寻」多带了一个动词，「时候到」是「时候」多带了一个字。
+  // 收之前它们各占一行，既挤掉真名字，也让「建档后就不再报」这句话对长的那一截不成立。
+  const c = ctx({
+    chapters: [
+      ch(1, { body: '时候。时候到了。岑寻把册子合上。' }),
+      ch(2, { body: '时候。时候到了。岑寻把押按下去。' }),
+    ],
+    characters: [char('char-cen', { name: '岑寻' })],
+  });
+  const names = NWRules.entityCandidates(c).map((s) => s.name);
+  assert.deepEqual(names, ['时候'], `已登记名字多咬的动词不许当新名字报：${JSON.stringify(names)}`);
+  const open = NWRules.entityCandidates(c, { exclude: false }).map((s) => s.name);
+  assert.ok(open.includes('时候'), `短的那一个才是这条判据要的粒度：${JSON.stringify(open)}`);
+  assert.ok(!open.includes('时候到'), `同一处多咬一个字不许再占一行：${JSON.stringify(open)}`);
+});
+
 test('R14 结构非法：章号重复是 error，slug 重复是 warn', () => {
   const c = ctx({
     chapters: [ch(1, { slug: 'dup' }), ch(1, { slug: 'other', id: 'ch-00x' }), ch(2, { slug: 'dup', id: 'ch-00y' })],

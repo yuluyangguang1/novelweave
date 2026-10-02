@@ -144,8 +144,15 @@
         counts.set(cand, cur);
       }
     }
-    return [...counts.values()]
-      .filter((s) => s.n >= minCount && s.chapters.length >= minChapters && !known.has(s.name))
+    const hits = [...counts.values()]
+      .filter((s) => s.n >= minCount && s.chapters.length >= minChapters && !known.has(s.name));
+    // 重叠候选收成一处。两件事在同一段文字上不可能都成立：
+    // 「岑寻把」是已登记的「岑寻」多咬了一个动词，「时候只」是「时候」多咬了一个字 ——
+    // 短的那一个才是这条判据要的粒度，留着长的只会把真名字挤出自己的清单。
+    const covered = (s) => hits.some((o) => o !== s && o.name.length < s.name.length && s.name.startsWith(o.name))
+      || [...known].some((k) => k.length < s.name.length && s.name.startsWith(k));
+    return hits
+      .filter((s) => !covered(s))
       // 平次时按码位排，别依赖 Map 插入顺序或 ICU locale —— 指纹要稳定
       .sort((a, b) => (b.n - a.n) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .slice(0, limit);
@@ -567,6 +574,7 @@
       detail:
         '候选抽取用「常见姓 + 1~2 字」与「2~4 字 + 称谓后缀」两式；要求出现 ≥2 次且跨 ≥2 章，' +
         '再排除 lexicon.names、角色本名与别名、世界条目名与关键词、allowlist。' +
+        '两条式子都会多咬一个字（「岑寻把」「时候只」），所以重叠的候选只留最短的那一个 —— 长的那一截不是第二个人。' +
         '聚合成一条诊断列出 top 15，不刷屏。自动登记的伏笔类条目 weight 记 candidate。',
       run(ctx) {
         const suspects = entityCandidates(ctx);
@@ -1019,8 +1027,8 @@
       scope: 'chapter',
       summary: '本章的 AI 腔禁词密度或句式套路过高（去 AI 味规则包）。',
       detail:
-        '判据全部来自 NWStylePack 的统计，不做主观评价：禁词按每千字命中数算，句式只数那五条' +
-        '（同开头连击、连续无对话段、二元对照句、三短句连击、破折号插入语）。密度 ≥3/千字 或 句式套路 ≥2 类为 warn，' +
+        '判据全部来自 NWStylePack 的统计，不做主观评价：禁词按每千字命中数算，句式数那七条' +
+        '（同开头连击、连续无对话段、二元对照句、三短句连击、破折号插入语、「的」字堆叠、一句到底不断句）。密度 ≥3/千字 或 句式套路 ≥2 类为 warn，' +
         '低一档为 info；正文不足 500 字不评。作者可在本书的 stylePack 里关掉整组或加自己的禁词。' +
         '本条是文笔提示，不是事实矛盾：误报了关掉那组即可，不要拿它当门禁。',
       run(ctx) {

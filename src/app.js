@@ -3313,7 +3313,7 @@ function volumeFields(prefix, v = {}) {
     <div class="settings-field"><label class="settings-label">结束章</label>${chapterSelect(`${prefix}-v-to`, v.toChapter)}
       <div class="settings-hint">存的是章本身，不是章号：删过章以后这一卷会显示「起止章读不出来」，而不是悄悄盖住别的内容。</div></div>
     <div class="settings-field"><label class="settings-label">这一卷发生了什么（写上下文时一行给模型，约 120 字以内）</label>
-      <textarea class="settings-input" id="${prefix}-v-summary" rows="4" placeholder="例：林烟火出山查明师死，结识沈孤舟，得半枚铜印">${esc(v.summary || '')}</textarea>
+      <textarea class="settings-input" id="${prefix}-v-summary" rows="4" placeholder="例：岑寻下山查灰的来路，柳阿樟立查格之约，掌阁之死逼出缺页">${esc(v.summary || '')}</textarea>
       <div class="settings-hint">留空就等于这一卷不存在：它盖住的章退回逐章列出，缺口会在面板顶部说给你听。</div></div>`;
 }
 
